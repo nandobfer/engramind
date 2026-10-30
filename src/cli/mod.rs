@@ -117,6 +117,9 @@ pub enum Command {
     /// Assinaturas (leitura: qualquer token; mudanças: token admin).
     #[command(subcommand)]
     Subscriptions(SubscriptionsCommand),
+    /// Memórias dos canais alcançados (`--channels` restringe).
+    #[command(subcommand)]
+    Memories(MemoriesCommand),
     /// Configurações (token admin).
     #[command(subcommand)]
     Settings(SettingsCommand),
@@ -353,9 +356,184 @@ pub enum ChannelsCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Exclui um canal arquivado.
+    /// Exclui um canal arquivado (com as memórias dele).
     Delete {
         channel: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Contagens das memórias de um canal.
+    Stats { channel: String },
+    /// Sobreposições de configuração de um canal (token admin).
+    #[command(subcommand)]
+    Settings(ChannelSettingsCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ChannelSettingsCommand {
+    /// Lê as configurações do canal com as sobreposições.
+    Get { channel: String },
+    /// Altera uma sobreposição; o valor é lido como JSON (`null` remove a sobreposição).
+    Set {
+        channel: String,
+        key: String,
+        value: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+/// Status e campos da saída das memórias.
+#[derive(Debug, Clone, Default, Args)]
+pub struct FieldsArgs {
+    /// `full` (padrão) ou `title` (só id, título, canal, categoria e status).
+    #[arg(long)]
+    pub fields: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MemoriesCommand {
+    /// Lista as memórias dos canais alcançados (`--channels` restringe).
+    List {
+        /// Categorias separadas por vírgula.
+        #[arg(long)]
+        categories: Option<String>,
+        /// `active`, `permanent`, `archived`, separados por vírgula (padrão active,permanent).
+        #[arg(long)]
+        status: Option<String>,
+        /// App (id ou slug) ou agente (id ou app/agente).
+        #[arg(long)]
+        author: Option<String>,
+        /// Só as alteradas a partir deste instante (RFC 3339).
+        #[arg(long)]
+        since: Option<String>,
+        #[command(flatten)]
+        fields: FieldsArgs,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Mostra uma memória.
+    Get {
+        /// Id da memória (`m_…`).
+        memory: String,
+    },
+    /// Busca memórias por texto (acentos e caixa são ignorados).
+    Search {
+        /// Consulta; as palavras são unidas por espaço.
+        #[arg(required = true, num_args = 1..)]
+        query: Vec<String>,
+        /// Categorias separadas por vírgula.
+        #[arg(long)]
+        categories: Option<String>,
+        /// De 1 a 50 (padrão 10).
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Inclui as memórias arquivadas.
+        #[arg(long)]
+        include_archived: bool,
+        /// Ids a deixar de fora, separados por vírgula.
+        #[arg(long)]
+        exclude_ids: Option<String>,
+        #[command(flatten)]
+        fields: FieldsArgs,
+    },
+    /// Lista as revisões de uma memória.
+    History {
+        /// Id da memória (`m_…`).
+        memory: String,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Grava uma memória num canal.
+    Create {
+        /// Canal (id ou slug) com write efetivo.
+        #[arg(long)]
+        channel: String,
+        /// Texto da memória; `-` lê da entrada padrão.
+        #[arg(long)]
+        text: String,
+        /// Categoria (padrão: a primeira de categories.list).
+        #[arg(long)]
+        category: Option<String>,
+        /// `active` (padrão) ou `permanent`.
+        #[arg(long)]
+        status: Option<String>,
+        /// Origem, por exemplo `curator`.
+        #[arg(long)]
+        origin_source: Option<String>,
+        /// Referência da origem, por exemplo o caso que gerou a memória.
+        #[arg(long, requires = "origin_source")]
+        origin_label: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Edita o texto ou a categoria de uma memória.
+    Update {
+        /// Id da memória (`m_…`).
+        memory: String,
+        /// Texto novo; `-` lê da entrada padrão.
+        #[arg(long)]
+        text: Option<String>,
+        #[arg(long)]
+        category: Option<String>,
+        /// Versão lida; divergente dá MEMORY_VERSION_CONFLICT.
+        #[arg(long)]
+        expected_version: Option<i64>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Arquiva uma memória.
+    Archive {
+        /// Id da memória (`m_…`).
+        memory: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Restaura uma memória arquivada.
+    Restore {
+        /// Id da memória (`m_…`).
+        memory: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Fixa uma memória (status permanent).
+    Pin {
+        /// Id da memória (`m_…`).
+        memory: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Desafixa uma memória.
+    Unpin {
+        /// Id da memória (`m_…`).
+        memory: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Move uma memória para outro canal.
+    Move {
+        /// Id da memória (`m_…`).
+        memory: String,
+        /// Canal de destino (id ou slug).
+        #[arg(long)]
+        to: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Restaura o conteúdo de uma versão anterior numa revisão nova.
+    Revert {
+        /// Id da memória (`m_…`).
+        memory: String,
+        /// Versão do histórico a restaurar.
+        #[arg(long = "version", value_name = "N")]
+        to_version: i64,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Exclui uma memória, mantendo a última revisão.
+    Delete {
+        /// Id da memória (`m_…`).
+        memory: String,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -584,6 +762,9 @@ async fn serve() -> anyhow::Result<()> {
     background.abort();
     if let Err(error) = core.flush_usage().await {
         tracing::warn!(event = "tokens.touch_failed", error = %error, "falha ao gravar last_used_at");
+    }
+    if let Err(error) = core.flush_counters().await {
+        tracing::warn!(event = "memories.counters_failed", error = %error, "falha ao gravar os contadores das memorias");
     }
     tracing::info!(event = "application.stopped", "Engramind encerrado");
     Ok(())

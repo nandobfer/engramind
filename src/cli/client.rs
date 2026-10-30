@@ -18,6 +18,11 @@ pub const LOCAL_ERRORS: &[(&str, u8, &str)] = &[
         "URL ou token ausentes, perfil inexistente ou arquivo de perfis inválido.",
     ),
     (
+        "CLI_INPUT_INVALID",
+        2,
+        "Falha ao ler o texto da entrada padrão (`--text -`).",
+    ),
+    (
         "CLI_CONNECTION_FAILED",
         8,
         "Servidor inacessível: rede, DNS, TLS ou tempo limite.",

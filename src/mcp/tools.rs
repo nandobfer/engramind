@@ -30,9 +30,14 @@ use crate::{
             CreateAgentBody, CreateAppBody, IssueTokenBody, ListAgentsQuery, ListQuery,
             ListTokensQuery, UpdateBody, UpdateTokenBody,
         },
+        memories::{
+            CreateMemoryBody, HistoryQuery, ListMemoriesQuery, MoveMemoryBody, RevertMemoryBody,
+            UpdateMemoryBody,
+        },
         operations::{self, OPERATIONS},
         principal::Principal,
-        settings::{GetSettingsQuery, UpdateSettingsBody},
+        search::SearchMemoriesBody,
+        settings::{GetSettingsQuery, UpdateChannelSettingsBody, UpdateSettingsBody},
         subscriptions::{ListSubscriptionsQuery, SubscribeBody, UpdateSubscriptionBody},
     },
     error::ApiError,
@@ -226,6 +231,79 @@ pub struct UpdateSettingsRequest {
     pub settings: BTreeMap<String, Value>,
     #[serde(default)]
     pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateChannelSettingsRequest {
+    /// Id (`ch_…`) ou slug do canal (`eng/global`).
+    pub channel: String,
+    /// Mapa parcial `chave → valor` de sobreposições; `null` remove a sobreposição.
+    pub settings: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryRequest {
+    /// Id da memória (`m_…`).
+    pub memory: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MemoryHistoryRequest {
+    /// Id da memória (`m_…`).
+    pub memory: String,
+    #[serde(flatten)]
+    pub query: HistoryQuery,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryMutationRequest {
+    /// Id da memória (`m_…`).
+    pub memory: String,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateMemoryRequest {
+    #[serde(flatten)]
+    pub body: CreateMemoryBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateMemoryRequest {
+    /// Id da memória (`m_…`).
+    pub memory: String,
+    #[serde(flatten)]
+    pub body: UpdateMemoryBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MoveMemoryRequest {
+    /// Id da memória (`m_…`).
+    pub memory: String,
+    #[serde(flatten)]
+    pub body: MoveMemoryBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RevertMemoryRequest {
+    /// Id da memória (`m_…`).
+    pub memory: String,
+    #[serde(flatten)]
+    pub body: RevertMemoryBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -732,6 +810,324 @@ impl EngramindServer {
                 .unsubscribe(
                     &principal,
                     &request.subscription,
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn channel_stats(
+        &self,
+        Parameters(request): Parameters<ChannelRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .channel_stats(&principal, &request.channel, header.as_deref())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
+    async fn list_memories(
+        &self,
+        Parameters(query): Parameters<ListMemoriesQuery>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .list_memories(&principal, query, header.as_deref())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
+    async fn get_memory(
+        &self,
+        Parameters(request): Parameters<MemoryRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .get_memory(&principal, &request.memory, header.as_deref())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
+    async fn search_memories(
+        &self,
+        Parameters(body): Parameters<SearchMemoriesBody>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .search_memories(&principal, body, header.as_deref())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
+    async fn memory_history(
+        &self,
+        Parameters(request): Parameters<MemoryHistoryRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .memory_history(
+                        &principal,
+                        &request.memory,
+                        request.query,
+                        header.as_deref(),
+                    )
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
+    async fn create_memory(
+        &self,
+        Parameters(request): Parameters<CreateMemoryRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .create_memory(&principal, request.body, header.as_deref(), key)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn update_memory(
+        &self,
+        Parameters(request): Parameters<UpdateMemoryRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .update_memory(
+                        &principal,
+                        &request.memory,
+                        request.body,
+                        header.as_deref(),
+                        key,
+                    )
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn archive_memory(
+        &self,
+        Parameters(request): Parameters<MemoryMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .archive_memory(&principal, &request.memory, header.as_deref(), key)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn restore_memory(
+        &self,
+        Parameters(request): Parameters<MemoryMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .restore_memory(&principal, &request.memory, header.as_deref(), key)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn pin_memory(
+        &self,
+        Parameters(request): Parameters<MemoryMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .pin_memory(&principal, &request.memory, header.as_deref(), key)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn unpin_memory(
+        &self,
+        Parameters(request): Parameters<MemoryMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .unpin_memory(&principal, &request.memory, header.as_deref(), key)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn move_memory(
+        &self,
+        Parameters(request): Parameters<MoveMemoryRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .move_memory(
+                        &principal,
+                        &request.memory,
+                        request.body,
+                        header.as_deref(),
+                        key,
+                    )
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn revert_memory(
+        &self,
+        Parameters(request): Parameters<RevertMemoryRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .revert_memory(
+                        &principal,
+                        &request.memory,
+                        request.body,
+                        header.as_deref(),
+                        key,
+                    )
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn delete_memory(
+        &self,
+        Parameters(request): Parameters<MemoryMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .delete_memory(&principal, &request.memory, header.as_deref(), key)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
+    async fn get_channel_settings(
+        &self,
+        Parameters(request): Parameters<ChannelRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .get_channel_settings(&principal, &request.channel)
+                .await,
+        )
+    }
+
+    #[tool]
+    async fn update_channel_settings(
+        &self,
+        Parameters(request): Parameters<UpdateChannelSettingsRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .update_channel_settings(
+                    &principal,
+                    &request.channel,
+                    UpdateChannelSettingsBody(request.settings),
                     request.idempotency_key.as_deref(),
                 )
                 .await

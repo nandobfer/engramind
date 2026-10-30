@@ -22,7 +22,8 @@
 
 ## FTS5 e sqlite-vec
 
-- `memory_fts` é FTS5 externa sobre `title` e `text`, tokenizer `unicode61 remove_diacritics 2`, sincronizada por trigger.
+- `memory_fts` é FTS5 externa sobre `title` e `text`, tokenizer `unicode61 remove_diacritics 2`, sincronizada por trigger, com `content_rowid = memories.seq` (rowid explícito; um implícito muda no `VACUUM`). `engramind doctor` roda o `integrity-check` dela.
+- Consultas FTS nunca recebem texto livre: o `core` passa termos normalizados e o `Store` monta a expressão (termos entre aspas unidos por `OR`).
 - `memory_vectors` guarda `model_id`, `dims` e o vetor float32. Nunca misture dimensões ou modelos numa mesma comparação.
 - O registro do `sqlite-vec` (`sqlite3_auto_extension`) é o único bloco `unsafe` do crate, isolado num módulo com `#[allow(unsafe_code)]` e comentário de justificativa.
 - A busca vetorial começa com varredura exata filtrada; `vec0` particionado por canal só na fase 5, sem mudar o contrato.

@@ -7,8 +7,9 @@ use reqwest::Method;
 use serde_json::{Map, Value, json};
 
 use super::{
-    AgentsCommand, AppsCommand, AuditCommand, ChannelsCommand, Command, ConnectionArgs,
-    DocsCommand, ProfilesCommand, SettingsCommand, SubscriptionsCommand, TokensCommand, UpdateArgs,
+    AgentsCommand, AppsCommand, AuditCommand, ChannelSettingsCommand, ChannelsCommand, Command,
+    ConnectionArgs, DocsCommand, MemoriesCommand, ProfilesCommand, SettingsCommand,
+    SubscriptionsCommand, TokensCommand, UpdateArgs,
     client::{self, ApiRequest, Connection, Outcome, segment},
     output,
     profiles::{self, Profile},
@@ -95,6 +96,189 @@ fn update_body(changes: UpdateArgs) -> Value {
 /// Lê o valor de `settings set` como JSON; texto solto vira string.
 fn setting_value(value: &str) -> Value {
     serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_owned()))
+}
+
+fn memory_path(memory: &str, suffix: &str) -> String {
+    format!("/v1/memories/{}{suffix}", segment(memory))
+}
+
+/// Lista separada por vírgula como array JSON.
+fn list(value: Option<String>) -> Option<Value> {
+    value.map(|value| {
+        Value::Array(
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(|item| Value::String(item.to_owned()))
+                .collect(),
+        )
+    })
+}
+
+fn memories_request(command: MemoriesCommand) -> ApiRequest {
+    match command {
+        MemoriesCommand::List {
+            categories,
+            status,
+            author,
+            since,
+            fields,
+            page,
+        } => ApiRequest::new(Method::GET, "/v1/memories".to_owned())
+            .query("categories", categories)
+            .query("status", status)
+            .query("author", author)
+            .query("since", since)
+            .query("fields", fields.fields)
+            .query("cursor", page.cursor)
+            .query("limit", page.limit),
+        MemoriesCommand::Get { memory } => ApiRequest::new(Method::GET, memory_path(&memory, "")),
+        MemoriesCommand::Search {
+            query,
+            categories,
+            limit,
+            include_archived,
+            exclude_ids,
+            fields,
+        } => {
+            let mut body = Map::new();
+            body.insert("query".to_owned(), json!(query.join(" ")));
+            if let Some(categories) = list(categories) {
+                body.insert("categories".to_owned(), categories);
+            }
+            if let Some(limit) = limit {
+                body.insert("limit".to_owned(), json!(limit));
+            }
+            if include_archived {
+                body.insert("include_archived".to_owned(), json!(true));
+            }
+            if let Some(exclude_ids) = list(exclude_ids) {
+                body.insert("exclude_ids".to_owned(), exclude_ids);
+            }
+            if let Some(fields) = fields.fields {
+                body.insert("fields".to_owned(), json!(fields));
+            }
+            ApiRequest::new(Method::POST, "/v1/memories/search".to_owned())
+                .body(Value::Object(body))
+        }
+        MemoriesCommand::History { memory, page } => {
+            ApiRequest::new(Method::GET, memory_path(&memory, "/history"))
+                .query("cursor", page.cursor)
+                .query("limit", page.limit)
+        }
+        MemoriesCommand::Create {
+            channel,
+            text,
+            category,
+            status,
+            origin_source,
+            origin_label,
+            idempotency,
+        } => {
+            let mut body = Map::new();
+            body.insert("channel".to_owned(), json!(channel));
+            body.insert("text".to_owned(), json!(text));
+            if let Some(category) = category {
+                body.insert("category".to_owned(), json!(category));
+            }
+            if let Some(status) = status {
+                body.insert("status".to_owned(), json!(status));
+            }
+            if let Some(source) = origin_source {
+                body.insert(
+                    "origin".to_owned(),
+                    json!({ "source": source, "label": origin_label }),
+                );
+            }
+            ApiRequest::new(Method::POST, "/v1/memories".to_owned())
+                .body(Value::Object(body))
+                .idempotency(idempotency.idempotency_key)
+        }
+        MemoriesCommand::Update {
+            memory,
+            text,
+            category,
+            expected_version,
+            idempotency,
+        } => {
+            let mut body = Map::new();
+            if let Some(text) = text {
+                body.insert("text".to_owned(), json!(text));
+            }
+            if let Some(category) = category {
+                body.insert("category".to_owned(), json!(category));
+            }
+            if let Some(version) = expected_version {
+                body.insert("expected_version".to_owned(), json!(version));
+            }
+            ApiRequest::new(Method::PATCH, memory_path(&memory, ""))
+                .body(Value::Object(body))
+                .idempotency(idempotency.idempotency_key)
+        }
+        MemoriesCommand::Archive {
+            memory,
+            idempotency,
+        } => ApiRequest::new(Method::POST, memory_path(&memory, "/archive"))
+            .idempotency(idempotency.idempotency_key),
+        MemoriesCommand::Restore {
+            memory,
+            idempotency,
+        } => ApiRequest::new(Method::POST, memory_path(&memory, "/restore"))
+            .idempotency(idempotency.idempotency_key),
+        MemoriesCommand::Pin {
+            memory,
+            idempotency,
+        } => ApiRequest::new(Method::POST, memory_path(&memory, "/pin"))
+            .idempotency(idempotency.idempotency_key),
+        MemoriesCommand::Unpin {
+            memory,
+            idempotency,
+        } => ApiRequest::new(Method::POST, memory_path(&memory, "/unpin"))
+            .idempotency(idempotency.idempotency_key),
+        MemoriesCommand::Move {
+            memory,
+            to,
+            idempotency,
+        } => ApiRequest::new(Method::POST, memory_path(&memory, "/move"))
+            .body(json!({ "to": to }))
+            .idempotency(idempotency.idempotency_key),
+        MemoriesCommand::Revert {
+            memory,
+            to_version,
+            idempotency,
+        } => ApiRequest::new(Method::POST, memory_path(&memory, "/revert"))
+            .body(json!({ "version": to_version }))
+            .idempotency(idempotency.idempotency_key),
+        MemoriesCommand::Delete {
+            memory,
+            idempotency,
+        } => ApiRequest::new(Method::DELETE, memory_path(&memory, ""))
+            .idempotency(idempotency.idempotency_key),
+    }
+}
+
+/// `--text -` lê o texto da entrada padrão (multilinha, sem escapes).
+fn read_stdin_text(command: Command) -> Result<Command, String> {
+    fn read(text: &mut String) -> Result<(), String> {
+        if text != "-" {
+            return Ok(());
+        }
+        let mut buffer = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+            .map_err(|error| format!("falha ao ler a entrada padrao: {error}"))?;
+        *text = buffer;
+        Ok(())
+    }
+    let mut command = command;
+    match &mut command {
+        Command::Memories(MemoriesCommand::Create { text, .. }) => read(text)?,
+        Command::Memories(MemoriesCommand::Update {
+            text: Some(text), ..
+        }) => read(text)?,
+        _ => {}
+    }
+    Ok(command)
 }
 
 /// A chamada REST do comando, pelo mesmo caminho do catálogo de operações.
@@ -295,7 +479,33 @@ pub fn request(command: Command) -> ApiRequest {
                 format!("/v1/channels/{}", segment(&channel)),
             )
             .idempotency(idempotency.idempotency_key),
+            ChannelsCommand::Stats { channel } => ApiRequest::new(
+                Method::GET,
+                format!("/v1/channels/{}/stats", segment(&channel)),
+            ),
+            ChannelsCommand::Settings(command) => match command {
+                ChannelSettingsCommand::Get { channel } => ApiRequest::new(
+                    Method::GET,
+                    format!("/v1/channels/{}/settings", segment(&channel)),
+                ),
+                ChannelSettingsCommand::Set {
+                    channel,
+                    key,
+                    value,
+                    idempotency,
+                } => {
+                    let mut body = Map::new();
+                    body.insert(key, setting_value(&value));
+                    ApiRequest::new(
+                        Method::PUT,
+                        format!("/v1/channels/{}/settings", segment(&channel)),
+                    )
+                    .body(Value::Object(body))
+                    .idempotency(idempotency.idempotency_key)
+                }
+            },
         },
+        Command::Memories(command) => memories_request(command),
         Command::Subscriptions(command) => match command {
             SubscriptionsCommand::List {
                 agent,
@@ -430,6 +640,13 @@ pub async fn run(command: Command, args: &ConnectionArgs, as_json: bool) -> Exit
         Err(message) => {
             output::error_envelope(&client::local_error("CLI_CONFIG_INVALID", message), as_json);
             return ExitCode::from(client::local_exit_code("CLI_CONFIG_INVALID"));
+        }
+    };
+    let command = match read_stdin_text(command) {
+        Ok(command) => command,
+        Err(message) => {
+            output::error_envelope(&client::local_error("CLI_INPUT_INVALID", message), as_json);
+            return ExitCode::from(client::local_exit_code("CLI_INPUT_INVALID"));
         }
     };
     match client::send(&connection, request(command)).await {

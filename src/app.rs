@@ -60,7 +60,7 @@ fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
 
 /// Rotas `/v1`, protegidas por `require_auth`. Uma entrada por operação do catálogo.
 fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
-    use rest::{audit, channels, docs, identities, settings, status, subscriptions};
+    use rest::{audit, channels, docs, identities, memories, settings, status, subscriptions};
     vec![
         ("/v1/whoami", get(identities::whoami)),
         (
@@ -106,6 +106,41 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         (
             "/v1/channels/{channel}/restore",
             post(channels::restore_channel),
+        ),
+        ("/v1/channels/{channel}/stats", get(channels::channel_stats)),
+        (
+            "/v1/channels/{channel}/settings",
+            get(settings::get_channel_settings).put(settings::update_channel_settings),
+        ),
+        (
+            "/v1/memories",
+            get(memories::list_memories).post(memories::create_memory),
+        ),
+        ("/v1/memories/search", post(memories::search_memories)),
+        (
+            "/v1/memories/{memory}",
+            get(memories::get_memory)
+                .patch(memories::update_memory)
+                .delete(memories::delete_memory),
+        ),
+        (
+            "/v1/memories/{memory}/history",
+            get(memories::memory_history),
+        ),
+        (
+            "/v1/memories/{memory}/archive",
+            post(memories::archive_memory),
+        ),
+        (
+            "/v1/memories/{memory}/restore",
+            post(memories::restore_memory),
+        ),
+        ("/v1/memories/{memory}/pin", post(memories::pin_memory)),
+        ("/v1/memories/{memory}/unpin", post(memories::unpin_memory)),
+        ("/v1/memories/{memory}/move", post(memories::move_memory)),
+        (
+            "/v1/memories/{memory}/revert",
+            post(memories::revert_memory),
         ),
         (
             "/v1/subscriptions",

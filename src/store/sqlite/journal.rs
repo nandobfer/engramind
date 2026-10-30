@@ -57,6 +57,17 @@ pub(super) fn remember<T: Serialize>(
     context: &WriteContext,
     response: &T,
 ) -> Result<(), StoreError> {
+    let status = context.idempotency.as_ref().map(|record| record.status);
+    remember_as(transaction, context, response, status.unwrap_or_default())
+}
+
+/// Como `remember`, com o status HTTP decidido na transação (duplicata: 200 em vez de 201).
+pub(super) fn remember_as<T: Serialize>(
+    transaction: &Transaction,
+    context: &WriteContext,
+    response: &T,
+    status: u16,
+) -> Result<(), StoreError> {
     let Some(record) = &context.idempotency else {
         return Ok(());
     };
@@ -77,7 +88,7 @@ pub(super) fn remember<T: Serialize>(
                 record.key,
                 record.request_hash,
                 response,
-                record.status,
+                status,
                 context.at
             ],
         )

@@ -4,6 +4,7 @@
 mod channels;
 mod identities;
 mod journal;
+mod memories;
 mod migrations;
 mod readers;
 mod settings;
@@ -18,13 +19,15 @@ use rusqlite::{
 use serde::Serialize;
 
 use self::{readers::Readers, writer::Writer};
-use super::{DoctorReport, MigrationStatus, ReadyReport, Store, StoreError};
+use super::{ChannelSettingsMap, DoctorReport, MigrationStatus, ReadyReport, Store, StoreError};
 use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
-        Channel, ChannelPatch, IdemRow, IdentityCounts, Lookup, Network, NewAgent, NewApp,
-        NewChannel, NewSubscription, NewToken, SettingChange, SettingRow, Subscription,
-        SubscriptionPatch, Token, TokenFilter, TokenPatch, WriteContext,
+        Channel, ChannelPatch, ChannelStats, IdemRow, IdentityCounts, Lookup, Memory, MemoryFilter,
+        MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent, NewApp,
+        NewChannel, NewMemory, NewSubscription, NewToken, RetrievalBump, SettingChange, SettingRow,
+        StatusAction, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
+        WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -171,33 +174,61 @@ impl Store for SqliteStore {
     }
 
     async fn diagnose(&self) -> Result<DoctorReport, StoreError> {
-        self.read(|connection| {
-            let mut statement = connection.prepare("PRAGMA integrity_check")?;
-            let problems = statement
-                .query_map([], |row| row.get::<_, String>(0))?
-                .take(10)
-                .collect::<rusqlite::Result<Vec<_>>>()?;
-            let integrity = problems.join("; ");
-            Ok(DoctorReport {
-                integrity,
-                migrations: MigrationStatus {
-                    applied: migrations::applied(connection)?,
-                    expected: migrations::expected(),
-                },
-                sqlite_version: connection
-                    .query_row("SELECT sqlite_version()", [], |row| row.get(0))?,
-                vec_version: connection
-                    .query_row("SELECT vec_version()", [], |row| row.get(0))
-                    .ok(),
-                fts5: connection.query_row(
-                    "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
-                    [],
-                    |row| row.get(0),
-                )?,
-                journal_mode: connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?,
+        let mut report = self
+            .read(|connection| {
+                let mut statement = connection.prepare("PRAGMA integrity_check")?;
+                let problems = statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .take(10)
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                let integrity = problems.join("; ");
+                Ok(DoctorReport {
+                    integrity,
+                    migrations: MigrationStatus {
+                        applied: migrations::applied(connection)?,
+                        expected: migrations::expected(),
+                    },
+                    sqlite_version: connection
+                        .query_row("SELECT sqlite_version()", [], |row| row.get(0))?,
+                    vec_version: connection
+                        .query_row("SELECT vec_version()", [], |row| row.get(0))
+                        .ok(),
+                    fts5: connection.query_row(
+                        "SELECT sqlite_compileoption_used('ENABLE_FTS5')",
+                        [],
+                        |row| row.get(0),
+                    )?,
+                    journal_mode: connection
+                        .query_row("PRAGMA journal_mode", [], |row| row.get(0))?,
+                    memory_fts: None,
+                })
             })
-        })
-        .await
+            .await?;
+        report.memory_fts = self
+            .writer
+            .run(|connection| {
+                let exists: bool = connection
+                    .query_row(
+                        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = 'memory_fts')",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(sql_error)?;
+                if !exists {
+                    return Ok(None);
+                }
+                Ok(Some(
+                    match connection.execute(
+                        "INSERT INTO memory_fts (memory_fts, rank) VALUES ('integrity-check', 1)",
+                        [],
+                    ) {
+                        Ok(_) => "ok".to_owned(),
+                        Err(error) => error.to_string(),
+                    },
+                ))
+            })
+            .await?;
+        Ok(report)
     }
 
     async fn meta(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError> {
@@ -445,6 +476,139 @@ impl Store for SqliteStore {
             .await
     }
 
+    async fn update_channel_settings(
+        &self,
+        channel_id: String,
+        changes: Vec<SettingChange>,
+        context: WriteContext,
+    ) -> Result<ChannelSettingsMap, StoreError> {
+        self.mutate(move |transaction| {
+            channels::update_channel_settings(transaction, &channel_id, &changes, &context)
+        })
+        .await
+    }
+
+    async fn get_memory(&self, id: String) -> Result<Option<Memory>, StoreError> {
+        self.read(move |connection| memories::get_memory(connection, &id))
+            .await
+    }
+
+    async fn find_memory_by_hash(
+        &self,
+        channel_id: String,
+        content_hash: Vec<u8>,
+        exclude: Option<String>,
+    ) -> Result<Option<String>, StoreError> {
+        self.read(move |connection| {
+            memories::find_by_hash(connection, &channel_id, &content_hash, exclude.as_deref())
+        })
+        .await
+    }
+
+    async fn list_memories(
+        &self,
+        filter: MemoryFilter,
+        page: PageRequest,
+    ) -> Result<Page<Memory>, StoreError> {
+        self.read(move |connection| memories::list_memories(connection, &filter, &page))
+            .await
+    }
+
+    async fn memory_history(
+        &self,
+        id: String,
+        page: PageRequest,
+    ) -> Result<Page<MemoryRevision>, StoreError> {
+        self.read(move |connection| memories::memory_history(connection, &id, &page))
+            .await
+    }
+
+    async fn get_revision(
+        &self,
+        id: String,
+        version: i64,
+    ) -> Result<Option<MemoryRevision>, StoreError> {
+        self.read(move |connection| memories::get_revision(connection, &id, version))
+            .await
+    }
+
+    async fn search_text(&self, query: TextQuery) -> Result<Vec<Memory>, StoreError> {
+        self.read(move |connection| memories::search_text(connection, &query))
+            .await
+    }
+
+    async fn create_memory(
+        &self,
+        new: NewMemory,
+        context: WriteContext,
+    ) -> Result<MemoryWrite, StoreError> {
+        self.mutate(move |transaction| memories::create_memory(transaction, &new, &context))
+            .await
+    }
+
+    async fn update_memory(
+        &self,
+        target: MemoryTarget,
+        patch: MemoryPatch,
+        context: WriteContext,
+    ) -> Result<MemoryWrite, StoreError> {
+        self.mutate(move |transaction| {
+            memories::update_memory(transaction, &target, &patch, &context)
+        })
+        .await
+    }
+
+    async fn set_memory_status(
+        &self,
+        target: MemoryTarget,
+        action: StatusAction,
+        context: WriteContext,
+    ) -> Result<Memory, StoreError> {
+        self.mutate(move |transaction| {
+            memories::set_memory_status(transaction, &target, action, &context)
+        })
+        .await
+    }
+
+    async fn move_memory(
+        &self,
+        target: MemoryTarget,
+        to_channel_id: String,
+        dedupe: bool,
+        context: WriteContext,
+    ) -> Result<Memory, StoreError> {
+        self.mutate(move |transaction| {
+            memories::move_memory(transaction, &target, &to_channel_id, dedupe, &context)
+        })
+        .await
+    }
+
+    async fn delete_memory(
+        &self,
+        target: MemoryTarget,
+        context: WriteContext,
+    ) -> Result<Memory, StoreError> {
+        self.mutate(move |transaction| memories::delete_memory(transaction, &target, &context))
+            .await
+    }
+
+    async fn bump_retrievals(&self, batch: Vec<RetrievalBump>) -> Result<(), StoreError> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        self.write(move |transaction| memories::bump_retrievals(transaction, &batch))
+            .await
+    }
+
+    async fn channel_stats(&self, channel_id: String) -> Result<Option<ChannelStats>, StoreError> {
+        self.read(move |connection| memories::channel_stats(connection, &channel_id))
+            .await
+    }
+
+    async fn category_counts(&self) -> Result<Vec<(String, u64)>, StoreError> {
+        self.read(memories::category_counts).await
+    }
+
     async fn get_settings(&self) -> Result<Vec<SettingRow>, StoreError> {
         self.read(settings::get_settings).await
     }
@@ -452,10 +616,18 @@ impl Store for SqliteStore {
     async fn update_settings(
         &self,
         changes: Vec<SettingChange>,
+        retained_categories: Option<Vec<String>>,
         context: WriteContext,
     ) -> Result<Vec<SettingRow>, StoreError> {
-        self.mutate(move |transaction| settings::update_settings(transaction, &changes, &context))
-            .await
+        self.mutate(move |transaction| {
+            settings::update_settings(
+                transaction,
+                &changes,
+                retained_categories.as_deref(),
+                &context,
+            )
+        })
+        .await
     }
 
     async fn find_idempotency(

@@ -10,5 +10,6 @@ mod identities;
 mod logging;
 mod matrix;
 mod mcp;
+mod memories;
 mod store;
 mod support;

@@ -2,7 +2,7 @@
 
 O Engramind é uma rede de memórias para agentes de IA: guarda fatos duráveis e curtos em **canais** e os entrega por **REST, MCP e CLI**. Cada agente se identifica por um **token** com escopos. Uma memória pertence ao canal, não ao agente que a escreveu; o autor é proveniência.
 
-Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as configurações, a auditoria, o status básico e esta documentação. As memórias chegam na próxima versão.
+Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as memórias (escrita, edição versionada, status, busca textual e histórico), as configurações, a auditoria, o status básico e esta documentação. O contexto montado (`get_context`) chega na próxima versão.
 
 ## Três vias, um contrato
 
@@ -25,6 +25,10 @@ Toda rota em `/v1` e o `/mcp` exigem `Authorization: Bearer eng.<token_id>.<segr
 Um token `agent` só alcança os canais que o agente assina (`403 CHANNEL_NOT_SUBSCRIBED` nos demais), com o acesso efetivo = escopos do token ∩ acesso da assinatura. O cabeçalho `Engramind-Channels` e o parâmetro `channels` restringem os canais de cada requisição. Os detalhes estão no guia `canais-e-assinaturas`.
 
 Rotas públicas, sem token: `GET /health/live`, `GET /health/ready`, `GET /openapi.json` e `GET /docs`.
+
+## Memórias
+
+Memórias são fatos duráveis e curtos gravados num canal, com revisões, auditoria e busca textual. Como escrever bem, editar com `expected_version`, reverter e buscar está no guia `escrever-memorias`.
 
 ## Envelope de erro
 

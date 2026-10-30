@@ -116,6 +116,24 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         description: "Assinatura inexistente.",
     },
     ErrorCodeDoc {
+        code: "MEMORY_NOT_FOUND",
+        status: 404,
+        exit_code: 5,
+        description: "Memória inexistente ou num canal fora do alcance do token (ou do `Engramind-Channels`).",
+    },
+    ErrorCodeDoc {
+        code: "REVISION_NOT_FOUND",
+        status: 404,
+        exit_code: 5,
+        description: "A memória não tem a versão pedida em `revert_memory`.",
+    },
+    ErrorCodeDoc {
+        code: "CATEGORY_NOT_FOUND",
+        status: 400,
+        exit_code: 2,
+        description: "Categoria fora de `categories.list`; `details.valid` lista as aceitas.",
+    },
+    ErrorCodeDoc {
         code: "GUIDE_NOT_FOUND",
         status: 404,
         exit_code: 5,
@@ -168,6 +186,30 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         status: 409,
         exit_code: 6,
         description: "Só um canal arquivado pode ser excluído; arquive antes.",
+    },
+    ErrorCodeDoc {
+        code: "CHANNEL_ARCHIVED",
+        status: 409,
+        exit_code: 6,
+        description: "O canal está arquivado e não recebe escrita; restaure-o antes.",
+    },
+    ErrorCodeDoc {
+        code: "MEMORY_VERSION_CONFLICT",
+        status: 409,
+        exit_code: 6,
+        description: "A memória mudou desde `expected_version`; `details.current_version` traz a atual.",
+    },
+    ErrorCodeDoc {
+        code: "MEMORY_DUPLICATE",
+        status: 409,
+        exit_code: 6,
+        description: "Já existe uma memória com o mesmo texto no canal; `details.existing_id` aponta para ela.",
+    },
+    ErrorCodeDoc {
+        code: "CATEGORY_IN_USE",
+        status: 409,
+        exit_code: 6,
+        description: "A mudança de `categories.list` retira categorias usadas; `details.in_use` traz a contagem.",
     },
     ErrorCodeDoc {
         code: "IDEMPOTENCY_KEY_CONFLICT",

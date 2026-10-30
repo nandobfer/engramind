@@ -1,5 +1,7 @@
 //! Canais e assinaturas no SQLite.
 
+use std::collections::BTreeMap;
+
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::{
@@ -13,7 +15,7 @@ use crate::{
         ids,
         model::{
             Channel, ChannelPatch, Lookup, Mode, Network, NewChannel, NewSubscription,
-            Subscription, SubscriptionPatch, WriteContext,
+            SettingChange, Subscription, SubscriptionPatch, WriteContext,
         },
         principal::{AgentRef, ScopeSet},
     },
@@ -108,9 +110,19 @@ pub(super) fn network(connection: &Connection) -> rusqlite::Result<Network> {
         .query_map([], subscription_from_row)?
         .map(|row| row.map(|subscription| with_reaches(subscription, &channels)))
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut statement =
+        connection.prepare("SELECT id, settings_json FROM channels WHERE settings_json <> '{}'")?;
+    let channel_settings = statement
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let json: String = row.get(1)?;
+            Ok((id, serde_json::from_str(&json).unwrap_or_default()))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
     Ok(Network {
         channels,
         subscriptions,
+        channel_settings,
     })
 }
 
@@ -277,10 +289,21 @@ pub(super) fn delete_channel(
         )
         .map_err(sql_error)?;
     transaction
+        .execute(
+            "DELETE FROM memory_revisions WHERE memory_id IN
+                 (SELECT id FROM memories WHERE channel_id = ?1)",
+            params![id],
+        )
+        .map_err(sql_error)?;
+    let memories = transaction
+        .execute("DELETE FROM memories WHERE channel_id = ?1", params![id])
+        .map_err(sql_error)?;
+    transaction
         .execute("DELETE FROM channels WHERE id = ?1", params![id])
         .map_err(sql_error)?;
     let mut audited = to_value(&before)?;
     audited["subscriptions_removed"] = serde_json::json!(removed);
+    audited["memories_removed"] = serde_json::json!(memories);
     journal::audit(
         transaction,
         context,
@@ -294,6 +317,60 @@ pub(super) fn delete_channel(
     )?;
     journal::remember(transaction, context, &before)?;
     Ok(before)
+}
+
+/// Aplica as mudanças em `channels.settings_json` (`None` remove a sobreposição) e devolve as
+/// sobreposições resultantes. Incrementa `channels.version`.
+pub(super) fn update_channel_settings(
+    transaction: &Transaction,
+    id: &str,
+    changes: &[SettingChange],
+    context: &WriteContext,
+) -> Result<BTreeMap<String, serde_json::Value>, StoreError> {
+    load_channel(transaction, id)?;
+    let json: String = transaction
+        .query_row(
+            "SELECT settings_json FROM channels WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .map_err(sql_error)?;
+    let before: BTreeMap<String, serde_json::Value> =
+        serde_json::from_str(&json).unwrap_or_default();
+    let mut after = before.clone();
+    for change in changes {
+        match &change.value_json {
+            Some(value) => {
+                let value = serde_json::from_str(value)
+                    .map_err(|error| StoreError::Internal(error.to_string()))?;
+                after.insert(change.key.clone(), value);
+            }
+            None => {
+                after.remove(&change.key);
+            }
+        }
+    }
+    let json =
+        serde_json::to_string(&after).map_err(|error| StoreError::Internal(error.to_string()))?;
+    transaction
+        .execute(
+            "UPDATE channels SET settings_json = ?1, version = version + 1 WHERE id = ?2",
+            params![json, id],
+        )
+        .map_err(sql_error)?;
+    journal::audit(
+        transaction,
+        context,
+        Entry {
+            action: "channel.settings_update",
+            entity: "channel",
+            entity_id: Some(id),
+            before: Some(to_value(&before)?),
+            after: Some(to_value(&after)?),
+        },
+    )?;
+    journal::remember(transaction, context, &after)?;
+    Ok(after)
 }
 
 // ---------- assinaturas ----------
