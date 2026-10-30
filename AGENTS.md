@@ -90,6 +90,7 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 - `cargo fmt --check` e `cargo clippy --all-targets -- -D warnings` passam.
 - Lints do crate: `print_stdout`, `print_stderr` e `dbg_macro` negados; `unsafe_code = "deny"`, com um único bloco `unsafe` (registro do `sqlite-vec`) isolado num módulo com `#[allow(unsafe_code)]` e comentário de justificativa.
 - Comportamento novo tem teste; correção de bug tem teste de regressão.
+- Testes rodam com `cargo-nextest`. Integração vive num único binário, `tests/it/main.rs`, com um módulo amplo por domínio e helpers em `tests/it/support/`; nunca crie um arquivo novo direto em `tests/`. Rode só os afetados: `cargo nextest run -E 'test(/<módulo>::/)'`; a suíte completa é `./scripts/test.sh`.
 - Testes usam SQLite temporário por teste e provedores falsos determinísticos (LLM roteirizado, embeddings por hash, servidor de webhook de teste). Nunca dependem de rede ou de provedor real.
 - A matriz token × assinatura × operação cobre escopos e acesso efetivo.
 - Execute primeiro o menor conjunto de verificações que valide a mudança (teste do módulo, regressão, lint, contrato). Rode a suíte completa só quando o usuário pedir ou quando a mudança atingir muitas áreas e o impacto não puder ser delimitado; na dúvida, informe o risco residual.

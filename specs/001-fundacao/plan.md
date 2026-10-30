@@ -21,7 +21,7 @@ Portar o esqueleto do sap-middleman (config, observabilidade, erro, extractors, 
 | Testes/CI | `cargo-nextest` (archive + partition), um binário de integração, `Swatinem/rust-cache`, `cargo-chef` + cache `gha` do Buildx |
 | CD | skill `setup-ci-cd` (build no runner, SCP, `docker load`, Compose sem build/pull) |
 
-Dependências: `anyhow`, `axum`, `base64`, `chrono`, `clap`, `dotenvy`, `rusqlite`, `rusqlite_migration`, `serde`, `serde_json`, `sqlite-vec`, `thiserror`, `tokio`, `tower-http`, `tracing`, `tracing-subscriber`, `utoipa`, `utoipa-swagger-ui`, `uuid`, `zeroize`; dev: `http`, `http-body-util`, `tempfile`, `tower`. Registradas em `docs/decisions/0001-dependencias-base.md`.
+Dependências: `anyhow`, `axum`, `base64`, `chrono`, `clap`, `dotenvy`, `hmac`, `sha2`, `rusqlite`, `rusqlite_migration`, `serde`, `serde_json`, `sqlite-vec`, `thiserror`, `tokio`, `tower-http`, `tracing`, `tracing-subscriber`, `utoipa`, `utoipa-swagger-ui`, `uuid`, `zeroize`; dev: `http`, `http-body-util`, `tempfile`, `tower`. Registradas em `docs/decisions/0001-dependencias-base.md`.
 
 ## Checklist do AGENTS.md
 
@@ -38,7 +38,7 @@ Dependências: `anyhow`, `axum`, `base64`, `chrono`, `clap`, `dotenvy`, `rusqlit
 **Deploy**: `Dockerfile`, `docker-compose.yml`, `docker/entrypoint.sh`, `litestream.yml`, `.env.example`.
 **Qualidade**: `scripts/`, `.config/nextest.toml`, `.github/workflows/ci-cd.yml`, `tests/it/`.
 **CD**: `scripts/deploy-production.ts`, `docker-compose.deploy.yml`.
-**Docs**: `CHANGELOG.md`, `docs/decisions/0001-0004`, `docs/openapi.json`, `aicontext/README.md`, `aicontext/use-quando-configurar-deploy.md` (redes).
+**Docs**: `CHANGELOG.md`, `docs/decisions/0001`–`0006`, `docs/openapi.json`, `aicontext/README.md`, `aicontext/use-quando-configurar-deploy.md` (redes).
 
 ## Estratégia de implementação
 
@@ -68,7 +68,7 @@ Dependências: `anyhow`, `axum`, `base64`, `chrono`, `clap`, `dotenvy`, `rusqlit
 | Risco | Mitigação |
 |-------|-----------|
 | `sqlite-vec` incompatível com a versão do SQLite do `rusqlite` bundled | Spike no passo 1 antes de qualquer outro código. |
-| Litestream 0.5 mudou flags (`-if-replica-exists`, `snapshots`) | Fixar versão e validar os comandos no build da imagem. |
+| Litestream 0.5 mudou flags (`-if-replica-exists`; `snapshots` virou `ltx`) | Fixar versão e validar os comandos no build da imagem. |
 | Docker rootless sem acesso à rede no build | `build.network: host`, como `opex` e `dndicas`. |
 | Shards com pouco teste no início custarem mais em subida de job do que economizam | A quantidade é uma lista na matriz; `report.md` registra os tempos e a lista pode cair para 2 até a suíte crescer. |
 | `cargo nextest archive` não levar algo que os testes leem em runtime (guias, migrações, snapshots) | Guias e migrações entram por `include_str!`; snapshots são lidos de `CARGO_MANIFEST_DIR` remapeado com `--workspace-remap .` (checkout no shard). |

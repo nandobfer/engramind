@@ -6,13 +6,13 @@
 
 | ID | Tópico | Pergunta | Status | Resolução |
 |----|--------|----------|--------|-----------|
-| Q-001 | Envelope | Seguir o envelope do desenho (`{ error: { code, message, details? } }`, sucesso sem `{ success, data }`) ou o do sap-middleman (`{ success, error, code, details }` e `{ success, data }`)? | aberta | Recomendação: desenho. É contrato documentado do Engramind e o sap-middleman é referência só onde o desenho não decide. |
+| Q-001 | Envelope | Seguir o envelope do desenho (`{ error: { code, message, details? } }`, sucesso sem `{ success, data }`) ou o do sap-middleman (`{ success, error, code, details }` e `{ success, data }`)? | resolvida | Desenho (D-023). |
 | Q-002 | Rede Docker | Quais redes externas o serviço usa? | resolvida | D-006. |
-| Q-003 | Porta | Qual `APP_PORT` padrão? | aberta | Recomendação: `4300` (desenho §16); está livre em `/home/used_ports`. Registrar a porta lá ao implantar. |
-| Q-005 | Cobertura no CI | O `cargo llvm-cov` do sap-middleman recompila tudo instrumentado e roda a suíte inteira em série de shards; no PR isso anula o ganho dos shards. | aberta | Recomendação: cobertura só em push na `main`, em job paralelo ao build e que não bloqueia o deploy (relatório `lcov` como artefato); no PR, só lint, shards e compose. `scripts/test.sh` continua gerando o resumo de cobertura localmente. |
-| Q-006 | Workflow de prévia | O `opex` tem `preview.yml` (`workflow_dispatch` para as prévias do desenvolvimento agêntico). O Engramind terá prévias pelo Opex? | aberta | Recomendação: não nesta etapa; quando o Engramind entrar no fluxo de prévias do Opex, aplicar a skill `setup-preview-workflow`. |
-| Q-007 | Servidor de produção | Em qual servidor, diretório e usuário o deploy acontece? | aberta | Recomendação: o mesmo host dos serviços em `/home` (`DEPLOY_REMOTE_DIR=/home/engramind`, projeto `engramind-4300`); valores reais só como Secrets/Variables do Environment `production`. |
-| Q-004 | Destino do backup | Litestream replica para qual S3? | aberta | Recomendação: MinIO do host (`http://minio:9000`, rede `minio-network`), bucket próprio do Engramind criado manualmente; credenciais só no `.env`. |
+| Q-003 | Porta | Qual `APP_PORT` padrão? | resolvida | `8000`, registrada em `/home/used_ports` (D-024). |
+| Q-004 | Destino do backup | Litestream replica para qual S3? | resolvida | MinIO do host (`http://minio:9000`, rede `minio-network`), bucket `engramind`; credenciais só no `.env` do servidor (D-025). |
+| Q-005 | Cobertura no CI | O `cargo llvm-cov` recompila tudo instrumentado; no PR isso anula o ganho dos shards. | resolvida | Cobertura só em push na `main`, em job paralelo ao build que não bloqueia o deploy (artefato `lcov.info`); no PR, só lint, shards e compose. `scripts/test.sh` gera o resumo localmente. |
+| Q-006 | Workflow de prévia | O Engramind terá prévias pelo Opex (`preview.yml`)? | resolvida | Não. O Engramind não terá workflow de prévia. |
+| Q-007 | Servidor de produção | Em qual servidor, diretório e usuário o deploy acontece? | resolvida | Mesmo host dos serviços em `/home`: `DEPLOY_REMOTE_DIR=/home/engramind`, projeto `engramind-8000`; valores reais só como Secrets/Variables do Environment `production`. |
 
 ## Decisões
 
@@ -20,13 +20,13 @@
 |----|---------|-------|---------|
 | D-001 | Toolchain 1.98.0, edition 2024, `rust-version = "1.98"`, componentes `clippy`, `llvm-tools-preview`, `rustfmt`. | sap-middleman | Mesma base do serviço em produção. |
 | D-002 | Lints iguais ao sap-middleman, com `unsafe_code = "deny"` e um único `#[allow(unsafe_code)]` em `src/store/sqlite/vec_extension.rs`. | desenho §3 | Exceção documentada em `docs/decisions/0004`. |
-| D-003 | Um binário `engramind`; a imagem instala o link `engramind -> engramind`. O `clap` aceita os dois nomes e a mesma árvore de comandos (`serve`, `migrate`, `doctor` e, a partir da 002, os comandos de cliente). | desenho §3 e §13 | Um artefato só; `engramind serve` e `engramind serve` são equivalentes. |
+| D-003 | Um binário `engramind`; a imagem instala o link `eng -> engramind`. O `clap` aceita os dois nomes e a mesma árvore de comandos (`serve`, `migrate`, `doctor` e, a partir da 002, os comandos de cliente). | desenho §3 e §13 | Um artefato só; `engramind serve` e `eng serve` são equivalentes. |
 | D-004 | `Store` é uma trait com `async fn` (sem `dyn`); o `core` é genérico em `S: Store` e o `AppState` usa o alias `type AppStore = SqliteStore`. Testes usam o próprio `SqliteStore` em `tempdir`, nunca um falso. | desenho §3, §21 | Troca futura para Postgres altera só o alias e a implementação. |
 | D-005 | Escritor: uma `std::thread` dona da `rusqlite::Connection`, alimentada por `tokio::sync::mpsc` com closures `FnOnce(&Transaction) -> Result<R>` e resposta por `oneshot`. Leitores: pool próprio de `READ_POOL_SIZE` conexões somente leitura (padrão 4) com `tokio::sync::Semaphore` e `spawn_blocking`. Sem `r2d2`. | desenho §16 | Uma dependência a menos; contrato de escrita serializada explícito. |
 | D-006 | Redes do compose: `engramind-network` (externa, nome por `ENGRAMIND_NETWORK`) para os consumidores alcançarem `http://${CONTAINER_NAME}:${APP_PORT}`, e `minio-network` (externa, nome por `S3_NETWORK`) para o Litestream. Build com `network: host` (Docker rootless). | padrão do host: cada serviço compartilhado tem `<serviço>-network` externa (`mongodb-network`, `soketi-network`, `minio-network`, `postgresql-network`, `mysql-network`) e os consumidores (`opex`, `dndicas`) se juntam a ela; o build usa `network: host` | Antes do primeiro `up`: `docker network create engramind-network`. Consumidores adicionam a rede ao próprio compose. |
 | D-007 | `restart: unless-stopped`, limites `cpus: '2.0'` e `memory: 2G` (como o sap-middleman), `init: true`, `image: ${API_IMAGE:-engramind-api:latest}`. | desenho §16, sap-middleman | — |
 | D-008 | Migrações com `rusqlite_migration`, SQL em `migrations/NNNN_nome.sql` via `include_str!`. `schema_meta(key, value)` guarda o pepper check (HMAC de um contexto fixo, como `0002_token_pepper_check.sql` do sap-middleman). | desenho §6, sap-middleman | Pepper trocado é detectado no startup. |
-| D-009 | `doctor` lê a idade da réplica com `litestream snapshots`/`ltx` do binário instalado; sem Litestream, informa "sem backup". | desenho §16 | Exige o binário no contêiner; fora dele o item é pulado. |
+| D-009 | `doctor` lê a idade da réplica com `litestream ltx` do binário instalado (a v0.5 não tem mais `snapshots`); sem Litestream, informa "sem backup". | desenho §16 | Exige o binário no contêiner; fora dele o item é pulado. |
 | D-010 | Erros de startup são logados com `event = "application.failed"` e o processo sai com código ≠ 0, como `main.rs` do sap-middleman. | sap-middleman | — |
 
 | D-011 | **Shards como no `opex`/`dndicas`**: matriz `shard: [1, 2, 3, 4]`, check `Test (i/4)`, `concurrency` com o shard no grupo e `cancel-in-progress` só em PR, `fail-fast: false`. Para mudar a quantidade, edita-se só a lista. | `opex` e `dndicas` `ci-cd.yml` | A proteção da `main` exige os 4 checks. |
@@ -41,6 +41,12 @@
 | D-020 | **Variáveis do deploy**: `DEPLOY_SERVICE=api`, `DEPLOY_IMAGE_REPOSITORY=engramind-api`, `DEPLOY_REQUIRED_NETWORKS=engramind-network,minio-network`, `DEPLOY_HEALTHCHECK_URL=http://127.0.0.1:<APP_PORT>/health/ready` (o `curl` roda no servidor). | skill `setup-ci-cd` | — |
 | D-021 | **Uma instância por banco no deploy**: o Compose recria o contêiner (para o antigo, sobe o novo), então nunca há dois processos no mesmo volume. Rollback de imagem só é seguro quando nenhuma migração nova foi aplicada; com migração nova, o rollback é restaurar do Litestream. Migrações são sempre aditivas. | desenho §16 | Registrado no guia `operacao`. |
 | D-022 | **Rodando os testes localmente** (regra do `AGENTS.md` mantida): só os afetados — `cargo nextest run -E 'test(/<módulo>::/)'` ou `cargo nextest run <filtro>`; suíte completa (`./scripts/test.sh`) só a pedido. | `opex` §6 "Rodando os testes" | Documentado em `aicontext/` quando os comandos existirem. |
+
+| D-023 | Envelope do desenho: erro `{ error: { code, message, details? } }`; sucesso devolve o recurso direto, sem `{ success, data }`. | Q-001 | Diverge do sap-middleman de propósito. |
+| D-024 | `APP_PORT=8000` no `.env.example`, no projeto Compose (`engramind-8000`) e em `/home/used_ports`. | Q-003 | Substitui o `4300` do desenho §16. |
+| D-025 | Litestream → MinIO do host, bucket `engramind`, caminho `ENGRAMIND_S3_PATH`; as credenciais ficam só no `.env` do servidor. | Q-004 | — |
+| D-026 | `Store` com métodos `fn …(&self) -> impl Future<Output = …> + Send` (RPITIT) em vez de `async fn`, para que os futures sejam `Send` em handlers axum genéricos em `S: Store`. | D-004 | Forma de escrita; a decisão de trait estática sem `dyn` não muda. |
+| D-027 | O pepper check usa HMAC-SHA256 (`hmac` + `sha2`) com contexto fixo `engramind:token-pepper:v1`, como o `TokenService` do sap-middleman. As duas crates entram já na 001. | D-008 | Mesmas crates da 002. |
 
 ## Bloqueios
 

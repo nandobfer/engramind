@@ -77,10 +77,11 @@ Os códigos ficam num catálogo único (`pub const ERROR_CODES: &[ErrorCodeDoc]`
 
 ```rust
 pub trait Store: Clone + Send + Sync + 'static {
-    async fn ready(&self) -> Result<ReadyReport, StoreError>;     // banco acessível e migrações em dia
-    async fn diagnose(&self) -> Result<DoctorReport, StoreError>;  // integrity_check, migrações, extensões
-    async fn meta(&self, key: &str) -> Result<Option<Vec<u8>>, StoreError>;
-    async fn set_meta(&self, key: &str, value: &[u8]) -> Result<(), StoreError>;
+    // D-026: RPITIT com `+ Send` em vez de `async fn`.
+    fn ready(&self) -> impl Future<Output = Result<ReadyReport, StoreError>> + Send;    // banco acessível e migrações em dia
+    fn diagnose(&self) -> impl Future<Output = Result<DoctorReport, StoreError>> + Send; // integrity_check, migrações, extensões
+    fn meta(&self, key: &str) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
+    fn set_meta(&self, key: &str, value: &[u8]) -> impl Future<Output = Result<(), StoreError>> + Send;
 }
 
 pub enum StoreError {
@@ -118,7 +119,7 @@ CREATE TABLE schema_meta (
 | Método | Rota | `operationId` | Tag | Segurança | Respostas |
 |---|---|---|---|---|---|
 | GET | `/health/live` | `health_live` | Health | nenhuma | 200 `{ status: "ok" }` |
-| GET | `/health/ready` | `health_ready` | Health | nenhuma | 200 `{ status, database, migrations }`; 503 `DATABASE_UNAVAILABLE` / `MIGRATIONS_PENDING` |
+| GET | `/health/ready` | `health_ready` | Health | nenhuma | 200 `{ status: "ready", database: "ok", migrations: { applied, expected } }`; 503 `DATABASE_UNAVAILABLE` / `MIGRATIONS_PENDING` (com `details.applied`/`expected`) |
 | GET | `/openapi.json` | `get_openapi_document` | Operations | nenhuma | 200 |
 | GET | `/` | `open_swagger_ui` | Operations | nenhuma | 303 `Location: docs/` |
 | GET | `/docs` | `get_swagger_ui` | Operations | nenhuma | 303 `Location: docs/` |
@@ -179,12 +180,13 @@ volumes:
 ```yaml
 dbs:
   - path: ${DATABASE_PATH}
-    replicas:
-      - type: s3
-        bucket: ${ENGRAMIND_S3_BUCKET}
-        path: ${ENGRAMIND_S3_PATH}
-        endpoint: ${ENGRAMIND_S3_ENDPOINT}
-        force-path-style: true
+    replica:            # Litestream 0.5: `replicas:` (lista) está obsoleto
+      type: s3
+      bucket: ${ENGRAMIND_S3_BUCKET}
+      path: ${ENGRAMIND_S3_PATH}
+      endpoint: ${ENGRAMIND_S3_ENDPOINT}
+      region: us-east-1
+      force-path-style: true
 ```
 
 `.env.example` = lista do §16 acrescida de `READ_POOL_SIZE`, `ENGRAMIND_NETWORK`, `S3_NETWORK` e `ENGRAMIND_S3_ENDPOINT=http://minio:9000`.

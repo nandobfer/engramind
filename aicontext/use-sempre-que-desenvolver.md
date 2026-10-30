@@ -29,7 +29,10 @@
 
 - Adicione teste para comportamento novo e regressão para bug corrigido.
 - Testes usam SQLite temporário e provedores falsos determinísticos; nunca rede ou provedores reais.
-- Execute primeiro as verificações focadas (`cargo test <filtro>`, Clippy, contrato). Reserve a suíte completa para pedido explícito ou mudanças amplas sem impacto delimitável.
+- Execute primeiro as verificações focadas (`cargo nextest run -E 'test(/<módulo>::/)'`, Clippy, contrato). Reserve a suíte completa (`./scripts/test.sh`) para pedido explícito ou mudanças amplas sem impacto delimitável.
+- Testes de integração vivem num único binário, `tests/it/main.rs`, com um módulo amplo por domínio e helpers em `tests/it/support/`. Nunca crie um arquivo novo direto em `tests/`.
+- Dentro dos testes, leia `CARGO_MANIFEST_DIR` e `NEXTEST_BIN_EXE_engramind` em tempo de execução: nos shards do CI os caminhos de compilação não existem.
+- `UPDATE_SNAPSHOTS=1 cargo nextest run -E 'test(/contract::/)'` regenera `docs/openapi.json`.
 - Confira core, REST, OpenAPI, MCP, CLI, guias e skill como um único contrato.
 - Toda chamada externa tem timeout; retry só com backoff e para operações seguras.
 - Provedores falsos nunca são fallback silencioso em produção.

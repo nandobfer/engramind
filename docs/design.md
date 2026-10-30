@@ -706,14 +706,15 @@ citado nela precisa existir em `engramind help --json` (§15).
 ### Docker (mesmo padrão do sap-middleman)
 
 **`Dockerfile`** multi-stage, só para a imagem de produção (sem estágio de desenvolvimento):
-- `builder`: `rust:<versão>-bookworm` com `ca-certificates`, `curl` e `pkg-config`, rodando
-  `cargo build --locked --release` com cache de registry e `target`.
+- `chef` → `planner` → `builder`: `rust:<versão>-bookworm` com `ca-certificates`, `curl`,
+  `pkg-config` e `cargo-chef` de versão fixa; a camada de dependências (`cargo chef cook`) é
+  cacheada pelo Buildx (cache `gha` no CI) e só o crate é recompilado (`cargo build --locked --release`).
 - `runtime`: `debian:bookworm-slim` com `ca-certificates`, `curl`, o binário, o Litestream e o
-  entrypoint. Roda com usuário de sistema sem privilégios, `EXPOSE ${APP_PORT}` e
+  entrypoint, e o link `eng -> engramind`. Roda com usuário de sistema sem privilégios, `EXPOSE ${APP_PORT}` e
   `HEALTHCHECK` em `/health/live`.
-- O runtime inclui a biblioteca do ONNX Runtime, porque o provedor local de embeddings é o padrão.
-  O modelo não entra na imagem: é baixado no primeiro uso para `/data/models`.
-- O desenvolvimento acontece fora do Docker (`cargo run` / `cargo test`). O contêiner é sempre o
+- A partir da 0.7.0 (embeddings), o runtime inclui a biblioteca do ONNX Runtime, porque o provedor
+  local de embeddings é o padrão. O modelo não entra na imagem: é baixado no primeiro uso para `/data/models`.
+- O desenvolvimento acontece fora do Docker (`cargo run` / `cargo nextest run`). O contêiner é sempre o
   artefato de produção.
 
 **`docker-compose.yml`**, com um único serviço e **sem perfis** (`docker compose up -d --build`):
@@ -721,17 +722,21 @@ citado nela precisa existir em `engramind help --json` (§15).
 - Serviço `api`: `build` do `Dockerfile`, `image: ${API_IMAGE:-engramind-api:latest}`,
   `container_name: ${CONTAINER_NAME}`, `init: true`, `restart: unless-stopped`, limites de CPU e
   memória e porta `${APP_PORT}`.
-- Variáveis obrigatórias com `${VAR:?…}` (porta, pepper, chave de cifra).
-- Rede externa configurável (padrão igual à do sap-middleman) e o volume nomeado `engramind-data:/data`.
+- Variáveis obrigatórias com `${VAR:?…}` (porta, nome do contêiner, pepper, chave de cifra e
+  `MCP_ALLOWED_HOSTS`).
+- Redes externas `engramind-network` (`ENGRAMIND_NETWORK`, onde os consumidores alcançam o serviço)
+  e `minio-network` (`S3_NETWORK`, destino do Litestream), e o volume nomeado `engramind-data:/data`.
+- Na `main`, o CI constrói a imagem no runner e a implanta por SCP com `docker-compose.deploy.yml`
+  (`API_IMAGE`, `pull_policy: never`), sem build nem pull no servidor (`docs/decisions/0006`).
 
 **`.env.example`**, só com infraestrutura:
 
 ```env
 APP_ENV=production
 APP_HOST=0.0.0.0
-APP_PORT=4300
+APP_PORT=8000
 CONTAINER_NAME=engramind-api
-# API_IMAGE=engramind-api:4300
+# API_IMAGE=engramind-api:8000
 
 DATABASE_PATH=/data/engramind.db
 MODELS_PATH=/data/models

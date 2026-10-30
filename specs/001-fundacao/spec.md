@@ -1,7 +1,7 @@
 # Spec - fundação operável
 
 **Criado em**: 2026-10-30
-**Status**: Draft
+**Status**: Implementada (0.1.0)
 **Versão alvo**: 0.1.0
 **Input**: Desenho §3, §15, §16, §18, §20, §21, o padrão operacional do sap-middleman e o CI/CD do `opex` e do `dndicas` (skill `setup-ci-cd`).
 
@@ -12,7 +12,7 @@ Entregar o esqueleto executável do Engramind: binário único, configuração d
 ## Escopo
 
 - `Cargo.toml` (edition 2024, `rust-version = "1.98"`), `rust-toolchain.toml` 1.98.0, lints do crate.
-- Binário único `engramind`, também invocável como `engramind`, com os subcomandos `serve`, `migrate` e `doctor`.
+- Binário único `engramind`, também invocável como `eng`, com os subcomandos `serve`, `migrate` e `doctor`.
 - `config.rs`: variáveis de infraestrutura do §16, `Secret` com `zeroize`, falha no startup quando obrigatórias faltam ou são inválidas.
 - `observability.rs`: `LOG_FORMAT`, `LOG_ANSI`, `RUST_LOG`, request id, evento único `http.request.completed`.
 - `error.rs`: envelope `{ error: { code, message, details? } }`.
@@ -62,7 +62,7 @@ Entregar o esqueleto executável do Engramind: binário único, configuração d
 - `/metrics` (008) e `/mcp` (002).
 - Embeddings e ONNX Runtime na imagem (007).
 - Estágio de desenvolvimento no `Dockerfile` e perfis no compose (o desenho proíbe).
-- Workflow de prévia (`preview.yml`) do `opex` — ver Q-006 do `clarify.md`.
+- Workflow de prévia (`preview.yml`) do `opex`: o Engramind não terá prévias (Q-006).
 
 ## Critérios de sucesso
 
