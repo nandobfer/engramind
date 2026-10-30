@@ -4,7 +4,7 @@
 
 ## Entrega
 
-Todos os requisitos FR-001 a FR-023 estão implementados (ver `implement.md`). Faltam o primeiro deploy na `main` e a cobertura, que só rodam depois do merge.
+Todos os requisitos FR-001 a FR-023 estão implementados (ver `implement.md`). O PR #1 foi integrado e o primeiro deploy na `main` foi concluído.
 
 ## Verificação executada
 
@@ -19,6 +19,9 @@ Todos os requisitos FR-001 a FR-023 estão implementados (ver `implement.md`). F
 | Restore depois de apagar o volume | banco restaurado da réplica (sem nova migração nem novo registro do pepper) |
 | Pepper divergente sobre o banco restaurado | startup recusado com `application.failed` |
 | CI no PR #1 | `Lint`, `Build tests`, `Test (1/4)`…`Test (4/4)` e `Compose` verdes |
+| Push na `main` (run 41110439354) | todos os jobs verdes; `Build image` levou 5m12s (cache `gha` vazio), com smoke test; `Deploy production` levou 48 s |
+| Produção (`engramind-api`, porta 8000) | `/health/ready` 200; contêiner `healthy` com a imagem do commit; `eng doctor` tudo ok, com a última réplica no MinIO |
+| Cobertura (`Coverage`, `lcov.info`) | 79,4% das linhas (1320/1662) |
 
 Os dados do teste de restore (`engramind/verify-local`) foram apagados do bucket.
 
@@ -40,5 +43,4 @@ Com 43 testes, cada shard gasta mais tempo subindo o job do que executando. A li
 ## Pendências
 
 - `cargo llvm-cov` não linka nesta máquina, porque o `cc` local é um wrapper do `zig cc`. A cobertura roda só no job `Coverage` da `main`.
-- `/home/engramind` (com o `.env` de produção) precisa existir antes do primeiro deploy.
 - `actions/upload-artifact` e `actions/download-artifact` v5 (os mesmos SHAs do `opex`) rodam em Node 20, que está obsoleto; o GitHub força Node 24 e emite um aviso.
