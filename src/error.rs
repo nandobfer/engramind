@@ -71,7 +71,13 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         code: "SCOPE_REQUIRED",
         status: 403,
         exit_code: 4,
-        description: "O tipo ou os escopos do token não permitem a operação; `details` traz `required_kind` e `required_scope`.",
+        description: "O tipo ou os escopos do token (ou o acesso efetivo no canal) não permitem a operação; `details` traz `required_kind`, `required_scope` e, no canal, `channel`.",
+    },
+    ErrorCodeDoc {
+        code: "CHANNEL_NOT_SUBSCRIBED",
+        status: 403,
+        exit_code: 4,
+        description: "O token não alcança o canal (sem assinatura ou fora da seleção `channels`/`Engramind-Channels`); `details.channel` traz o slug.",
     },
     ErrorCodeDoc {
         code: "ROUTE_NOT_FOUND",
@@ -96,6 +102,18 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         status: 404,
         exit_code: 5,
         description: "Token inexistente.",
+    },
+    ErrorCodeDoc {
+        code: "CHANNEL_NOT_FOUND",
+        status: 404,
+        exit_code: 5,
+        description: "Canal inexistente; canais nunca nascem implicitamente.",
+    },
+    ErrorCodeDoc {
+        code: "SUBSCRIPTION_NOT_FOUND",
+        status: 404,
+        exit_code: 5,
+        description: "Assinatura inexistente.",
     },
     ErrorCodeDoc {
         code: "GUIDE_NOT_FOUND",
@@ -137,7 +155,19 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         code: "SLUG_ALREADY_EXISTS",
         status: 409,
         exit_code: 6,
-        description: "Já existe um app (ou agente no mesmo app) com esse slug.",
+        description: "Já existe um app, um agente no mesmo app ou um canal com esse slug.",
+    },
+    ErrorCodeDoc {
+        code: "SUBSCRIPTION_EXISTS",
+        status: 409,
+        exit_code: 6,
+        description: "O agente já assina esse alvo (mesmo canal exato ou mesmo prefixo).",
+    },
+    ErrorCodeDoc {
+        code: "CHANNEL_NOT_ARCHIVED",
+        status: 409,
+        exit_code: 6,
+        description: "Só um canal arquivado pode ser excluído; arquive antes.",
     },
     ErrorCodeDoc {
         code: "IDEMPOTENCY_KEY_CONFLICT",

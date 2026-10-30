@@ -1,5 +1,5 @@
-//! Tipos persistidos e expostos pelo `core`: apps, agentes, tokens, auditoria, configurações e
-//! idempotência. Nenhum carrega segredo ou digest, exceto `AuthTokenRow`, que não sai do `core`.
+//! Tipos persistidos e expostos pelo `core`: apps, agentes, tokens, canais, assinaturas,
+//! auditoria, configurações e idempotência. Nenhum carrega segredo ou digest, exceto `AuthTokenRow`, que não sai do `core`.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -275,4 +275,138 @@ pub fn token_status(revoked_at: Option<&str>, expires_at: Option<&str>, now: &st
     } else {
         TokenStatus::Active
     }
+}
+
+/// Modo de uma assinatura (desenho §5): `inject` entra no contexto, na busca e nas dicas;
+/// `search` só na busca e nas dicas; `manage` só quando o canal é citado explicitamente.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Mode {
+    Inject,
+    Search,
+    Manage,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Inject => "inject",
+            Self::Search => "search",
+            Self::Manage => "manage",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "inject" => Some(Self::Inject),
+            "search" => Some(Self::Search),
+            "manage" => Some(Self::Manage),
+            _ => None,
+        }
+    }
+}
+
+/// Alcance efetivo do token que consultou o canal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ChannelReach {
+    pub mode: Mode,
+    /// Escopos do token ∩ acesso da assinatura.
+    #[schema(example = json!(["read"]))]
+    pub access: Vec<Scope>,
+    /// Prioridade da assinatura, ou a do canal quando a assinatura não a define.
+    pub priority: i64,
+    /// Assinatura que dá o alcance (a mais específica); `null` para token admin.
+    #[schema(example = "sub_7c2e9a10")]
+    pub subscription: Option<String>,
+    /// Alvo dessa assinatura; `null` para token admin.
+    #[schema(example = "eng/*")]
+    pub target: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Channel {
+    #[schema(example = "ch_1a2b3c4d")]
+    pub id: String,
+    /// Hierárquico com `/`; imutável.
+    #[schema(example = "eng/global")]
+    pub slug: String,
+    #[schema(example = "Engenharia global")]
+    pub name: String,
+    pub description: Option<String>,
+    /// Prioridade padrão na ordem do contexto.
+    pub priority: i64,
+    /// Cresce a cada mudança do canal.
+    #[schema(example = 1)]
+    pub version: i64,
+    #[schema(example = "2026-10-30T12:00:00.000Z")]
+    pub created_at: String,
+    /// Preenchido quando o canal foi arquivado.
+    pub archived_at: Option<String>,
+    /// Alcance do token em `list_channels` e `get_channel`; ausente nas respostas de mutação.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<ChannelReach>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Subscription {
+    #[schema(example = "sub_7c2e9a10")]
+    pub id: String,
+    pub agent: AgentRef,
+    /// Canal exato (`eng/global`) ou prefixo terminado em `*` (`eng/*`, `eng/projeto-*`).
+    #[schema(example = "eng/*")]
+    pub target: String,
+    pub is_prefix: bool,
+    pub mode: Mode,
+    /// Restrição de acesso; `null` usa os escopos do token do agente.
+    #[schema(example = json!(["read"]))]
+    pub access: Option<Vec<Scope>>,
+    /// Sobrepõe a prioridade do canal; `null` usa a do canal.
+    pub priority: Option<i64>,
+    #[schema(example = "2026-10-30T12:00:00.000Z")]
+    pub created_at: String,
+    /// Slugs dos canais ativos que o alvo alcança agora.
+    #[serde(default)]
+    #[schema(example = json!(["eng/global", "eng/projeto-atlas"]))]
+    pub reaches: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewChannel {
+    pub slug: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub priority: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ChannelPatch {
+    pub name: Option<String>,
+    pub description: Option<Option<String>>,
+    pub priority: Option<i64>,
+}
+
+/// Assinatura a gravar. `target` vem sem o `*` final quando `is_prefix`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewSubscription {
+    pub agent_id: String,
+    pub target: String,
+    pub is_prefix: bool,
+    pub mode: Mode,
+    pub access: Option<Vec<Scope>>,
+    pub priority: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SubscriptionPatch {
+    pub mode: Option<Mode>,
+    pub access: Option<Option<Vec<Scope>>>,
+    pub priority: Option<Option<i64>>,
+}
+
+/// A rede inteira: todos os canais (com os arquivados) e todas as assinaturas, ordenados por
+/// slug e por `(created_at, id)`. Base do resolvedor de acesso efetivo.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Network {
+    pub channels: Vec<Channel>,
+    pub subscriptions: Vec<Subscription>,
 }

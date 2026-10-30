@@ -2,7 +2,7 @@
 
 O Engramind é uma rede de memórias para agentes de IA: guarda fatos duráveis e curtos em **canais** e os entrega por **REST, MCP e CLI**. Cada agente se identifica por um **token** com escopos. Uma memória pertence ao canal, não ao agente que a escreveu; o autor é proveniência.
 
-Nesta versão existem as identidades (apps, agentes e tokens), as configurações, a auditoria, o status básico e esta documentação. Canais, assinaturas e memórias chegam nas próximas versões.
+Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as configurações, a auditoria, o status básico e esta documentação. As memórias chegam na próxima versão.
 
 ## Três vias, um contrato
 
@@ -19,6 +19,10 @@ O `operationId` do OpenAPI é o próprio nome base. `list_operations` e `get_ope
 ## Autenticação
 
 Toda rota em `/v1` e o `/mcp` exigem `Authorization: Bearer eng.<token_id>.<segredo>`. Token ausente, inválido, expirado, revogado ou de app/agente desativado recebe `401 AUTH_INVALID`. Tipo ou escopo insuficiente recebe `403 SCOPE_REQUIRED`. Os detalhes estão no guia `tokens-e-escopos`.
+
+## Canais
+
+Um token `agent` só alcança os canais que o agente assina (`403 CHANNEL_NOT_SUBSCRIBED` nos demais), com o acesso efetivo = escopos do token ∩ acesso da assinatura. O cabeçalho `Engramind-Channels` e o parâmetro `channels` restringem os canais de cada requisição. Os detalhes estão no guia `canais-e-assinaturas`.
 
 Rotas públicas, sem token: `GET /health/live`, `GET /health/ready`, `GET /openapi.json` e `GET /docs`.
 

@@ -2,6 +2,26 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.3.0] - 2026-10-30
+
+Etapa 003 — canais e assinaturas.
+
+### Adicionado
+
+- Canais hierárquicos (`eng/global`), com slug único e imutável, prioridade e `version`, que cresce a cada mudança. Operações `list_channels`, `get_channel`, `create_channel`, `update_channel`, `archive_channel`, `restore_channel` e `delete_channel` nas três vias. Um canal arquivado sai das listagens sem `include_archived` e continua legível quando citado. `delete_channel` só exclui canal arquivado e leva junto as assinaturas exatas.
+- Assinaturas por canal exato ou por prefixo terminado em `*` (`eng/*`, `eng/projeto-*`), com modo `inject`/`search`/`manage`, `access` restritivo e prioridade opcional. Operações `list_subscriptions`, `subscribe`, `update_subscription` e `unsubscribe`. Cada assinatura traz `reaches`, os canais que o alvo alcança agora.
+- Resolvedor de acesso efetivo no `core` (`core::access`): escopos do token ∩ acesso da assinatura mais específica (a exata vence o prefixo; o prefixo mais longo vence o curto); token `admin` alcança todos os canais. Inclui o modo `manage` só por citação explícita e um cache em memória invalidado por geração.
+- Seleção por requisição: cabeçalho `Engramind-Channels` no REST e no MCP (`--channels`/`ENGRAMIND_CHANNELS` na CLI) e parâmetro `channels`. Com os dois, vale a interseção.
+- `list_channels` e `get_channel` trazem o alcance do token em `reach`. O token `agent` vê só os canais alcançados e as próprias assinaturas.
+- Tags OpenAPI `Channels` (qualquer token) e `Network` (admin), e o guia `canais-e-assinaturas`.
+- Novos códigos de erro: `CHANNEL_NOT_SUBSCRIBED` (403, saída 4), `CHANNEL_NOT_FOUND` e `SUBSCRIPTION_NOT_FOUND` (404, saída 5), `SUBSCRIPTION_EXISTS` e `CHANNEL_NOT_ARCHIVED` (409, saída 6). `SCOPE_REQUIRED` ganha `details.channel` quando a restrição vem da assinatura.
+- Migração `0003_channels.sql` (`channels`, `subscriptions`).
+- Decisão `docs/decisions/0010`.
+
+### Alterado
+
+- `delete_app` e `delete_agent` removem as assinaturas dos agentes, e a auditoria registra quantas saíram (`subscriptions_removed`).
+
 ## [0.2.0] - 2026-10-30
 
 Etapa 002 — identidades e as três vias.

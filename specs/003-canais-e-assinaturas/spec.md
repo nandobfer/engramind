@@ -1,7 +1,7 @@
 # Spec - canais e assinaturas
 
 **Criado em**: 2026-10-30
-**Status**: Draft
+**Status**: Implementada
 **Versão alvo**: 0.3.0
 **Input**: Desenho §4 (acesso efetivo), §5, §13 (Canais e Assinaturas), §18, §19.
 
@@ -23,13 +23,13 @@ Permitir que o gestor desenhe a rede: criar canais hierárquicos, ligar agentes 
 |----|-----------|
 | FR-001 | Slug de canal: segmentos `[a-z0-9][a-z0-9-]*` separados por `/`, até 8 segmentos e 120 caracteres; único. |
 | FR-002 | Só tokens `admin` criam, alteram, arquivam, restauram e excluem canais e assinaturas; token `agent` → `403 SCOPE_REQUIRED`. |
-| FR-003 | Slug inexistente em qualquer operação → `404 CHANNEL_NOT_FOUND`; canais nunca nascem implicitamente. |
-| FR-004 | Assinatura por prefixo `eng/*` alcança `eng/x` e `eng/x/y`, inclusive canais criados depois; não alcança `eng`. Prefixo parcial (`eng/projeto-*`) conforme Q-005. |
+| FR-003 | Slug inexistente como alvo único (`{channel}`, `channel`, `target` exato) → `404 CHANNEL_NOT_FOUND`; canais nunca nascem implicitamente. Numa lista de seleção, um slug inexistente só não casa (Q-009). |
+| FR-004 | Assinatura por prefixo `eng/*` alcança `eng/x` e `eng/x/y`, inclusive canais criados depois; não alcança `eng`. Prefixo parcial (`eng/projeto-*`) também é aceito (Q-005); `*` e `eng*` não (Q-004). |
 | FR-005 | Com várias assinaturas alcançando o mesmo canal, vale a mais específica: exata vence prefixo; prefixo mais longo vence o mais curto. Empate é impossível (assinatura duplicada → `409 SUBSCRIPTION_EXISTS`). |
 | FR-006 | `access` da assinatura ⊆ `read`/`write`/`delete` com `read` obrigatório; padrão = escopos do token do agente no momento da consulta (armazenado como `null`). |
 | FR-007 | Acesso efetivo = escopos do token ∩ acesso da assinatura; token `admin` alcança todos os canais com os próprios escopos e modo `inject`. |
 | FR-008 | Token `agent` sem assinatura no canal → `403 CHANNEL_NOT_SUBSCRIBED`; com assinatura e sem o escopo → `403 SCOPE_REQUIRED` com `details.channel`. |
-| FR-009 | Modo `manage` só é alcançado quando o canal é citado de forma explícita (slug exato em `channels` ou parâmetro `channel`). |
+| FR-009 | Modo `manage` só é alcançado quando o canal é citado de forma explícita (slug exato em `channels`, no `Engramind-Channels` ou no parâmetro `channel`); `list_channels` o mostra com `mode: manage` (Q-007, Q-008). |
 | FR-010 | `channels` (lista de slugs e prefixos) e `Engramind-Channels` restringem; com os dois, vale a interseção. Nunca ampliam. |
 | FR-011 | `list_channels` e `get_channel` para token `agent` mostram só os canais alcançados, com `mode` e `access` efetivos. |
 | FR-012 | `list_subscriptions` para token `agent` mostra só as do próprio agente. |

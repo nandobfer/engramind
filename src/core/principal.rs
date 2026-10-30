@@ -146,6 +146,11 @@ impl ScopeSet {
         self.0 & !other.0 == 0
     }
 
+    /// Escopos presentes nos dois conjuntos. Ambos contêm `read`, então o resultado é válido.
+    pub fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
     pub fn scopes(self) -> Vec<Scope> {
         Scope::ALL
             .into_iter()
@@ -242,5 +247,8 @@ mod tests {
         assert!(read_write.is_subset_of(ScopeSet::ALL));
         assert!(read_write.contains(Scope::Write));
         assert!(!read_write.contains(Scope::Delete));
+        let read_delete = ScopeSet::parse("read,delete").expect("rd");
+        assert_eq!(read_write.intersection(read_delete), ScopeSet::READ);
+        assert_eq!(ScopeSet::ALL.intersection(read_write), read_write);
     }
 }

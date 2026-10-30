@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "servers": [
     {
@@ -3026,6 +3026,1592 @@
         ]
       }
     },
+    "/v1/channels": {
+      "get": {
+        "tags": [
+          "Channels"
+        ],
+        "summary": "Lista os canais alcançados pelo token",
+        "description": "Token `agent` vê só os canais que assina (inclusive os de modo `manage`), cada um com o `reach` efetivo (`mode`, `access`, `priority` e a assinatura mais específica); token `admin` vê todos, em modo `inject`, com os próprios escopos. `channels` e o cabeçalho `Engramind-Channels` restringem (com os dois, vale a interseção). Arquivados só com `include_archived=true`. Em ordem de slug, paginado por `cursor` e `limit`.",
+        "operationId": "list_channels",
+        "parameters": [
+          {
+            "name": "channels",
+            "in": "query",
+            "description": "Slugs e prefixos (`eng/global,eng/projeto-*`) separados por vírgula; restringe dentro do\nque o token alcança e do cabeçalho `Engramind-Channels`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include_archived",
+            "in": "query",
+            "description": "Inclui os canais arquivados.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor opaco devolvido em `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Itens por página, de 1 a 200 (padrão 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "Engramind-Channels",
+            "in": "header",
+            "description": "Filtro de canais da conexão: slugs e prefixos separados por vírgula",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de canais",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Cria um canal",
+        "description": "O slug é hierárquico (`eng/global`), único e imutável. Assinaturas por prefixo passam a alcançar o canal novo na hora. Aceita `Idempotency-Key`. Exige token admin com `write`.",
+        "operationId": "create_channel",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateChannelBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Canal criado",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`SLUG_ALREADY_EXISTS` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/channels/{channel}": {
+      "get": {
+        "tags": [
+          "Channels"
+        ],
+        "summary": "Mostra um canal alcançado pelo token",
+        "description": "`{channel}` aceita o id (`ch_…`) ou o slug com `/` codificada como `%2F` (`eng%2Fglobal`). Canal arquivado continua legível. Token `agent` sem assinatura no canal, ou canal fora do `Engramind-Channels`, recebe `CHANNEL_NOT_SUBSCRIBED`.",
+        "operationId": "get_channel",
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "description": "Id (`ch_…`) ou slug do canal",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Engramind-Channels",
+            "in": "header",
+            "description": "Filtro de canais da conexão: slugs e prefixos separados por vírgula",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canal com o alcance do token",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED` ou `CHANNEL_NOT_SUBSCRIBED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Exclui um canal arquivado",
+        "description": "Só exclui canal arquivado (`CHANNEL_NOT_ARCHIVED`). Remove o canal e as assinaturas exatas dele; as assinaturas por prefixo continuam. A auditoria guarda o canal e quantas assinaturas saíram. Exige token admin com `delete`.",
+        "operationId": "delete_channel",
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "description": "Id (`ch_…`) ou slug do canal",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canal excluído (estado anterior)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`CHANNEL_NOT_ARCHIVED` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Altera nome, descrição ou prioridade de um canal",
+        "description": "Campos omitidos não mudam; `description: null` limpa. O slug não muda. Incrementa `version`. Exige token admin com `write`.",
+        "operationId": "update_channel",
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "description": "Id (`ch_…`) ou slug do canal",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateChannelBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Canal alterado",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/channels/{channel}/archive": {
+      "post": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Arquiva um canal",
+        "description": "O canal sai do contexto, da busca e das dicas padrão e de `list_channels` sem `include_archived`; continua legível quando citado pelo slug. Arquivar um canal já arquivado não muda nada. Exige token admin com `write`.",
+        "operationId": "archive_channel",
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "description": "Id (`ch_…`) ou slug do canal",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canal arquivado",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/channels/{channel}/restore": {
+      "post": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Restaura um canal arquivado",
+        "description": "O canal volta ao contexto, à busca e às listagens. Restaurar um canal ativo não muda nada. Exige token admin com `write`.",
+        "operationId": "restore_channel",
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "description": "Id (`ch_…`) ou slug do canal",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Canal restaurado",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Channel"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/docs/guides": {
       "get": {
         "tags": [
@@ -4527,6 +6113,939 @@
         ]
       }
     },
+    "/v1/subscriptions": {
+      "get": {
+        "tags": [
+          "Channels"
+        ],
+        "summary": "Lista as assinaturas (token agent: só as próprias)",
+        "description": "Filtra por `agent` (id ou `app/agente`) e por `channel` (as assinaturas exatas ou por prefixo que alcançam o canal). Token `agent` vê só as do próprio agente. Cada assinatura traz `reaches`, os canais ativos que o alvo alcança agora. Em ordem de criação, paginado por `cursor` e `limit`.",
+        "operationId": "list_subscriptions",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "description": "Só as deste agente (id ou `app/agente`). Para token `agent`, só as próprias.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "description": "Só as que alcançam este canal (id ou slug), exatas ou por prefixo.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Cursor opaco devolvido em `next_cursor`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Itens por página, de 1 a 200 (padrão 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de assinaturas",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`AGENT_NOT_FOUND` ou `CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Assina um agente a um canal ou prefixo",
+        "description": "`target` é um canal exato existente (`eng/global`) ou um prefixo terminado em `*` (`eng/*`, `eng/projeto-*`) que vale também para canais criados depois. Com várias assinaturas no mesmo canal, vale a mais específica. `access` só restringe os escopos do token (omitido: os do token). Aceita `Idempotency-Key`. Exige token admin com `write`.",
+        "operationId": "subscribe",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscribeBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Assinatura criada",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`AGENT_NOT_FOUND` ou `CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`SUBSCRIPTION_EXISTS` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/subscriptions/{subscription}": {
+      "delete": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Cancela uma assinatura",
+        "description": "O agente deixa de alcançar os canais da assinatura na requisição seguinte. Exige token admin com `write`.",
+        "operationId": "unsubscribe",
+        "parameters": [
+          {
+            "name": "subscription",
+            "in": "path",
+            "description": "Id da assinatura (`sub_…`)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Assinatura cancelada (estado anterior)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`SUBSCRIPTION_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Network"
+        ],
+        "summary": "Altera modo, acesso ou prioridade de uma assinatura",
+        "description": "Campos omitidos não mudam; `access: null` volta aos escopos do token e `priority: null` à prioridade do canal. Agente e alvo não mudam: cancele e assine de novo. Vale na requisição seguinte. Exige token admin com `write`.",
+        "operationId": "update_subscription",
+        "parameters": [
+          {
+            "name": "subscription",
+            "in": "path",
+            "description": "Id da assinatura (`sub_…`)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSubscriptionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Assinatura alterada",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`SUBSCRIPTION_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/tokens": {
       "get": {
         "tags": [
@@ -5867,6 +8386,137 @@
           }
         }
       },
+      "Channel": {
+        "type": "object",
+        "required": [
+          "id",
+          "slug",
+          "name",
+          "priority",
+          "version",
+          "created_at"
+        ],
+        "properties": {
+          "archived_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preenchido quando o canal foi arquivado."
+          },
+          "created_at": {
+            "type": "string",
+            "example": "2026-10-30T12:00:00.000Z"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "example": "ch_1a2b3c4d"
+          },
+          "name": {
+            "type": "string",
+            "example": "Engenharia global"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Prioridade padrão na ordem do contexto."
+          },
+          "reach": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ChannelReach",
+                "description": "Alcance do token em `list_channels` e `get_channel`; ausente nas respostas de mutação."
+              }
+            ]
+          },
+          "slug": {
+            "type": "string",
+            "description": "Hierárquico com `/`; imutável.",
+            "example": "eng/global"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Cresce a cada mudança do canal.",
+            "example": 1
+          }
+        }
+      },
+      "ChannelList": {
+        "type": "object",
+        "required": [
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Channel"
+            },
+            "description": "Em ordem de slug, cada um com o `reach` do token."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ChannelReach": {
+        "type": "object",
+        "description": "Alcance efetivo do token que consultou o canal.",
+        "required": [
+          "mode",
+          "access",
+          "priority"
+        ],
+        "properties": {
+          "access": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            },
+            "description": "Escopos do token ∩ acesso da assinatura.",
+            "example": [
+              "read"
+            ]
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Prioridade da assinatura, ou a do canal quando a assinatura não a define."
+          },
+          "subscription": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Assinatura que dá o alcance (a mais específica); `null` para token admin.",
+            "example": "sub_7c2e9a10"
+          },
+          "target": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Alvo dessa assinatura; `null` para token admin.",
+            "example": "eng/*"
+          }
+        }
+      },
       "CreateAgentBody": {
         "type": "object",
         "required": [
@@ -5919,6 +8569,41 @@
             "type": "string",
             "description": "Minúsculas, dígitos e hífens (1 a 64), único na rede.",
             "example": "app-a"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateChannelBody": {
+        "type": "object",
+        "required": [
+          "slug",
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "example": "Engenharia global"
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Prioridade padrão na ordem do contexto, de -1000 a 1000 (padrão 0).",
+            "maximum": 1000,
+            "minimum": -1000
+          },
+          "slug": {
+            "type": "string",
+            "description": "Segmentos `[a-z0-9-]` separados por `/` (até 8 segmentos e 120 caracteres); único e\nimutável.",
+            "example": "eng/global"
           }
         },
         "additionalProperties": false
@@ -6249,6 +8934,15 @@
           }
         }
       },
+      "Mode": {
+        "type": "string",
+        "description": "Modo de uma assinatura (desenho §5): `inject` entra no contexto, na busca e nas dicas;\n`search` só na busca e nas dicas; `manage` só quando o canal é citado explicitamente.",
+        "enum": [
+          "inject",
+          "search",
+          "manage"
+        ]
+      },
       "ReadyResponse": {
         "type": "object",
         "required": [
@@ -6375,6 +9069,142 @@
           "version": {
             "type": "string",
             "example": "0.2.0"
+          }
+        }
+      },
+      "SubscribeBody": {
+        "type": "object",
+        "required": [
+          "agent",
+          "target",
+          "mode"
+        ],
+        "properties": {
+          "access": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            },
+            "description": "Restringe o acesso (`read` obrigatório); omitido ou `null` usa os escopos do token.",
+            "example": [
+              "read",
+              "write"
+            ]
+          },
+          "agent": {
+            "type": "string",
+            "description": "Agente (id ou `app/agente`).",
+            "example": "app-a/curador"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode"
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Sobrepõe a prioridade do canal, de -1000 a 1000.",
+            "maximum": 1000,
+            "minimum": -1000
+          },
+          "target": {
+            "type": "string",
+            "description": "Canal exato existente (`eng/global`) ou prefixo terminado em `*` (`eng/*`,\n`eng/projeto-*`), que vale também para canais criados depois.",
+            "example": "eng/projeto-*"
+          }
+        },
+        "additionalProperties": false
+      },
+      "Subscription": {
+        "type": "object",
+        "required": [
+          "id",
+          "agent",
+          "target",
+          "is_prefix",
+          "mode",
+          "created_at"
+        ],
+        "properties": {
+          "access": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            },
+            "description": "Restrição de acesso; `null` usa os escopos do token do agente.",
+            "example": [
+              "read"
+            ]
+          },
+          "agent": {
+            "$ref": "#/components/schemas/AgentRef"
+          },
+          "created_at": {
+            "type": "string",
+            "example": "2026-10-30T12:00:00.000Z"
+          },
+          "id": {
+            "type": "string",
+            "example": "sub_7c2e9a10"
+          },
+          "is_prefix": {
+            "type": "boolean"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/Mode"
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Sobrepõe a prioridade do canal; `null` usa a do canal."
+          },
+          "reaches": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Slugs dos canais ativos que o alvo alcança agora.",
+            "example": [
+              "eng/global",
+              "eng/projeto-atlas"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "description": "Canal exato (`eng/global`) ou prefixo terminado em `*` (`eng/*`, `eng/projeto-*`).",
+            "example": "eng/*"
+          }
+        }
+      },
+      "SubscriptionList": {
+        "type": "object",
+        "required": [
+          "subscriptions"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Subscription"
+            },
+            "description": "Em ordem de criação."
           }
         }
       },
@@ -6523,6 +9353,35 @@
         },
         "additionalProperties": false
       },
+      "UpdateChannelBody": {
+        "type": "object",
+        "description": "Campos omitidos não mudam; `description: null` limpa. O slug não muda (Q-006).",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "De -1000 a 1000.",
+            "maximum": 1000,
+            "minimum": -1000
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateSettingsBody": {
         "type": "object",
         "description": "Mapa parcial `chave → valor`; `null` volta ao padrão.",
@@ -6533,6 +9392,41 @@
         "example": {
           "limits.rate_per_minute": 1200
         }
+      },
+      "UpdateSubscriptionBody": {
+        "type": "object",
+        "description": "Campos omitidos não mudam; `access: null` volta aos escopos do token e `priority: null` à\nprioridade do canal. Agente e alvo não mudam: cancele e assine de novo.",
+        "properties": {
+          "access": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Scope"
+            }
+          },
+          "mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Mode"
+              }
+            ]
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "maximum": 1000,
+            "minimum": -1000
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateTokenBody": {
         "type": "object",
@@ -6631,6 +9525,14 @@
     {
       "name": "Identities",
       "description": "Apps, agentes e tokens (token admin)"
+    },
+    {
+      "name": "Channels",
+      "description": "Canais e assinaturas alcançados pelo token"
+    },
+    {
+      "name": "Network",
+      "description": "Criação e manutenção de canais e assinaturas (token admin)"
     },
     {
       "name": "Settings",

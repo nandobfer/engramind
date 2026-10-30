@@ -12,8 +12,9 @@ use utoipa::ToSchema;
 use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
-        IdemRow, IdentityCounts, Lookup, NewAgent, NewApp, NewToken, SettingChange, SettingRow,
-        Token, TokenFilter, TokenPatch, WriteContext,
+        Channel, ChannelPatch, IdemRow, IdentityCounts, Lookup, Network, NewAgent, NewApp,
+        NewChannel, NewSubscription, NewToken, SettingChange, SettingRow, Subscription,
+        SubscriptionPatch, Token, TokenFilter, TokenPatch, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -65,7 +66,7 @@ pub trait Store: Clone + Send + Sync + 'static {
         patch: AppPatch,
         context: WriteContext,
     ) -> impl Future<Output = Result<App, StoreError>> + Send;
-    /// Remove o app com agentes e tokens (cascata).
+    /// Remove o app com agentes, tokens e assinaturas (cascata).
     fn delete_app(
         &self,
         id: String,
@@ -91,7 +92,7 @@ pub trait Store: Clone + Send + Sync + 'static {
         patch: AgentPatch,
         context: WriteContext,
     ) -> impl Future<Output = Result<Agent, StoreError>> + Send;
-    /// Remove o agente com seus tokens (cascata).
+    /// Remove o agente com seus tokens e assinaturas (cascata).
     fn delete_agent(
         &self,
         id: String,
@@ -135,6 +136,60 @@ pub trait Store: Clone + Send + Sync + 'static {
         &self,
         batch: Vec<(String, String)>,
     ) -> impl Future<Output = Result<(), StoreError>> + Send;
+
+    // Canais e assinaturas. Mutações gravam auditoria e idempotência na mesma transação; toda
+    // mudança de canal incrementa `channels.version`.
+
+    /// Todos os canais (com os arquivados, por slug) e todas as assinaturas (por criação), com
+    /// `reaches` calculado.
+    fn network(&self) -> impl Future<Output = Result<Network, StoreError>> + Send;
+    fn get_channel(
+        &self,
+        lookup: Lookup,
+    ) -> impl Future<Output = Result<Option<Channel>, StoreError>> + Send;
+    /// Slug repetido → `Conflict("SLUG_ALREADY_EXISTS")`.
+    fn create_channel(
+        &self,
+        new: NewChannel,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Channel, StoreError>> + Send;
+    fn update_channel(
+        &self,
+        id: String,
+        patch: ChannelPatch,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Channel, StoreError>> + Send;
+    /// Arquiva (`true`) ou restaura (`false`); sem mudança de estado, devolve o canal intacto.
+    fn set_channel_archived(
+        &self,
+        id: String,
+        archived: bool,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Channel, StoreError>> + Send;
+    /// Só canal arquivado (`Conflict("CHANNEL_NOT_ARCHIVED")`); remove as assinaturas exatas.
+    fn delete_channel(
+        &self,
+        id: String,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Channel, StoreError>> + Send;
+    /// Alvo exato inexistente → `Conflict("CHANNEL_NOT_FOUND")`; repetida →
+    /// `Conflict("SUBSCRIPTION_EXISTS")`.
+    fn create_subscription(
+        &self,
+        new: NewSubscription,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Subscription, StoreError>> + Send;
+    fn update_subscription(
+        &self,
+        id: String,
+        patch: SubscriptionPatch,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Subscription, StoreError>> + Send;
+    fn delete_subscription(
+        &self,
+        id: String,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Subscription, StoreError>> + Send;
 
     // Configurações, idempotência e auditoria.
 

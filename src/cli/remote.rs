@@ -7,8 +7,8 @@ use reqwest::Method;
 use serde_json::{Map, Value, json};
 
 use super::{
-    AgentsCommand, AppsCommand, AuditCommand, Command, ConnectionArgs, DocsCommand,
-    ProfilesCommand, SettingsCommand, TokensCommand, UpdateArgs,
+    AgentsCommand, AppsCommand, AuditCommand, ChannelsCommand, Command, ConnectionArgs,
+    DocsCommand, ProfilesCommand, SettingsCommand, SubscriptionsCommand, TokensCommand, UpdateArgs,
     client::{self, ApiRequest, Connection, Outcome, segment},
     output,
     profiles::{self, Profile},
@@ -58,6 +58,15 @@ fn scopes(value: &str) -> Value {
             .map(|scope| Value::String(scope.to_owned()))
             .collect(),
     )
+}
+
+/// Texto opcional da CLI: `""` vira `null` (limpa o campo).
+fn nullable(value: String) -> Value {
+    if value.is_empty() {
+        Value::Null
+    } else {
+        json!(value)
+    }
 }
 
 fn update_body(changes: UpdateArgs) -> Value {
@@ -213,6 +222,142 @@ pub fn request(command: Command) -> ApiRequest {
             } => ApiRequest::new(
                 Method::POST,
                 format!("/v1/tokens/{}/revoke", segment(&token)),
+            )
+            .idempotency(idempotency.idempotency_key),
+        },
+        Command::Channels(command) => match command {
+            ChannelsCommand::List {
+                include_archived,
+                page,
+            } => ApiRequest::new(Method::GET, "/v1/channels".to_owned())
+                .query("include_archived", include_archived.then_some(true))
+                .query("cursor", page.cursor)
+                .query("limit", page.limit),
+            ChannelsCommand::Get { channel } => {
+                ApiRequest::new(Method::GET, format!("/v1/channels/{}", segment(&channel)))
+            }
+            ChannelsCommand::Create {
+                slug,
+                name,
+                description,
+                priority,
+                idempotency,
+            } => ApiRequest::new(Method::POST, "/v1/channels".to_owned())
+                .body(json!({
+                    "slug": slug,
+                    "name": name,
+                    "description": description,
+                    "priority": priority,
+                }))
+                .idempotency(idempotency.idempotency_key),
+            ChannelsCommand::Update {
+                channel,
+                name,
+                description,
+                priority,
+                idempotency,
+            } => {
+                let mut body = Map::new();
+                if let Some(name) = name {
+                    body.insert("name".to_owned(), json!(name));
+                }
+                if let Some(description) = description {
+                    body.insert("description".to_owned(), nullable(description));
+                }
+                if let Some(priority) = priority {
+                    body.insert("priority".to_owned(), json!(priority));
+                }
+                ApiRequest::new(Method::PATCH, format!("/v1/channels/{}", segment(&channel)))
+                    .body(Value::Object(body))
+                    .idempotency(idempotency.idempotency_key)
+            }
+            ChannelsCommand::Archive {
+                channel,
+                idempotency,
+            } => ApiRequest::new(
+                Method::POST,
+                format!("/v1/channels/{}/archive", segment(&channel)),
+            )
+            .idempotency(idempotency.idempotency_key),
+            ChannelsCommand::Restore {
+                channel,
+                idempotency,
+            } => ApiRequest::new(
+                Method::POST,
+                format!("/v1/channels/{}/restore", segment(&channel)),
+            )
+            .idempotency(idempotency.idempotency_key),
+            ChannelsCommand::Delete {
+                channel,
+                idempotency,
+            } => ApiRequest::new(
+                Method::DELETE,
+                format!("/v1/channels/{}", segment(&channel)),
+            )
+            .idempotency(idempotency.idempotency_key),
+        },
+        Command::Subscriptions(command) => match command {
+            SubscriptionsCommand::List {
+                agent,
+                channel,
+                page,
+            } => ApiRequest::new(Method::GET, "/v1/subscriptions".to_owned())
+                .query("agent", agent)
+                .query("channel", channel)
+                .query("cursor", page.cursor)
+                .query("limit", page.limit),
+            SubscriptionsCommand::Add {
+                agent,
+                target,
+                mode,
+                access,
+                priority,
+                idempotency,
+            } => ApiRequest::new(Method::POST, "/v1/subscriptions".to_owned())
+                .body(json!({
+                    "agent": agent,
+                    "target": target,
+                    "mode": mode,
+                    "access": access.as_deref().map(scopes),
+                    "priority": priority,
+                }))
+                .idempotency(idempotency.idempotency_key),
+            SubscriptionsCommand::Update {
+                subscription,
+                mode,
+                access,
+                token_access,
+                priority,
+                channel_priority,
+                idempotency,
+            } => {
+                let mut body = Map::new();
+                if let Some(mode) = mode {
+                    body.insert("mode".to_owned(), json!(mode));
+                }
+                if let Some(access) = access {
+                    body.insert("access".to_owned(), scopes(&access));
+                } else if token_access {
+                    body.insert("access".to_owned(), Value::Null);
+                }
+                if let Some(priority) = priority {
+                    body.insert("priority".to_owned(), json!(priority));
+                } else if channel_priority {
+                    body.insert("priority".to_owned(), Value::Null);
+                }
+                ApiRequest::new(
+                    Method::PATCH,
+                    format!("/v1/subscriptions/{}", segment(&subscription)),
+                )
+                .body(Value::Object(body))
+                .idempotency(idempotency.idempotency_key)
+            }
+            SubscriptionsCommand::Remove {
+                subscription,
+                idempotency,
+            } => ApiRequest::new(
+                Method::DELETE,
+                format!("/v1/subscriptions/{}", segment(&subscription)),
             )
             .idempotency(idempotency.idempotency_key),
         },

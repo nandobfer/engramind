@@ -165,6 +165,40 @@ impl TestContext {
         body
     }
 
+    /// Cria um canal pelo REST com o token do bootstrap.
+    pub async fn create_channel(&self, slug: &str) -> Value {
+        let (status, body) = self
+            .call(
+                "POST",
+                "/v1/channels",
+                Some(ADMIN_TOKEN),
+                Some(json!({ "slug": slug, "name": slug })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        body
+    }
+
+    /// Assina um agente a um alvo pelo REST com o token do bootstrap.
+    pub async fn subscribe(
+        &self,
+        agent: &str,
+        target: &str,
+        mode: &str,
+        access: Option<&[&str]>,
+    ) -> Value {
+        let (status, body) = self
+            .call(
+                "POST",
+                "/v1/subscriptions",
+                Some(ADMIN_TOKEN),
+                Some(json!({ "agent": agent, "target": target, "mode": mode, "access": access })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        body
+    }
+
     /// Emite um token e devolve o segredo completo.
     pub async fn issue(
         &self,
@@ -187,11 +221,26 @@ impl TestContext {
 
     /// Requisição JSON-RPC ao `/mcp`.
     pub async fn rpc(&self, token: &str, method: &str, params: Value) -> (StatusCode, Value) {
-        let request = Request::post("/mcp")
+        self.rpc_with(token, method, params, &[]).await
+    }
+
+    /// Como `rpc`, com cabeçalhos extras (por exemplo `Engramind-Channels`).
+    pub async fn rpc_with(
+        &self,
+        token: &str,
+        method: &str,
+        params: Value,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, Value) {
+        let mut builder = Request::post("/mcp")
             .header(header::HOST, MCP_HOST)
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ACCEPT, MCP_ACCEPT)
-            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"));
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let request = builder
             .body(Body::from(
                 json!({ "jsonrpc": "2.0", "id": 7, "method": method, "params": params })
                     .to_string(),

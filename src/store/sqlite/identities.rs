@@ -99,7 +99,11 @@ fn token_from_row(row: &Row<'_>, now: &str) -> rusqlite::Result<Token> {
 }
 
 /// Gera um id livre na tabela, com retentativa em colisão.
-fn free_id(transaction: &Transaction, table: &str, prefix: &str) -> Result<String, StoreError> {
+pub(super) fn free_id(
+    transaction: &Transaction,
+    table: &str,
+    prefix: &str,
+) -> Result<String, StoreError> {
     for _ in 0..ID_ATTEMPTS {
         let id = ids::generate(prefix);
         let taken: bool = transaction
@@ -511,6 +515,12 @@ pub(super) fn delete_app(
     context: &WriteContext,
 ) -> Result<App, StoreError> {
     let before = load_app(transaction, id)?;
+    let mut audited = to_value(&before)?;
+    audited["subscriptions_removed"] = serde_json::json!(super::channels::count_for_agents(
+        transaction,
+        "app_id",
+        id
+    )?);
     guard_last_admin(transaction, &context.at, || {
         transaction
             .execute("DELETE FROM apps WHERE id = ?1", params![id])
@@ -523,7 +533,7 @@ pub(super) fn delete_app(
             action: "app.delete",
             entity: "app",
             entity_id: Some(id),
-            before: Some(to_value(&before)?),
+            before: Some(audited),
             after: None,
         },
     )?;
@@ -599,6 +609,9 @@ pub(super) fn delete_agent(
     context: &WriteContext,
 ) -> Result<Agent, StoreError> {
     let before = load_agent(transaction, id)?;
+    let mut audited = to_value(&before)?;
+    audited["subscriptions_removed"] =
+        serde_json::json!(super::channels::count_for_agents(transaction, "id", id)?);
     guard_last_admin(transaction, &context.at, || {
         transaction
             .execute("DELETE FROM agents WHERE id = ?1", params![id])
@@ -611,7 +624,7 @@ pub(super) fn delete_agent(
             action: "agent.delete",
             entity: "agent",
             entity_id: Some(id),
-            before: Some(to_value(&before)?),
+            before: Some(audited),
             after: None,
         },
     )?;

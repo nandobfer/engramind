@@ -15,7 +15,7 @@ Onde uma operação pede um app, aceite o id ou o slug (`app-a`). Onde pede um a
 | `kind` | Para quê | Pertence a |
 |---|---|---|
 | `agent` | Operar memórias nos canais que o agente assina | um agente (obrigatório) |
-| `admin` | Gerir a rede: apps, agentes, tokens, configurações, status e auditoria | um app e, opcionalmente, um agente do mesmo app |
+| `admin` | Gerir a rede: apps, agentes, tokens, canais, assinaturas, configurações, status e auditoria; alcança todos os canais | um app e, opcionalmente, um agente do mesmo app |
 
 Um token `agent` nunca alcança as operações administrativas: elas devolvem `403 SCOPE_REQUIRED` e nem aparecem no `tools/list` do MCP.
 
@@ -24,8 +24,8 @@ Um token `agent` nunca alcança as operações administrativas: elas devolvem `4
 | Escopo | Permite |
 |---|---|
 | `read` | Ler e consultar. Num token `admin`, também ler identidades, configurações, status e auditoria. |
-| `write` | Criar e alterar. Num token `admin`, também identidades e configurações. |
-| `delete` | Excluir de vez. Num token `admin`, também excluir apps e agentes e revogar tokens. |
+| `write` | Criar e alterar. Num token `admin`, também identidades, canais, assinaturas e configurações. |
+| `delete` | Excluir de vez. Num token `admin`, também excluir canais, apps e agentes e revogar tokens. |
 
 `write` e `delete` exigem `read`. As combinações válidas são `read`, `read+write`, `read+delete` e `read+write+delete`; qualquer outra recebe `400 VALIDATION_ERROR`.
 
@@ -60,7 +60,7 @@ engramind apps update app-a --disable
 ```
 
 - `update_app` e `update_agent` com `disabled: true` desativam sem perder o vínculo: os tokens deixam de autenticar e voltam com `disabled: false`.
-- `delete_app` remove o app com os agentes e tokens; `delete_agent` remove o agente com os tokens. A autoria das memórias guarda o id sem chave estrangeira, e a auditoria preserva o registro anterior.
+- `delete_app` remove o app com os agentes, tokens e assinaturas; `delete_agent` remove o agente com os tokens e as assinaturas. A autoria das memórias guarda o id sem chave estrangeira, e a auditoria preserva o registro anterior.
 - Slug repetido recebe `409 SLUG_ALREADY_EXISTS`.
 
 ## Último admin

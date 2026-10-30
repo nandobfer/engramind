@@ -4,7 +4,7 @@ Este diretório contém regras operacionais concisas para qualquer trabalho no E
 
 ## Estado atual
 
-Versão **0.2.0**: etapas **001 (Fundação operável)** e **002 (Identidades e as três vias)** implementadas. O plano está em [`../specs/`](../specs/README.md); a próxima etapa é a **003 (Canais e assinaturas)**, depois de resolver as perguntas abertas do `clarify.md` dela.
+Versão **0.3.0**: etapas **001 (Fundação operável)**, **002 (Identidades e as três vias)** e **003 (Canais e assinaturas)** implementadas. O plano está em [`../specs/`](../specs/README.md); a próxima etapa é a **004 (Memórias)**, depois de resolver as perguntas abertas do `clarify.md` dela.
 
 Existe de fato:
 
@@ -13,12 +13,13 @@ Existe de fato:
 - envelope de erro `{ error: { code, message, details? } }` com o catálogo `ERROR_CODES` (status e código de saída da CLI) em `src/error.rs`;
 - `core` com `Core<S: Store>`: catálogo `OPERATIONS`, autorização por tipo e escopo, autenticação Bearer (`eng.tk_….<segredo>`, HMAC-SHA256), rate limit por token, idempotência genérica, auditoria, bootstrap e documentação viva;
 - identidades (apps, agentes, tokens), configurações (`limits.*`), `get_status` básico e `get_audit` — ver [`identities.md`](identities.md) e [`settings.md`](settings.md);
+- canais, assinaturas (exatas e por prefixo, modos `inject`/`search`/`manage`) e o resolvedor de acesso efetivo `core::access`, com o cabeçalho `Engramind-Channels` nas três vias — ver [`channels.md`](channels.md);
 - REST em `/v1` com `#[utoipa::path]` em toda rota e o snapshot `docs/openapi.json`; MCP em `POST /mcp` com uma ferramenta por operação, filtrada pelo token; guias em `docs/guides/` compilados no binário;
-- `Store` SQLite com as migrações `0001_init.sql` e `0002_identities.sql`;
+- `Store` SQLite com as migrações `0001_init.sql`, `0002_identities.sql` e `0003_channels.sql`;
 - imagem Docker com Litestream, compose de um serviço, `scripts/check-compose.sh`, `scripts/test.sh`;
-- testes com `cargo-nextest` (unitários e o binário `tests/it/`, com a matriz tipo × escopo × operação nas três vias e os testes de contrato do §15) e CI/CD em `.github/workflows/ci-cd.yml`.
+- testes com `cargo-nextest` (unitários e o binário `tests/it/`, com a matriz tipo × escopo × operação nas três vias, o cenário de canais do §19 e os testes de contrato do §15) e CI/CD em `.github/workflows/ci-cd.yml`.
 
-Ainda não existe: canais, assinaturas, memórias, contexto, jobs, Redator, embeddings, webhooks, métricas, resources e prompts do MCP, nem a skill.
+Ainda não existe: memórias, contexto, jobs, Redator, embeddings, webhooks, métricas, resources e prompts do MCP, nem a skill.
 
 Atualize esta seção a cada fase concluída, listando as capacidades que de fato existem.
 
@@ -55,7 +56,7 @@ Não crie guias de módulo antes do código existir.
 - `aicontext/`: regras normativas, curtas e acionáveis.
 - `docs/design.md`: desenho e decisões tomadas; fonte de verdade do que ainda não foi implementado.
 - `docs/guides/`: guias de uso compilados no binário e servidos por `get_guide`.
-- `docs/decisions/`: decisões arquiteturais posteriores ao desenho (`0001` a `0006` na 001; `0007` a `0009` na 002).
+- `docs/decisions/`: decisões arquiteturais posteriores ao desenho (`0001` a `0006` na 001; `0007` a `0009` na 002; `0010` na 003).
 - `specs/NNN-etapa/`: plano de cada etapa entregável (`spec`, `clarify`, `contracts`, `plan`, `tasks`; `implement` e `report` na execução).
 
 ## Regra de atualização
