@@ -21,8 +21,8 @@ use super::{
 use crate::{auth::token::TokenService, error::ApiError, store::Store};
 
 const MAX_SLUG: usize = 64;
-const MAX_NAME: usize = 120;
-const MAX_DESCRIPTION: usize = 1000;
+pub(crate) const MAX_NAME: usize = 120;
+pub(crate) const MAX_DESCRIPTION: usize = 1000;
 const MAX_LABEL: usize = 120;
 
 // ---------- entradas ----------
@@ -167,7 +167,7 @@ pub struct IssuedToken {
     pub secret: Option<String>,
 }
 
-fn next_cursor<T>(page: &Page<T>) -> Option<String> {
+pub(crate) fn next_cursor<T>(page: &Page<T>) -> Option<String> {
     page.next.as_ref().map(super::pagination::Cursor::encode)
 }
 
@@ -190,7 +190,7 @@ pub fn validate_slug(slug: &str) -> Result<(), ApiError> {
     }
 }
 
-fn text(field: &str, value: &str, max: usize) -> Result<String, ApiError> {
+pub(crate) fn text(field: &str, value: &str, max: usize) -> Result<String, ApiError> {
     let value = value.trim();
     let length = value.chars().count();
     if (1..=max).contains(&length) {
@@ -203,14 +203,18 @@ fn text(field: &str, value: &str, max: usize) -> Result<String, ApiError> {
 }
 
 /// Texto opcional: vazio vira `None`.
-fn optional_text(field: &str, value: Option<&str>, max: usize) -> Result<Option<String>, ApiError> {
+pub(crate) fn optional_text(
+    field: &str,
+    value: Option<&str>,
+    max: usize,
+) -> Result<Option<String>, ApiError> {
     match value.map(str::trim).filter(|value| !value.is_empty()) {
         Some(value) => text(field, value, max).map(Some),
         None => Ok(None),
     }
 }
 
-fn scopes(values: &[Scope]) -> Result<ScopeSet, ApiError> {
+pub(crate) fn scopes(values: &[Scope]) -> Result<ScopeSet, ApiError> {
     ScopeSet::from_scopes(values).map_err(|error| ApiError::validation(error.to_string()))
 }
 
@@ -342,7 +346,7 @@ impl<S: Store> Core<S> {
             .ok_or_else(app_not_found)
     }
 
-    async fn find_agent(&self, value: &str) -> Result<Agent, ApiError> {
+    pub(crate) async fn find_agent(&self, value: &str) -> Result<Agent, ApiError> {
         self.store()
             .get_agent(agent_lookup(value)?)
             .await?
@@ -457,6 +461,7 @@ impl<S: Store> Core<S> {
             },
         )
         .await
+        .inspect(|_| self.network_changed())
     }
 
     pub async fn list_agents(
@@ -579,6 +584,7 @@ impl<S: Store> Core<S> {
             },
         )
         .await
+        .inspect(|_| self.network_changed())
     }
 
     pub async fn list_tokens(

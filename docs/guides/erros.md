@@ -18,18 +18,23 @@ Todo erro usa o envelope único:
 |---|---|---|---|
 | `VALIDATION_ERROR` | 400 | 2 | Path, query, header ou body inválido. |
 | `AUTH_INVALID` | 401 | 3 | Token ausente, malformado, desconhecido, expirado, revogado ou de app/agente desativado. |
-| `SCOPE_REQUIRED` | 403 | 4 | O tipo ou os escopos do token não permitem a operação; `details` traz `required_kind` e `required_scope`. |
+| `SCOPE_REQUIRED` | 403 | 4 | O tipo ou os escopos do token (ou o acesso efetivo no canal) não permitem a operação; `details` traz `required_kind`, `required_scope` e, no canal, `channel`. |
+| `CHANNEL_NOT_SUBSCRIBED` | 403 | 4 | O token não alcança o canal (sem assinatura ou fora da seleção `channels`/`Engramind-Channels`); `details.channel` traz o slug. |
 | `ROUTE_NOT_FOUND` | 404 | 5 | Rota inexistente. |
 | `APP_NOT_FOUND` | 404 | 5 | App inexistente. |
 | `AGENT_NOT_FOUND` | 404 | 5 | Agente inexistente. |
 | `TOKEN_NOT_FOUND` | 404 | 5 | Token inexistente. |
+| `CHANNEL_NOT_FOUND` | 404 | 5 | Canal inexistente; canais nunca nascem implicitamente. |
+| `SUBSCRIPTION_NOT_FOUND` | 404 | 5 | Assinatura inexistente. |
 | `GUIDE_NOT_FOUND` | 404 | 5 | Guia inexistente ou oculto para o token; `details.valid` lista os visíveis. |
 | `SECTION_NOT_FOUND` | 404 | 5 | Seção inexistente no guia; `details.valid` lista as seções. |
 | `OPERATION_NOT_FOUND` | 404 | 5 | Operação inexistente ou oculta para o token; `details.valid` lista as visíveis. |
 | `SCHEMA_NOT_FOUND` | 404 | 5 | Esquema inexistente ou oculto para o token; `details.valid` lista os visíveis. |
 | `TAG_NOT_FOUND` | 404 | 5 | Tag OpenAPI inexistente ou oculta para o token; `details.valid` lista as visíveis. |
 | `METHOD_NOT_ALLOWED` | 405 | 1 | Método não suportado pela rota. |
-| `SLUG_ALREADY_EXISTS` | 409 | 6 | Já existe um app (ou agente no mesmo app) com esse slug. |
+| `SLUG_ALREADY_EXISTS` | 409 | 6 | Já existe um app, um agente no mesmo app ou um canal com esse slug. |
+| `SUBSCRIPTION_EXISTS` | 409 | 6 | O agente já assina esse alvo (mesmo canal exato ou mesmo prefixo). |
+| `CHANNEL_NOT_ARCHIVED` | 409 | 6 | Só um canal arquivado pode ser excluído; arquive antes. |
 | `IDEMPOTENCY_KEY_CONFLICT` | 409 | 6 | A mesma `Idempotency-Key` já foi usada com outra operação ou outro corpo. |
 | `LAST_ADMIN_TOKEN` | 409 | 6 | A mudança deixaria a rede sem nenhum token `admin` ativo com `write`. |
 | `SETTING_UNKNOWN` | 400 | 2 | Chave de configuração desconhecida; `details.valid` lista as chaves. |
@@ -49,7 +54,9 @@ Todo erro usa o envelope único:
 ## Como reagir
 
 - `401 AUTH_INVALID`: confira o token; não repita sem trocá-lo.
-- `403 SCOPE_REQUIRED`: o token não tem o tipo ou o escopo; `details.required_kind` e `details.required_scope` dizem o que falta.
+- `403 SCOPE_REQUIRED`: o token não tem o tipo ou o escopo; `details.required_kind` e `details.required_scope` dizem o que falta. Com `details.channel`, quem restringe é a assinatura daquele canal.
+- `403 CHANNEL_NOT_SUBSCRIBED`: peça ao gestor uma assinatura no canal, ou confira se ele está no `Engramind-Channels` da conexão.
+- `409 CHANNEL_NOT_ARCHIVED`: arquive o canal (`archive_channel`) antes de excluí-lo.
 - `409 IDEMPOTENCY_KEY_CONFLICT`: a chave já foi usada com outro corpo; gere uma chave nova para a nova intenção.
 - `409 LAST_ADMIN_TOKEN`: emita outro token `admin` com `write` antes de revogar, desativar ou excluir o último.
 - `429 RATE_LIMITED`: espere os segundos de `Retry-After`.

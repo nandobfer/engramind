@@ -58,6 +58,10 @@ impl Caller {
 async fn callers(context: &TestContext) -> Vec<Caller> {
     context.create_app("matrix").await;
     context.create_agent("matrix", "agente").await;
+    context.create_channel("matrix/canal").await;
+    context
+        .subscribe("matrix/agente", "matrix/canal", "inject", None)
+        .await;
     let mut callers = Vec::new();
     for kind in [TokenKind::Agent, TokenKind::Admin] {
         for scopes in SCOPE_SETS {
@@ -116,6 +120,35 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
             Some(json!({ "label": "x" })),
         ),
         "revoke_token" => ("POST", "/v1/tokens/tk_ffffffff/revoke".into(), None),
+        "list_channels" => ("GET", "/v1/channels".into(), None),
+        "get_channel" => ("GET", "/v1/channels/matrix%2Fcanal".into(), None),
+        "create_channel" => (
+            "POST",
+            "/v1/channels".into(),
+            Some(json!({ "slug": format!("m/c-{n}"), "name": "C" })),
+        ),
+        "update_channel" => (
+            "PATCH",
+            "/v1/channels/matrix%2Fcanal".into(),
+            Some(json!({ "name": "Canal" })),
+        ),
+        "archive_channel" => ("POST", "/v1/channels/nao%2Fexiste/archive".into(), None),
+        "restore_channel" => ("POST", "/v1/channels/nao%2Fexiste/restore".into(), None),
+        "delete_channel" => ("DELETE", "/v1/channels/nao%2Fexiste".into(), None),
+        "list_subscriptions" => ("GET", "/v1/subscriptions".into(), None),
+        "subscribe" => (
+            "POST",
+            "/v1/subscriptions".into(),
+            Some(
+                json!({ "agent": "matrix/agente", "target": format!("m-{n}/*"), "mode": "search" }),
+            ),
+        ),
+        "update_subscription" => (
+            "PATCH",
+            "/v1/subscriptions/sub_ffffffff".into(),
+            Some(json!({ "mode": "search" })),
+        ),
+        "unsubscribe" => ("DELETE", "/v1/subscriptions/sub_ffffffff".into(), None),
         "get_settings" => ("GET", "/v1/settings".into(), None),
         "update_settings" => (
             "PUT",
@@ -149,6 +182,17 @@ fn mcp_arguments(name: &str) -> Value {
         "issue_token" => json!({ "app": "matrix", "kind": "admin", "scopes": ["read"] }),
         "update_token" => json!({ "token": "tk_ffffffff", "label": "x" }),
         "revoke_token" => json!({ "token": "tk_ffffffff" }),
+        "get_channel" => json!({ "channel": "matrix/canal" }),
+        "create_channel" => json!({ "slug": format!("m/c-{n}"), "name": "C" }),
+        "update_channel" => json!({ "channel": "matrix/canal", "name": "Canal" }),
+        "archive_channel" | "restore_channel" | "delete_channel" => {
+            json!({ "channel": "nao/existe" })
+        }
+        "subscribe" => {
+            json!({ "agent": "matrix/agente", "target": format!("m-{n}/*"), "mode": "search" })
+        }
+        "update_subscription" => json!({ "subscription": "sub_ffffffff", "mode": "search" }),
+        "unsubscribe" => json!({ "subscription": "sub_ffffffff" }),
         "update_settings" => json!({ "settings": { "limits.max_batch": 100 } }),
         "get_guide" => json!({ "guide": "overview" }),
         "search_docs" => json!({ "q": "token" }),
@@ -215,6 +259,47 @@ fn cli_arguments(name: &str) -> Vec<String> {
             "x".into(),
         ],
         "revoke_token" => vec!["tokens".into(), "revoke".into(), "tk_ffffffff".into()],
+        "get_channel" => vec!["channels".into(), "get".into(), "matrix/canal".into()],
+        "create_channel" => vec![
+            "channels".into(),
+            "create".into(),
+            "--slug".into(),
+            format!("m/c-{n}"),
+            "--name".into(),
+            "C".into(),
+        ],
+        "update_channel" => vec![
+            "channels".into(),
+            "update".into(),
+            "matrix/canal".into(),
+            "--name".into(),
+            "Canal".into(),
+        ],
+        "archive_channel" => vec!["channels".into(), "archive".into(), "nao/existe".into()],
+        "restore_channel" => vec!["channels".into(), "restore".into(), "nao/existe".into()],
+        "delete_channel" => vec!["channels".into(), "delete".into(), "nao/existe".into()],
+        "subscribe" => vec![
+            "subscriptions".into(),
+            "add".into(),
+            "--agent".into(),
+            "matrix/agente".into(),
+            "--target".into(),
+            format!("m-{n}/*"),
+            "--mode".into(),
+            "search".into(),
+        ],
+        "update_subscription" => vec![
+            "subscriptions".into(),
+            "update".into(),
+            "sub_ffffffff".into(),
+            "--mode".into(),
+            "search".into(),
+        ],
+        "unsubscribe" => vec![
+            "subscriptions".into(),
+            "remove".into(),
+            "sub_ffffffff".into(),
+        ],
         "get_settings" => vec!["settings".into(), "get".into()],
         "update_settings" => vec![
             "settings".into(),

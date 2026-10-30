@@ -1,4 +1,4 @@
-//! Ids públicos curtos com prefixo de tipo (`app_`, `ag_`, `tk_` + 8 hex minúsculos) e
+//! Ids públicos curtos com prefixo de tipo (`app_`, `ag_`, `tk_`, `ch_`, `sub_` + 8 hex minúsculos) e
 //! carimbos de tempo RFC 3339 com milissegundos (ordenáveis como texto).
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -7,6 +7,8 @@ use rand::{RngCore, rngs::OsRng};
 pub const APP_PREFIX: &str = "app_";
 pub const AGENT_PREFIX: &str = "ag_";
 pub const TOKEN_PREFIX: &str = "tk_";
+pub const CHANNEL_PREFIX: &str = "ch_";
+pub const SUBSCRIPTION_PREFIX: &str = "sub_";
 
 const HEX_LEN: usize = 8;
 

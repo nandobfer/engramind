@@ -111,6 +111,12 @@ pub enum Command {
     /// Tokens (token admin).
     #[command(subcommand)]
     Tokens(TokensCommand),
+    /// Canais (leitura: qualquer token; mudanças: token admin).
+    #[command(subcommand)]
+    Channels(ChannelsCommand),
+    /// Assinaturas (leitura: qualquer token; mudanças: token admin).
+    #[command(subcommand)]
+    Subscriptions(SubscriptionsCommand),
     /// Configurações (token admin).
     #[command(subcommand)]
     Settings(SettingsCommand),
@@ -290,6 +296,131 @@ pub enum TokensCommand {
         /// Id do token (`tk_…`).
         #[arg(value_name = "TOKEN_ID")]
         token_id: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ChannelsCommand {
+    /// Lista os canais alcançados pelo token (`--channels` restringe).
+    List {
+        /// Inclui os canais arquivados.
+        #[arg(long)]
+        include_archived: bool,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Mostra um canal (id ou slug) com o alcance do token.
+    Get { channel: String },
+    /// Cria um canal.
+    Create {
+        /// Hierárquico com `/`, por exemplo `eng/global`; imutável.
+        #[arg(long)]
+        slug: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+        /// De -1000 a 1000 (padrão 0).
+        #[arg(long, allow_negative_numbers = true)]
+        priority: Option<i64>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Altera nome, descrição ou prioridade de um canal.
+    Update {
+        channel: String,
+        #[arg(long)]
+        name: Option<String>,
+        /// Nova descrição; `""` limpa.
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long, allow_negative_numbers = true)]
+        priority: Option<i64>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Arquiva um canal.
+    Archive {
+        channel: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Restaura um canal arquivado.
+    Restore {
+        channel: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Exclui um canal arquivado.
+    Delete {
+        channel: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SubscriptionsCommand {
+    /// Lista as assinaturas (token agent: só as próprias).
+    List {
+        /// Só as deste agente (id ou app/agente).
+        #[arg(long)]
+        agent: Option<String>,
+        /// Só as que alcançam este canal (id ou slug).
+        #[arg(long)]
+        channel: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Assina um agente a um canal exato ou a um prefixo (`eng/*`).
+    Add {
+        /// Agente (id ou app/agente).
+        #[arg(long)]
+        agent: String,
+        /// Canal exato ou prefixo terminado em `*`.
+        #[arg(long)]
+        target: String,
+        /// `inject`, `search` ou `manage`.
+        #[arg(long, default_value = "inject")]
+        mode: String,
+        /// Restringe os escopos do token: `read`, `read,write`…
+        #[arg(long)]
+        access: Option<String>,
+        /// Sobrepõe a prioridade do canal (-1000 a 1000).
+        #[arg(long, allow_negative_numbers = true)]
+        priority: Option<i64>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Altera modo, acesso ou prioridade de uma assinatura.
+    Update {
+        /// Id da assinatura (`sub_…`).
+        subscription: String,
+        #[arg(long)]
+        mode: Option<String>,
+        #[arg(long, conflicts_with = "token_access")]
+        access: Option<String>,
+        /// Volta aos escopos do token.
+        #[arg(long)]
+        token_access: bool,
+        #[arg(
+            long,
+            allow_negative_numbers = true,
+            conflicts_with = "channel_priority"
+        )]
+        priority: Option<i64>,
+        /// Volta à prioridade do canal.
+        #[arg(long)]
+        channel_priority: bool,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Cancela uma assinatura.
+    Remove {
+        /// Id da assinatura (`sub_…`).
+        subscription: String,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },

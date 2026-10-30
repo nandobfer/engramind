@@ -213,13 +213,20 @@ consumidor ainda pode filtrar mais (ex.: expor só `search_memories`).
 
 | Campo | Significado |
 |---|---|
-| `target` | Um canal exato (`eng/global`) ou um **prefixo** (`eng/*`). O prefixo vale para canais criados depois. |
+| `target` | Um canal exato (`eng/global`) ou um **prefixo** terminado em `*` (`eng/*`, `eng/projeto-*`), com ao menos um segmento completo antes do `*`. O prefixo vale para canais criados depois. |
 | `mode` | `inject`: entra no contexto, na busca e nas dicas. `search`: entra na busca e nas dicas, não no contexto. `manage`: fica fora do contexto, das dicas e da busca padrão, e só é alcançado quando o canal é citado de forma explícita. |
 | `access` | Subconjunto de `read`/`write`/`delete` (padrão: o do token) |
 | `priority` | Opcional. Sobrepõe a prioridade do canal na ordem do contexto. |
 
 Quando um canal é alcançado por mais de uma assinatura (ex.: `eng/*` e `eng/global`), vale a mais
-específica.
+específica: a exata vence qualquer prefixo, e o prefixo mais longo vence o mais curto (decisão 0010).
+
+- O `slug` do canal é imutável, porque as assinaturas e os prefixos dependem dele.
+- Arquivar um canal o tira do contexto, da busca e das dicas padrão e das listagens; ele continua
+  legível quando citado. Só um canal arquivado pode ser excluído, e a exclusão leva as assinaturas
+  exatas dele.
+- "Citar explicitamente" um canal `manage` é informar o slug exato no parâmetro `channel` ou numa lista
+  de seleção; um prefixo não cita.
 
 ### Seleção por requisição
 
@@ -227,8 +234,8 @@ Um mesmo agente pode atender a vários projetos. Um token de desenvolvedor, por 
 `eng/*`, mas cada sessão dele deve receber só `eng/global` e o canal do projeto em que está.
 
 - Toda operação aceita `channels` (lista de slugs ou prefixos) para restringir aos canais desejados,
-  sempre dentro do que o token já alcança.
-- No MCP e na CLI, o cabeçalho `Engramind-Channels: eng/global,eng/projeto-atlas` (ou
+  sempre dentro do que o token já alcança. Com o cabeçalho e o parâmetro, vale a interseção.
+- No REST, no MCP e na CLI, o cabeçalho `Engramind-Channels: eng/global,eng/projeto-atlas` (ou
   `ENGRAMIND_CHANNELS`) define o filtro padrão de toda a conexão. O sistema consumidor registra o MCP
   por sessão com esse cabeçalho, e o agente não precisa saber quais canais escolher.
 
@@ -264,7 +271,8 @@ tokens        (id, app_id, agent_id NULL, kind, scopes, label, secret_hash,
 
 channels      (id, slug UNIQUE, name, description, priority, settings_json,
                version, created_at, archived_at)
-subscriptions (id, agent_id, target, is_prefix, mode, access, priority NULL, created_at)
+subscriptions (id, agent_id, target, is_prefix, mode, access NULL, priority NULL, created_at)
+              -- target do prefixo sem o `*`; UNIQUE (agent_id, target, is_prefix)
 
 memories      (id, channel_id, category, title, text, status, importance NULL,
                content_hash, version, title_state, embedding_state,

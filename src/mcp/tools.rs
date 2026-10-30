@@ -24,6 +24,7 @@ use crate::{
         Core,
         audit::AuditQuery,
         authz,
+        channels::{CreateChannelBody, ListChannelsQuery, UpdateChannelBody},
         docs::{GetGuideQuery, ListOperationsQuery, SearchDocsQuery},
         identities::{
             CreateAgentBody, CreateAppBody, IssueTokenBody, ListAgentsQuery, ListQuery,
@@ -32,8 +33,10 @@ use crate::{
         operations::{self, OPERATIONS},
         principal::Principal,
         settings::{GetSettingsQuery, UpdateSettingsBody},
+        subscriptions::{ListSubscriptionsQuery, SubscribeBody, UpdateSubscriptionBody},
     },
     error::ApiError,
+    rest::ChannelsHeader,
     store::AppStore,
 };
 
@@ -41,7 +44,8 @@ pub const SERVER_NAME: &str = "engramind";
 
 const INSTRUCTIONS: &str = "Engramind: rede de memorias para agentes de IA. As ferramentas sao as \
 operacoes da API, com os mesmos nomes, parametros, escopos e erros do REST; so aparecem as que este \
-token pode usar. Comece por whoami e get_overview; use get_guide e search_docs para as regras e \
+token pode usar. O cabecalho Engramind-Channels da conexao restringe os canais. Comece por \
+whoami e get_overview; use get_guide e search_docs para as regras e \
 get_operation/get_schema para o contrato exato. Erros de dominio voltam com isError e o envelope \
 { error: { code, message, details } }. Mutacoes aceitam idempotency_key.";
 
@@ -156,6 +160,67 @@ pub struct TokenMutationRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ChannelRequest {
+    /// Id (`ch_…`) ou slug do canal (`eng/global`).
+    pub channel: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelMutationRequest {
+    /// Id (`ch_…`) ou slug do canal (`eng/global`).
+    pub channel: String,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateChannelRequest {
+    #[serde(flatten)]
+    pub body: CreateChannelBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateChannelRequest {
+    /// Id (`ch_…`) ou slug do canal (`eng/global`).
+    pub channel: String,
+    #[serde(flatten)]
+    pub body: UpdateChannelBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SubscribeRequest {
+    #[serde(flatten)]
+    pub body: SubscribeBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateSubscriptionRequest {
+    /// Id da assinatura (`sub_…`).
+    pub subscription: String,
+    #[serde(flatten)]
+    pub body: UpdateSubscriptionBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SubscriptionMutationRequest {
+    /// Id da assinatura (`sub_…`).
+    pub subscription: String,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateSettingsRequest {
     /// Mapa parcial `chave → valor`; `null` volta ao padrão.
     pub settings: BTreeMap<String, Value>,
@@ -196,6 +261,15 @@ fn principal(context: &RequestContext<RoleServer>) -> Result<Principal, ErrorDat
         .cloned()
         // A rota é protegida por `require_auth`; identidade ausente é erro de montagem.
         .ok_or_else(|| ErrorData::internal_error("identidade do token indisponivel", None))
+}
+
+/// Cabeçalho `Engramind-Channels` da requisição HTTP que carregou a mensagem MCP: o filtro
+/// padrão de canais da conexão (desenho §5).
+fn channels_header(context: &RequestContext<RoleServer>) -> Result<Option<String>, ApiError> {
+    match context.extensions.get::<axum::http::request::Parts>() {
+        Some(parts) => ChannelsHeader::from_headers(&parts.headers).map(|header| header.0),
+        None => Ok(None),
+    }
 }
 
 /// Erro de domínio: `isError: true` com o envelope padrão em `structuredContent` (D-005).
@@ -472,6 +546,192 @@ impl EngramindServer {
                 .revoke_token(
                     &principal,
                     &request.token,
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn list_channels(
+        &self,
+        Parameters(query): Parameters<ListChannelsQuery>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .list_channels(&principal, query, header.as_deref())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
+    async fn get_channel(
+        &self,
+        Parameters(request): Parameters<ChannelRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .get_channel(&principal, &request.channel, header.as_deref())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
+    async fn create_channel(
+        &self,
+        Parameters(request): Parameters<CreateChannelRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        reply(
+            self.core
+                .create_channel(&principal, request.body, key)
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn update_channel(
+        &self,
+        Parameters(request): Parameters<UpdateChannelRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        reply(
+            self.core
+                .update_channel(&principal, &request.channel, request.body, key)
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn archive_channel(
+        &self,
+        Parameters(request): Parameters<ChannelMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .archive_channel(
+                    &principal,
+                    &request.channel,
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn restore_channel(
+        &self,
+        Parameters(request): Parameters<ChannelMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .restore_channel(
+                    &principal,
+                    &request.channel,
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn delete_channel(
+        &self,
+        Parameters(request): Parameters<ChannelMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .delete_channel(
+                    &principal,
+                    &request.channel,
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn list_subscriptions(
+        &self,
+        Parameters(query): Parameters<ListSubscriptionsQuery>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(self.core.list_subscriptions(&principal, query).await)
+    }
+
+    #[tool]
+    async fn subscribe(
+        &self,
+        Parameters(request): Parameters<SubscribeRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        reply(
+            self.core
+                .subscribe(&principal, request.body, key)
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn update_subscription(
+        &self,
+        Parameters(request): Parameters<UpdateSubscriptionRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        reply(
+            self.core
+                .update_subscription(&principal, &request.subscription, request.body, key)
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn unsubscribe(
+        &self,
+        Parameters(request): Parameters<SubscriptionMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .unsubscribe(
+                    &principal,
+                    &request.subscription,
                     request.idempotency_key.as_deref(),
                 )
                 .await

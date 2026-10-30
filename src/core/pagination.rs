@@ -61,6 +61,27 @@ pub struct Page<T> {
     pub next: Option<Cursor>,
 }
 
+/// Página em memória sobre itens já ordenados pela mesma chave do cursor.
+pub fn paginate<T>(items: Vec<T>, request: &PageRequest, key: impl Fn(&T) -> Cursor) -> Page<T> {
+    let mut items: Vec<T> = items
+        .into_iter()
+        .filter(|item| {
+            request.after.as_ref().is_none_or(|after| {
+                let cursor = key(item);
+                (cursor.key.as_str(), cursor.id.as_str()) > (after.key.as_str(), after.id.as_str())
+            })
+        })
+        .take(request.limit as usize + 1)
+        .collect();
+    let next = if items.len() > request.limit as usize {
+        items.truncate(request.limit as usize);
+        items.last().map(&key)
+    } else {
+        None
+    };
+    Page { items, next }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +111,30 @@ mod tests {
         assert!(PageRequest::new(None, Some(200)).is_ok());
         assert!(PageRequest::new(None, Some(0)).is_err());
         assert!(PageRequest::new(None, Some(201)).is_err());
+    }
+
+    #[test]
+    fn in_memory_pages_follow_the_cursor() {
+        let items: Vec<String> = ["a", "b", "c", "d", "e"].map(str::to_owned).to_vec();
+        let key = |item: &String| Cursor {
+            key: item.clone(),
+            id: item.clone(),
+        };
+        let first = paginate(
+            items.clone(),
+            &PageRequest::new(None, Some(2)).expect("p"),
+            key,
+        );
+        assert_eq!(first.items, ["a", "b"]);
+        let cursor = first.next.expect("next").encode();
+        let second = paginate(
+            items.clone(),
+            &PageRequest::new(Some(&cursor), Some(2)).expect("p"),
+            key,
+        );
+        assert_eq!(second.items, ["c", "d"]);
+        let last = paginate(items, &PageRequest::new(None, Some(5)).expect("p"), key);
+        assert_eq!(last.items.len(), 5);
+        assert!(last.next.is_none());
     }
 }

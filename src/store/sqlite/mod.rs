@@ -1,6 +1,7 @@
 //! Implementação SQLite do `Store`: uma thread escritora e um pool de leitores (D-005),
 //! WAL, FTS5 e `sqlite-vec`.
 
+mod channels;
 mod identities;
 mod journal;
 mod migrations;
@@ -21,8 +22,9 @@ use super::{DoctorReport, MigrationStatus, ReadyReport, Store, StoreError};
 use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
-        IdemRow, IdentityCounts, Lookup, NewAgent, NewApp, NewToken, SettingChange, SettingRow,
-        Token, TokenFilter, TokenPatch, WriteContext,
+        Channel, ChannelPatch, IdemRow, IdentityCounts, Lookup, Network, NewAgent, NewApp,
+        NewChannel, NewSubscription, NewToken, SettingChange, SettingRow, Subscription,
+        SubscriptionPatch, Token, TokenFilter, TokenPatch, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -361,6 +363,85 @@ impl Store for SqliteStore {
             return Ok(());
         }
         self.write(move |transaction| identities::touch_tokens(transaction, &batch))
+            .await
+    }
+
+    async fn network(&self) -> Result<Network, StoreError> {
+        self.read(channels::network).await
+    }
+
+    async fn get_channel(&self, lookup: Lookup) -> Result<Option<Channel>, StoreError> {
+        self.read(move |connection| channels::get_channel(connection, &lookup))
+            .await
+    }
+
+    async fn create_channel(
+        &self,
+        new: NewChannel,
+        context: WriteContext,
+    ) -> Result<Channel, StoreError> {
+        self.mutate(move |transaction| channels::create_channel(transaction, &new, &context))
+            .await
+    }
+
+    async fn update_channel(
+        &self,
+        id: String,
+        patch: ChannelPatch,
+        context: WriteContext,
+    ) -> Result<Channel, StoreError> {
+        self.mutate(move |transaction| channels::update_channel(transaction, &id, &patch, &context))
+            .await
+    }
+
+    async fn set_channel_archived(
+        &self,
+        id: String,
+        archived: bool,
+        context: WriteContext,
+    ) -> Result<Channel, StoreError> {
+        self.mutate(move |transaction| {
+            channels::set_channel_archived(transaction, &id, archived, &context)
+        })
+        .await
+    }
+
+    async fn delete_channel(
+        &self,
+        id: String,
+        context: WriteContext,
+    ) -> Result<Channel, StoreError> {
+        self.mutate(move |transaction| channels::delete_channel(transaction, &id, &context))
+            .await
+    }
+
+    async fn create_subscription(
+        &self,
+        new: NewSubscription,
+        context: WriteContext,
+    ) -> Result<Subscription, StoreError> {
+        self.mutate(move |transaction| channels::create_subscription(transaction, &new, &context))
+            .await
+    }
+
+    async fn update_subscription(
+        &self,
+        id: String,
+        patch: SubscriptionPatch,
+        context: WriteContext,
+    ) -> Result<Subscription, StoreError> {
+        self.mutate(move |transaction| {
+            channels::update_subscription(transaction, &id, &patch, &context)
+        })
+        .await
+    }
+
+    async fn delete_subscription(
+        &self,
+        id: String,
+        context: WriteContext,
+    ) -> Result<Subscription, StoreError> {
+        self.mutate(move |transaction| channels::delete_subscription(transaction, &id, &context))
             .await
     }
 

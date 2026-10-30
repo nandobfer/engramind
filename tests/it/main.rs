@@ -1,6 +1,7 @@
 //! Único binário de testes de integração (D-015). Um módulo amplo por domínio; nunca crie
 //! arquivos novos direto em `tests/`.
 
+mod channels;
 mod cli;
 mod contract;
 mod docs;

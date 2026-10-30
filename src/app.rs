@@ -60,7 +60,7 @@ fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
 
 /// Rotas `/v1`, protegidas por `require_auth`. Uma entrada por operação do catálogo.
 fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
-    use rest::{audit, docs, identities, settings, status};
+    use rest::{audit, channels, docs, identities, settings, status, subscriptions};
     vec![
         ("/v1/whoami", get(identities::whoami)),
         (
@@ -89,6 +89,32 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         ),
         ("/v1/tokens/{token}", patch(identities::update_token)),
         ("/v1/tokens/{token}/revoke", post(identities::revoke_token)),
+        (
+            "/v1/channels",
+            get(channels::list_channels).post(channels::create_channel),
+        ),
+        (
+            "/v1/channels/{channel}",
+            get(channels::get_channel)
+                .patch(channels::update_channel)
+                .delete(channels::delete_channel),
+        ),
+        (
+            "/v1/channels/{channel}/archive",
+            post(channels::archive_channel),
+        ),
+        (
+            "/v1/channels/{channel}/restore",
+            post(channels::restore_channel),
+        ),
+        (
+            "/v1/subscriptions",
+            get(subscriptions::list_subscriptions).post(subscriptions::subscribe),
+        ),
+        (
+            "/v1/subscriptions/{subscription}",
+            patch(subscriptions::update_subscription).delete(subscriptions::unsubscribe),
+        ),
         (
             "/v1/settings",
             get(settings::get_settings).put(settings::update_settings),

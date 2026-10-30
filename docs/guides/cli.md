@@ -14,6 +14,8 @@ Cada valor é lido nesta ordem: flag, variável de ambiente, perfil.
 
 `--profile` escolhe o perfil; sem ele, vale `default_profile`.
 
+`--channels` (ou `ENGRAMIND_CHANNELS`) vira o cabeçalho `Engramind-Channels` de toda requisição: a lista de slugs e prefixos que restringe os canais da conexão (guia `canais-e-assinaturas`).
+
 ## Perfis
 
 Os perfis ficam em `~/.config/engramind/config.toml`, gravado com permissão `0600`:
@@ -50,6 +52,10 @@ engramind apps create --slug app-a --name "App A"
 engramind agents create --app app-a --slug curador --name Curador
 engramind tokens issue --agent app-a/curador --scopes read,write
 engramind tokens revoke tk_3f9e1a7c
+engramind channels create --slug eng/global --name "Engenharia global"
+engramind channels list --include-archived
+engramind subscriptions add --agent app-a/curador --target "eng/*" --mode manage --access read,write
+engramind subscriptions update sub_7c2e9a10 --token-access
 engramind settings get limits.rate_per_minute
 engramind settings set limits.rate_per_minute 1200
 engramind status
@@ -68,7 +74,7 @@ Mutações aceitam `--idempotency-key`. Em `settings set`, o valor é lido como 
 | 1 | Qualquer outro erro |
 | 2 | Uso inválido: argumentos, `VALIDATION_ERROR`, `SETTING_*` ou configuração local (`CLI_CONFIG_INVALID`) |
 | 3 | `AUTH_INVALID` |
-| 4 | `SCOPE_REQUIRED` |
+| 4 | `SCOPE_REQUIRED` ou `CHANNEL_NOT_SUBSCRIBED` |
 | 5 | Recurso inexistente (`*_NOT_FOUND`) |
 | 6 | Conflito (`409`) |
 | 7 | `RATE_LIMITED` |

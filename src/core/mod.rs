@@ -1,11 +1,13 @@
 //! Camada de domínio. REST, MCP e CLI são adaptadores finos sobre ela: toda operação passa por
 //! `Core`, com a mesma autorização, validação, auditoria, idempotência e códigos de erro.
 
+pub mod access;
 pub mod audit;
 pub mod auth;
 pub mod authz;
 pub mod background;
 pub mod bootstrap;
+pub mod channels;
 pub mod docs;
 pub mod idempotency;
 pub mod identities;
@@ -15,8 +17,10 @@ pub mod operations;
 pub mod pagination;
 pub mod pepper;
 pub mod principal;
+pub mod selection;
 pub mod settings;
 pub mod status;
+pub mod subscriptions;
 pub mod usage;
 
 use std::sync::{Arc, RwLock};
@@ -29,8 +33,8 @@ use crate::{
 };
 
 use self::{
-    docs::Docs, model::Actor, operations::OperationSpec, principal::Principal,
-    settings::SettingsSnapshot, usage::Usage,
+    access::NetworkCache, docs::Docs, model::Actor, operations::OperationSpec,
+    principal::Principal, settings::SettingsSnapshot, usage::Usage,
 };
 
 /// Ponto de entrada das operações. Barato de clonar.
@@ -45,6 +49,7 @@ struct Inner<S> {
     docs: Docs,
     settings: RwLock<SettingsSnapshot>,
     usage: Usage,
+    network: NetworkCache,
     database: DatabaseSettings,
 }
 
@@ -58,6 +63,7 @@ impl<S: Store> Core<S> {
                 docs: Docs::new(crate::openapi::document()),
                 settings: RwLock::new(SettingsSnapshot::default()),
                 usage: Usage::default(),
+                network: NetworkCache::default(),
                 database,
             }),
         }
@@ -84,6 +90,15 @@ impl<S: Store> Core<S> {
 
     pub(crate) fn usage(&self) -> &Usage {
         &self.inner.usage
+    }
+
+    pub(crate) fn network_cache(&self) -> &NetworkCache {
+        &self.inner.network
+    }
+
+    /// Invalida o cache da rede depois de mudar canais, assinaturas ou agentes.
+    pub(crate) fn network_changed(&self) {
+        self.inner.network.invalidate();
     }
 
     pub(crate) fn database(&self) -> &DatabaseSettings {
@@ -137,6 +152,13 @@ pub(crate) fn store_error(error: StoreError, not_found: impl FnOnce() -> ApiErro
             "A mudanca deixaria a rede sem nenhum token admin ativo com write",
         ),
         StoreError::Conflict("IDEMPOTENCY_KEY_EXISTS") => idempotency::key_taken(),
+        StoreError::Conflict("CHANNEL_NOT_FOUND") => channels::channel_not_found(),
+        StoreError::Conflict("CHANNEL_NOT_ARCHIVED") => {
+            ApiError::new("CHANNEL_NOT_ARCHIVED", "Arquive o canal antes de exclui-lo")
+        }
+        StoreError::Conflict("SUBSCRIPTION_EXISTS") => {
+            ApiError::new("SUBSCRIPTION_EXISTS", "O agente ja assina esse alvo")
+        }
         other => ApiError::from(other),
     }
 }

@@ -7,7 +7,8 @@ O Engramind expõe um servidor MCP em `POST /mcp` (Streamable HTTP, **stateless*
 - `Authorization: Bearer eng.<token_id>.<segredo>`;
 - `Content-Type: application/json`;
 - `Accept: application/json, text/event-stream`;
-- o `Host` precisa estar em `MCP_ALLOWED_HOSTS` (proteção contra DNS rebinding); fora dela, `403 MCP_HOST_FORBIDDEN`.
+- o `Host` precisa estar em `MCP_ALLOWED_HOSTS` (proteção contra DNS rebinding); fora dela, `403 MCP_HOST_FORBIDDEN`;
+- opcional: `Engramind-Channels: eng/global,eng/projeto-atlas`, o filtro padrão de canais da conexão. Registre o MCP por sessão com esse cabeçalho, e o agente não precisa escolher canais. O parâmetro `channels` de uma ferramenta só restringe dentro dele (guia `canais-e-assinaturas`).
 
 ```json
 { "jsonrpc": "2.0", "id": 1, "method": "tools/call",
