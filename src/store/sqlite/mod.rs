@@ -1,8 +1,11 @@
 //! Implementação SQLite do `Store`: uma thread escritora e um pool de leitores (D-005),
 //! WAL, FTS5 e `sqlite-vec`.
 
+mod identities;
+mod journal;
 mod migrations;
 mod readers;
+mod settings;
 mod vec_extension;
 mod writer;
 
@@ -15,6 +18,14 @@ use serde::Serialize;
 
 use self::{readers::Readers, writer::Writer};
 use super::{DoctorReport, MigrationStatus, ReadyReport, Store, StoreError};
+use crate::core::{
+    model::{
+        Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
+        IdemRow, IdentityCounts, Lookup, NewAgent, NewApp, NewToken, SettingChange, SettingRow,
+        Token, TokenFilter, TokenPatch, WriteContext,
+    },
+    pagination::{Page, PageRequest},
+};
 
 const BUSY_TIMEOUT: Duration = Duration::from_millis(5000);
 
@@ -117,6 +128,24 @@ impl SqliteStore {
             .await
     }
 
+    /// Como `write`, mas a closure devolve `StoreError` (conflitos de domínio desfazem tudo).
+    async fn mutate<R, F>(&self, f: F) -> Result<R, StoreError>
+    where
+        R: Send + 'static,
+        F: FnOnce(&Transaction) -> Result<R, StoreError> + Send + 'static,
+    {
+        self.writer
+            .run(move |connection| {
+                let transaction = connection
+                    .transaction_with_behavior(TransactionBehavior::Immediate)
+                    .map_err(sql_error)?;
+                let result = f(&transaction)?;
+                transaction.commit().map_err(sql_error)?;
+                Ok(result)
+            })
+            .await
+    }
+
     async fn read<R, F>(&self, f: F) -> Result<R, StoreError>
     where
         R: Send + 'static,
@@ -196,6 +225,189 @@ impl Store for SqliteStore {
         })
         .await
     }
+
+    async fn find_auth_token(&self, id: &str) -> Result<Option<AuthTokenRow>, StoreError> {
+        let id = id.to_owned();
+        self.read(move |connection| identities::find_auth_token(connection, &id))
+            .await
+    }
+
+    async fn count_tokens(&self) -> Result<u64, StoreError> {
+        self.read(identities::count_tokens).await
+    }
+
+    async fn identity_counts(&self) -> Result<IdentityCounts, StoreError> {
+        self.read(identities::identity_counts).await
+    }
+
+    async fn list_apps(&self, page: PageRequest) -> Result<Page<App>, StoreError> {
+        self.read(move |connection| identities::list_apps(connection, &page))
+            .await
+    }
+
+    async fn get_app(&self, lookup: Lookup) -> Result<Option<App>, StoreError> {
+        self.read(move |connection| identities::get_app(connection, &lookup))
+            .await
+    }
+
+    async fn create_app(&self, new: NewApp, context: WriteContext) -> Result<App, StoreError> {
+        self.mutate(move |transaction| identities::create_app(transaction, &new, &context))
+            .await
+    }
+
+    async fn update_app(
+        &self,
+        id: String,
+        patch: AppPatch,
+        context: WriteContext,
+    ) -> Result<App, StoreError> {
+        self.mutate(move |transaction| identities::update_app(transaction, &id, &patch, &context))
+            .await
+    }
+
+    async fn delete_app(&self, id: String, context: WriteContext) -> Result<App, StoreError> {
+        self.mutate(move |transaction| identities::delete_app(transaction, &id, &context))
+            .await
+    }
+
+    async fn list_agents(
+        &self,
+        app_id: Option<String>,
+        page: PageRequest,
+    ) -> Result<Page<Agent>, StoreError> {
+        self.read(move |connection| identities::list_agents(connection, app_id.as_deref(), &page))
+            .await
+    }
+
+    async fn get_agent(&self, lookup: AgentLookup) -> Result<Option<Agent>, StoreError> {
+        self.read(move |connection| identities::get_agent(connection, &lookup))
+            .await
+    }
+
+    async fn create_agent(
+        &self,
+        new: NewAgent,
+        context: WriteContext,
+    ) -> Result<Agent, StoreError> {
+        self.mutate(move |transaction| identities::create_agent(transaction, &new, &context))
+            .await
+    }
+
+    async fn update_agent(
+        &self,
+        id: String,
+        patch: AgentPatch,
+        context: WriteContext,
+    ) -> Result<Agent, StoreError> {
+        self.mutate(move |transaction| identities::update_agent(transaction, &id, &patch, &context))
+            .await
+    }
+
+    async fn delete_agent(&self, id: String, context: WriteContext) -> Result<Agent, StoreError> {
+        self.mutate(move |transaction| identities::delete_agent(transaction, &id, &context))
+            .await
+    }
+
+    async fn list_tokens(
+        &self,
+        filter: TokenFilter,
+        page: PageRequest,
+    ) -> Result<Page<Token>, StoreError> {
+        self.read(move |connection| identities::list_tokens(connection, &filter, &page))
+            .await
+    }
+
+    async fn get_token(&self, id: String) -> Result<Option<Token>, StoreError> {
+        self.read(move |connection| identities::get_token(connection, &id))
+            .await
+    }
+
+    async fn create_token(
+        &self,
+        new: NewToken,
+        context: WriteContext,
+    ) -> Result<Token, StoreError> {
+        self.mutate(move |transaction| identities::create_token(transaction, &new, &context))
+            .await
+    }
+
+    async fn update_token(
+        &self,
+        id: String,
+        patch: TokenPatch,
+        context: WriteContext,
+    ) -> Result<Token, StoreError> {
+        self.mutate(move |transaction| identities::update_token(transaction, &id, &patch, &context))
+            .await
+    }
+
+    async fn revoke_token(&self, id: String, context: WriteContext) -> Result<Token, StoreError> {
+        self.mutate(move |transaction| identities::revoke_token(transaction, &id, &context))
+            .await
+    }
+
+    async fn bootstrap(
+        &self,
+        app: NewApp,
+        token: NewToken,
+        context: WriteContext,
+    ) -> Result<Option<Token>, StoreError> {
+        self.mutate(move |transaction| identities::bootstrap(transaction, &app, &token, &context))
+            .await
+    }
+
+    async fn touch_tokens(&self, batch: Vec<(String, String)>) -> Result<(), StoreError> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        self.write(move |transaction| identities::touch_tokens(transaction, &batch))
+            .await
+    }
+
+    async fn get_settings(&self) -> Result<Vec<SettingRow>, StoreError> {
+        self.read(settings::get_settings).await
+    }
+
+    async fn update_settings(
+        &self,
+        changes: Vec<SettingChange>,
+        context: WriteContext,
+    ) -> Result<Vec<SettingRow>, StoreError> {
+        self.mutate(move |transaction| settings::update_settings(transaction, &changes, &context))
+            .await
+    }
+
+    async fn find_idempotency(
+        &self,
+        token_id: &str,
+        key: &str,
+    ) -> Result<Option<IdemRow>, StoreError> {
+        let token_id = token_id.to_owned();
+        let key = key.to_owned();
+        self.read(move |connection| journal::find(connection, &token_id, &key))
+            .await
+    }
+
+    async fn purge_idempotency(&self, before: String) -> Result<u64, StoreError> {
+        self.write(move |transaction| {
+            transaction
+                .execute(
+                    "DELETE FROM idempotency WHERE created_at < ?1",
+                    params![before],
+                )
+                .map(|count| count as u64)
+        })
+        .await
+    }
+
+    async fn list_audit(
+        &self,
+        filter: AuditFilter,
+        page: PageRequest,
+    ) -> Result<Page<AuditEvent>, StoreError> {
+        self.read(move |connection| settings::list_audit(connection, &filter, &page))
+            .await
+    }
 }
 
 fn configure_writer(connection: &Connection) -> rusqlite::Result<()> {
@@ -218,6 +430,20 @@ fn configure_common(connection: &Connection) -> rusqlite::Result<()> {
     connection.pragma_update(None, "synchronous", "NORMAL")?;
     connection.pragma_update(None, "foreign_keys", "ON")?;
     Ok(())
+}
+
+/// Violação de unicidade (ou de chave primária) vira `Conflict(code)`; o resto, `sql_error`.
+fn unique_conflict(error: rusqlite::Error, code: &'static str) -> StoreError {
+    if let rusqlite::Error::SqliteFailure(failure, _) = &error
+        && failure.code == ErrorCode::ConstraintViolation
+        && matches!(
+            failure.extended_code,
+            rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE | rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY
+        )
+    {
+        return StoreError::Conflict(code);
+    }
+    sql_error(error)
 }
 
 /// Erros transitórios ou de I/O viram `Unavailable`; o resto vira `Internal` sem dados.

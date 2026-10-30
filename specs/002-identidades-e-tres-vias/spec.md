@@ -1,7 +1,7 @@
 # Spec - identidades e as três vias
 
 **Criado em**: 2026-10-30
-**Status**: Draft
+**Status**: Implementada
 **Versão alvo**: 0.2.0
 **Input**: Desenho §4, §12 (grupo `limits`), §13 (Identidades, Configurações, Operação e Documentação), §15, §18, §20.
 

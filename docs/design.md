@@ -169,12 +169,12 @@ Todo token, de qualquer tipo, tem um conjunto de escopos:
 
 ### Formato e guarda
 
-- Formato: `eng.<token_id>.<segredo>`, no mesmo esquema do sap-middleman. O `token_id` localiza o
-  registro, e o segredo é comparado em tempo constante com o hash (SHA-256 com o pepper
-  `TOKEN_PEPPER`).
+- Formato: `eng.<token_id>.<segredo>`, no mesmo esquema do sap-middleman, com o id público do token
+  (`eng.tk_3f9e1a7c.<segredo>`). O `token_id` localiza o registro, e o segredo é comparado em tempo
+  constante com o hash (HMAC-SHA256 com o `TOKEN_PEPPER` como chave; decisão 0007).
 - O segredo aparece **uma única vez**, na emissão. Depois só o prefixo é mostrado.
 - Os tokens têm `expires_at` opcional, `last_used_at` (atualizado em lote) e revogação imediata.
-- O primeiro token `admin` nasce de `BOOTSTRAP_ADMIN_TOKEN`, aceito só com o banco vazio.
+- O primeiro token `admin` nasce de `BOOTSTRAP_ADMIN_TOKEN`, aceito só com o banco sem tokens; com tokens existentes é ignorado com aviso no log.
 
 ### Acesso efetivo
 
@@ -742,7 +742,7 @@ DATABASE_PATH=/data/engramind.db
 MODELS_PATH=/data/models
 
 # Aceito só com o banco vazio, para criar o primeiro token admin.
-BOOTSTRAP_ADMIN_TOKEN=eng.00000000-0000-4000-8000-000000000001.substitua-por-32-ou-mais-caracteres
+BOOTSTRAP_ADMIN_TOKEN=eng.tk_00000001.substitua-por-32-ou-mais-caracteres
 TOKEN_PEPPER=substitua-por-um-segredo-longo
 # Chave (base64, 32 bytes) que cifra os segredos de configuração: openssl rand -base64 32
 SECRETS_KEY=

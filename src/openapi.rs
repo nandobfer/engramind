@@ -11,8 +11,21 @@ use utoipa::openapi::{
 use utoipa::{Modify, OpenApi};
 
 use crate::{
+    core::{
+        audit::AuditList,
+        docs::DocText,
+        identities::{
+            AgentList, AppList, CreateAgentBody, CreateAppBody, IssueTokenBody, IssuedToken,
+            TokenList, UpdateBody, UpdateTokenBody, WhoAmI,
+        },
+        model::{Agent, App, AuditEvent, IdentityCounts, Token, TokenStatus},
+        principal::{AgentRef, AppRef, Scope, TokenKind},
+        settings::{SettingView, SettingsView, UpdateSettingsBody},
+        status::{BackupStatus, DatabaseStatus, StatusView},
+    },
     error::{ErrorBody, ErrorResponse},
     health::{LiveResponse, ReadyResponse},
+    mcp::contract::{McpJsonRpcError, McpJsonRpcRequest, McpJsonRpcResponse},
     store::MigrationStatus,
 };
 
@@ -27,13 +40,57 @@ use crate::{
         crate::health::live,
         crate::health::ready,
         crate::openapi::openapi_json_contract,
-        crate::openapi::swagger_docs_contract
+        crate::openapi::swagger_docs_contract,
+        crate::rest::identities::whoami,
+        crate::rest::identities::list_apps,
+        crate::rest::identities::get_app,
+        crate::rest::identities::create_app,
+        crate::rest::identities::update_app,
+        crate::rest::identities::delete_app,
+        crate::rest::identities::list_agents,
+        crate::rest::identities::get_agent,
+        crate::rest::identities::create_agent,
+        crate::rest::identities::update_agent,
+        crate::rest::identities::delete_agent,
+        crate::rest::identities::list_tokens,
+        crate::rest::identities::issue_token,
+        crate::rest::identities::update_token,
+        crate::rest::identities::revoke_token,
+        crate::rest::settings::get_settings,
+        crate::rest::settings::update_settings,
+        crate::rest::status::get_status,
+        crate::rest::audit::get_audit,
+        crate::rest::docs::get_overview,
+        crate::rest::docs::list_guides,
+        crate::rest::docs::get_guide,
+        crate::rest::docs::search_docs,
+        crate::rest::docs::list_operations,
+        crate::rest::docs::get_operation,
+        crate::rest::docs::get_schema,
+        crate::mcp::contract::mcp_contract
     ),
-    components(schemas(ErrorResponse, ErrorBody, LiveResponse, ReadyResponse, MigrationStatus)),
+    components(schemas(
+        ErrorResponse, ErrorBody, LiveResponse, ReadyResponse, MigrationStatus,
+        TokenKind, Scope, AppRef, AgentRef, WhoAmI,
+        App, AppList, CreateAppBody, UpdateBody,
+        Agent, AgentList, CreateAgentBody,
+        Token, TokenStatus, TokenList, IssueTokenBody, IssuedToken, UpdateTokenBody,
+        SettingView, SettingsView, UpdateSettingsBody,
+        StatusView, DatabaseStatus, BackupStatus, IdentityCounts,
+        AuditEvent, AuditList, DocText,
+        McpJsonRpcRequest, McpJsonRpcResponse, McpJsonRpcError
+    )),
     modifiers(&SecurityAddon),
     tags(
         (name = "Health", description = "Verificações públicas de vida e prontidão"),
-        (name = "Operations", description = "Rotas operacionais públicas (OpenAPI e Swagger UI)")
+        (name = "Operations", description = "Rotas operacionais públicas (OpenAPI e Swagger UI)"),
+        (name = "Authentication", description = "Identidade do token (`whoami`)"),
+        (name = "Identities", description = "Apps, agentes e tokens (token admin)"),
+        (name = "Settings", description = "Configurações funcionais (token admin)"),
+        (name = "Status", description = "Estado do serviço (token admin)"),
+        (name = "Audit", description = "Auditoria das mutações (token admin)"),
+        (name = "Documentation", description = "Guias e contrato da versão em execução"),
+        (name = "MCP", description = "Model Context Protocol em `POST /mcp`")
     )
 )]
 pub struct ApiDoc;
