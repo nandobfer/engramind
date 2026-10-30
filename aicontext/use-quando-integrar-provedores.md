@@ -29,7 +29,7 @@
 
 ## Webhooks
 
-- `POST` assinado com HMAC-SHA256 (`Haiko-Signature: t=<ts>,v1=<hex>`), segredo cifrado por app.
+- `POST` assinado com HMAC-SHA256 (`Engramind-Signature: t=<ts>,v1=<hex>`), segredo cifrado por app.
 - Payload mínimo, sem textos: `{ id, type, channel, channel_version, memory_ids, at }`.
 - Destinatários: apps com agente assinando o canal afetado e apps com token `admin`.
 - Retentativas com backoff (`webhooks.max_attempts`); o `id` permite deduplicar.

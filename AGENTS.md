@@ -1,4 +1,4 @@
-# Haikocampus — Instruções para agentes
+# Engramind — Instruções para agentes
 
 Este arquivo é normativo para qualquer agente que trabalhe neste repositório.
 
@@ -20,7 +20,7 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 
 ## Propósito e limites
 
-- O Haikocampus é uma rede de memórias para agentes de IA: guarda fatos duráveis e curtos em **canais**, identifica cada agente por um **token** com escopos e entrega as memórias por **REST, MCP e CLI**.
+- O Engramind é uma rede de memórias para agentes de IA: guarda fatos duráveis e curtos em **canais**, identifica cada agente por um **token** com escopos e entrega as memórias por **REST, MCP e CLI**.
 - Uma memória pertence ao **canal**, não ao agente que a escreveu. O autor é proveniência.
 - O serviço é **desacoplado**: não conhece nenhum sistema consumidor ou gestor específico. Toda integração passa pelos contratos públicos (REST, MCP, CLI e webhooks).
 - A política fina (quais ferramentas o agente vê, quando ele escreve) pertence ao sistema consumidor. O serviço aplica escopos e acesso efetivo.
@@ -30,10 +30,10 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 ## Arquitetura
 
 - Linguagem Rust; HTTP com `axum` 0.8 + `tokio` + `tower-http`.
-- Um único binário: o servidor (`haikocampus serve`) e a CLI (`haiko <comando>`).
+- Um único binário: o servidor (`engramind serve`) e a CLI (`engramind <comando>`).
 - **Uma única camada de domínio** (`core`). REST, MCP e CLI são adaptadores finos sobre ela, com as mesmas regras, validações, escopos e códigos de erro. Nunca coloque regra de negócio num adaptador.
 - Armazenamento atrás da interface `Store`, implementada hoje em SQLite (`rusqlite` bundled, WAL, FTS5 e `sqlite-vec`). Nenhum módulo fora da implementação do `Store` conhece SQL.
-- A CLI é cliente HTTP da API. Só `haiko serve`, `haiko migrate` e `haiko doctor` abrem o banco.
+- A CLI é cliente HTTP da API. Só `engramind serve`, `engramind migrate` e `engramind doctor` abrem o banco.
 - Workers `tokio` (Redator, embeddings, consolidador, webhooks) consomem a fila em tabela `jobs`; não introduza broker.
 - OpenAPI com `utoipa` 5 + `utoipa-swagger-ui`; MCP com `rmcp` (Streamable HTTP, stateless) em `POST /mcp`.
 - Comportamento funcional (Redator, embeddings, orçamentos, limites) vive nas **configurações** gerenciadas pela API. Variáveis de ambiente cuidam só de infraestrutura.
@@ -41,7 +41,7 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 
 ## Segurança
 
-- Todo acesso é por Bearer token `hk.<token_id>.<segredo>`; o segredo é comparado em tempo constante com o hash SHA-256 + `TOKEN_PEPPER` e aparece uma única vez, na emissão.
+- Todo acesso é por Bearer token `eng.<token_id>.<segredo>`; o segredo é comparado em tempo constante com o hash SHA-256 + `TOKEN_PEPPER` e aparece uma única vez, na emissão.
 - Tipos `agent` e `admin`; escopos `read`, `write`, `delete` (`write` e `delete` exigem `read`).
 - **Acesso efetivo = escopos do token ∩ acesso da assinatura.** A assinatura restringe, nunca amplia. Aplique isso no `core`, nunca só no adaptador.
 - Token `agent` nunca alcança ferramentas administrativas nem cria canais.
@@ -70,7 +70,7 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 - Operações protegidas declaram o security scheme Bearer; rotas públicas declaram a ausência dele.
 - `docs/openapi.json` é versionado e precisa ser igual ao gerado (`UPDATE_SNAPSHOTS=1` regenera).
 - Guias em `docs/guides/*.md` são compilados no binário (`include_str!`) com público (`all`/`admin`) e tags OpenAPI; o MCP serve a documentação da versão em execução.
-- Testes de contrato (§15) garantem: snapshot do OpenAPI, anotação em toda rota, toda ferramenta MCP com operação REST e guia, todo comando da CLI/skill existente em `haiko help --json`, todo código de erro e toda chave de configuração documentados.
+- Testes de contrato (§15) garantem: snapshot do OpenAPI, anotação em toda rota, toda ferramenta MCP com operação REST e guia, todo comando da CLI/skill existente em `engramind help --json`, todo código de erro e toda chave de configuração documentados.
 - Uma operação não está concluída enquanto REST, OpenAPI, MCP, CLI, guias e skill não estiverem sincronizados.
 
 ## Observabilidade
@@ -111,7 +111,7 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 - `docs/guides/`: guias de uso compilados no binário e servidos pelo MCP.
 - `docs/decisions/`: decisões arquiteturais e consequências.
 - `docs/openapi.json`: snapshot do contrato.
-- `skills/haikocampus/SKILL.md`: skill da CLI.
+- `skills/engramind/SKILL.md`: skill da CLI.
 - `CHANGELOG.md`: mudanças por versão.
 - Documente o estado atual, separando fatos implementados, decisões tomadas e propostas futuras. Documente nomes de variáveis, nunca valores reais.
 
@@ -120,5 +120,5 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 - SemVer, começando em `0.1.0`. `Cargo.toml` é a única fonte da versão; OpenAPI (`info.version`), `get_status` e `get_overview` usam `CARGO_PKG_VERSION`.
 - Toda alteração de código incrementa a versão no mesmo trabalho e registra a entrada no `CHANGELOG.md`.
 - `PATCH` para correção ou ajuste interno sem mudança de contrato; `MINOR` para nova capacidade, campo, operação ou comportamento público; `MAJOR` para quebra de contrato. Em `0.x`, quebra de contrato incrementa `MINOR`.
-- Atualize `Cargo.lock` junto (`cargo update -p haikocampus --offline`).
+- Atualize `Cargo.lock` junto (`cargo update -p engramind --offline`).
 - Crie a tag `vX.Y.Z` somente quando o usuário pedir uma release.

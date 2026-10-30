@@ -8,7 +8,7 @@
 
 ## SQLite
 
-- Arquivo único (`DATABASE_PATH`, `/data/haikocampus.db` no contêiner).
+- Arquivo único (`DATABASE_PATH`, `/data/engramind.db` no contêiner).
 - PRAGMAs: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `foreign_keys=ON`.
 - Uma thread escritora recebe comandos por canal `tokio` e serializa as escritas; um pool de leitores atende consultas. Nunca escreva fora da thread escritora.
 - Contadores (`retrieval_count`, `injected_count`, `last_used_at`, `last_retrieved_at`) são acumulados em memória e gravados em lote.
@@ -18,7 +18,7 @@
 
 - SQL versionado em `migrations/`, embutido no binário (`rusqlite_migration`).
 - Nunca edite nem remova uma migração que possa ter sido aplicada; corrija com uma nova.
-- `GET /health/ready` e `haiko doctor` conferem migrações aplicadas.
+- `GET /health/ready` e `engramind doctor` conferem migrações aplicadas.
 
 ## FTS5 e sqlite-vec
 

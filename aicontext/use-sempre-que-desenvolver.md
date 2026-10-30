@@ -9,7 +9,7 @@
 
 ## Ao projetar uma mudança
 
-- Respeite a fase atual (§22 do desenho). Não antecipe capacidades de fases seguintes sem pedido explícito.
+- Respeite a etapa atual (`specs/NNN-etapa/`). Não antecipe capacidades de etapas seguintes sem pedido explícito.
 - Coloque a regra no `core`; REST, MCP e CLI só traduzem entrada e saída.
 - Toda operação nasce com nome base, parâmetros, escopo exigido e códigos de erro definidos, iguais nas três vias.
 - Defina autenticação, escopo, acesso efetivo, validação, idempotência, auditoria e erro antes de tocar no banco.

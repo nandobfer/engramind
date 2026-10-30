@@ -45,16 +45,16 @@
 - `POST /mcp`, Streamable HTTP stateless, JSON-RPC com resposta `application/json`.
 - `tools/list` mostra **só as ferramentas que o token pode usar** (tipo e escopos).
 - Ferramentas declaram `read_only_hint`, `destructive_hint` e `idempotent_hint`.
-- O cabeçalho `Haiko-Channels` define o filtro padrão de canais da conexão.
-- Resources `haiko://context`, `haiko://channels/{slug}`, `haiko://guides/{id}`; prompt `memory-writing`.
+- O cabeçalho `Engramind-Channels` define o filtro padrão de canais da conexão.
+- Resources `engramind://context`, `engramind://channels/{slug}`, `engramind://guides/{id}`; prompt `memory-writing`.
 - Ferramentas de documentação usam o índice do OpenAPI e os guias embutidos; guias `admin` ficam ocultos para tokens `agent`.
 - `MCP_ALLOWED_HOSTS` valida o `Host`.
 
 ## CLI
 
-- `haiko <grupo> <ação>`, cliente HTTP da API; configuração por `HAIKO_URL`, `HAIKO_TOKEN`, `HAIKO_CHANNELS` ou perfis em `~/.config/haikocampus/config.toml`.
+- `engramind <grupo> <ação>`, cliente HTTP da API; configuração por `ENGRAMIND_URL`, `ENGRAMIND_TOKEN`, `ENGRAMIND_CHANNELS` ou perfis em `~/.config/engramind/config.toml`.
 - `--json` em todo comando; códigos de saída estáveis mapeados dos códigos de erro.
-- `haiko help --json` descreve todos os comandos e é a base dos testes da skill.
+- `engramind help --json` descreve todos os comandos e é a base dos testes da skill.
 - Toda escrita no terminal passa pelo módulo de saída da CLI.
 
 ## Documentação viva

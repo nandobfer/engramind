@@ -1,4 +1,4 @@
-# Haikocampus — desenho do projeto
+# Engramind — desenho do projeto
 
 > Rede de memórias para agentes de IA. Um serviço em Rust, com SQLite (WAL), sqlite-vec e FTS5,
 > replicado para S3 pelo Litestream. Guarda memórias em **canais**, identifica cada agente por um
@@ -34,7 +34,7 @@ Status: desenho revisado (out/2026), pronto para planejamento. Nada implementado
   registrado como proveniência.
 - **O token identifica e delimita.** Ele diz *qual app* e *qual agente* está falando, e carrega os
   escopos `read`, `write` e `delete`. A política fina (que ferramentas o agente vê e quando ele
-  escreve) é decidida pelo **sistema consumidor**. O Haikocampus fornece o MCP, as ferramentas e
+  escreve) é decidida pelo **sistema consumidor**. O Engramind fornece o MCP, as ferramentas e
   aplica os escopos.
 - **Agentes escrevem direto**, sem fluxo de sugestão e aprovação. Toda escrita guarda
   proveniência e histórico de versões, então nada se perde e tudo pode ser revertido.
@@ -60,7 +60,7 @@ Status: desenho revisado (out/2026), pronto para planejamento. Nada implementado
 
 ## 2. Conceitos absorvidos do Magic Context
 
-| Magic Context | Haikocampus |
+| Magic Context | Engramind |
 |---|---|
 | Memória de **projeto**, com identidade derivada do repositório | Memória de **canal**. Um agente assina vários canais. |
 | **Workspaces** compartilham categorias entre repositórios, só leitura | **Assinatura** com modo e acesso, e escopos no token |
@@ -86,13 +86,13 @@ Status: desenho revisado (out/2026), pronto para planejamento. Nada implementado
 ```
  ┌────────────────────┐  ┌──────────────────────┐  ┌────────────────────┐
  │ Sistema gestor     │  │ Sistemas consumidores│  │ Agente com shell   │
- │ (tela de admin)    │  │ (agentes via MCP     │  │ (CLI `haiko` +     │
+ │ (tela de admin)    │  │ (agentes via MCP     │  │ (CLI `engramind` +     │
  │                    │  │  ou via REST)        │  │  skill)            │
  └─────────┬──────────┘  └──────────┬───────────┘  └─────────┬──────────┘
            │ REST + webhooks        │ MCP / REST             │ REST
            ▼                        ▼                        ▼
  ┌─────────────────────────────────────────────────────────────────────┐
- │ haikocampus (binário Rust: axum + tokio)                            │
+ │ engramind (binário Rust: axum + tokio)                            │
  │  ├─ auth: Bearer token → Principal { app, agent?, kind, scopes }    │
  │  ├─ adaptador REST (utoipa → OpenAPI + Swagger UI)                  │
  │  ├─ adaptador MCP (rmcp, Streamable HTTP, stateless)                │
@@ -103,16 +103,16 @@ Status: desenho revisado (out/2026), pronto para planejamento. Nada implementado
  └───────────────────────────────┬─────────────────────────────────────┘
                                  │ rusqlite (WAL) + sqlite-vec + FTS5
                                  ▼
-                     /data/haikocampus.db ──Litestream──▶ S3
+                     /data/engramind.db ──Litestream──▶ S3
 ```
 
 - **Uma única camada de domínio** (`core`). REST, MCP e CLI são adaptadores finos sobre ela. As três
   vias têm as mesmas regras, validações, escopos e códigos de erro.
 - O armazenamento fica atrás de uma interface (`Store`). Hoje ela tem uma implementação em SQLite.
   Uma migração futura para Postgres + pgvector troca só essa implementação.
-- A **CLI é o mesmo binário** (`haiko <comando>`) agindo como cliente HTTP da API. Ela nunca abre o
-  banco, exceto nos comandos de operação do próprio servidor (`haiko serve`, `haiko migrate` e
-  `haiko doctor`).
+- A **CLI é o mesmo binário** (`engramind <comando>`) agindo como cliente HTTP da API. Ela nunca abre o
+  banco, exceto nos comandos de operação do próprio servidor (`engramind serve`, `engramind migrate` e
+  `engramind doctor`).
 
 ### Stack
 
@@ -169,7 +169,7 @@ Todo token, de qualquer tipo, tem um conjunto de escopos:
 
 ### Formato e guarda
 
-- Formato: `hk.<token_id>.<segredo>`, no mesmo esquema do sap-middleman. O `token_id` localiza o
+- Formato: `eng.<token_id>.<segredo>`, no mesmo esquema do sap-middleman. O `token_id` localiza o
   registro, e o segredo é comparado em tempo constante com o hash (SHA-256 com o pepper
   `TOKEN_PEPPER`).
 - O segredo aparece **uma única vez**, na emissão. Depois só o prefixo é mostrado.
@@ -228,8 +228,8 @@ Um mesmo agente pode atender a vários projetos. Um token de desenvolvedor, por 
 
 - Toda operação aceita `channels` (lista de slugs ou prefixos) para restringir aos canais desejados,
   sempre dentro do que o token já alcança.
-- No MCP e na CLI, o cabeçalho `Haiko-Channels: eng/global,eng/projeto-atlas` (ou
-  `HAIKO_CHANNELS`) define o filtro padrão de toda a conexão. O sistema consumidor registra o MCP
+- No MCP e na CLI, o cabeçalho `Engramind-Channels: eng/global,eng/projeto-atlas` (ou
+  `ENGRAMIND_CHANNELS`) define o filtro padrão de toda a conexão. O sistema consumidor registra o MCP
   por sessão com esse cabeçalho, e o agente não precisa saber quais canais escolher.
 
 ### Agente curador
@@ -420,7 +420,7 @@ Exemplo (`tagged`):
 ### Montagem
 
 1. Junta as memórias `active` e `permanent` dos canais em modo `inject` alcançados pelo token,
-   filtrados por `channels`/`Haiko-Channels`.
+   filtrados por `channels`/`Engramind-Channels`.
 2. Ordena de forma **determinística**:
    1. prioridade da assinatura ou do canal;
    2. `permanent` primeiro;
@@ -619,28 +619,28 @@ Observações:
 - As ferramentas levam anotações `read_only_hint`, `destructive_hint` e `idempotent_hint` e são
   **filtradas pelo token** (§4).
 - **Resources**:
-  - `haiko://context`, que é o contexto do token com o filtro da conexão;
-  - `haiko://channels/{slug}`, que lista as memórias do canal;
-  - `haiko://guides/{id}`, que são os guias.
+  - `engramind://context`, que é o contexto do token com o filtro da conexão;
+  - `engramind://channels/{slug}`, que lista as memórias do canal;
+  - `engramind://guides/{id}`, que são os guias.
 - **Prompts**: `memory-writing`, um guia curto de como escrever uma boa memória, para o consumidor
   anexar ao agente.
 - Proteção contra DNS rebinding por `MCP_ALLOWED_HOSTS`, como no sap-middleman.
 
 ### CLI
 
-- `haiko context --format tagged`, `haiko memories search "testes locais"`,
-  `haiko memories create --channel eng/global --category CONSTRAINTS --text "…"`,
-  `haiko settings set redator.model …`, `haiko tokens issue --agent app-a/curador --scopes read,write`.
-- Configuração: `HAIKO_URL`, `HAIKO_TOKEN`, `HAIKO_CHANNELS` ou `~/.config/haikocampus/config.toml`
+- `engramind context --format tagged`, `engramind memories search "testes locais"`,
+  `engramind memories create --channel eng/global --category CONSTRAINTS --text "…"`,
+  `engramind settings set redator.model …`, `engramind tokens issue --agent app-a/curador --scopes read,write`.
+- Configuração: `ENGRAMIND_URL`, `ENGRAMIND_TOKEN`, `ENGRAMIND_CHANNELS` ou `~/.config/engramind/config.toml`
   com perfis de conexão (`--profile`: URL + token, ex.: um por agente; nada a ver com o compose).
 - `--json` em todos os comandos. Os códigos de saída são estáveis e mapeados dos códigos de erro.
-- `haiko help --json` descreve todos os comandos. É a base da skill e dos testes de contrato.
+- `engramind help --json` descreve todos os comandos. É a base da skill e dos testes de contrato.
 
 ---
 
 ## 14. Skill
 
-`skills/haikocampus/SKILL.md` ensina um agente com shell a usar a CLI:
+`skills/engramind/SKILL.md` ensina um agente com shell a usar a CLI:
 - quando ler o contexto (início da tarefa) e quando buscar (dúvida sobre uma regra);
 - como escrever uma boa memória: um fato durável, genérico, sem dados sensíveis, códigos de tarefa
   ou URLs temporárias, na categoria certa e checando `similar` antes de criar outra;
@@ -648,7 +648,7 @@ Observações:
 
 Para agentes com shell, a skill costuma sair mais barata que o MCP: carrega algumas centenas de
 tokens em vez do esquema de dezenas de ferramentas. A skill é **verificada por teste**: todo comando
-citado nela precisa existir em `haiko help --json` (§15).
+citado nela precisa existir em `engramind help --json` (§15).
 
 ---
 
@@ -681,7 +681,7 @@ citado nela precisa existir em `haiko help --json` (§15).
 
 ### SQLite
 
-- O banco é um arquivo único, `/data/haikocampus.db`, num volume nomeado.
+- O banco é um arquivo único, `/data/engramind.db`, num volume nomeado.
 - PRAGMAs: `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000` e `foreign_keys=ON`.
 - Uma **thread escritora** recebe comandos por um canal tokio e serializa as escritas. Um pool de
   leitores atende as consultas. Memórias são uma carga de leitura, e um escritor dá folga.
@@ -694,13 +694,13 @@ citado nela precisa existir em `haiko help --json` (§15).
 
 - O binário vem na imagem (`COPY --from=litestream/litestream:<versão fixa>`).
 - O entrypoint `docker/entrypoint.sh` faz duas coisas:
-  1. `litestream restore -if-db-not-exists -if-replica-exists /data/haikocampus.db`;
-  2. `exec litestream replicate -exec "haikocampus serve"`.
+  1. `litestream restore -if-db-not-exists -if-replica-exists /data/engramind.db`;
+  2. `exec litestream replicate -exec "engramind serve"`.
 - O destino S3 fica em `litestream.yml`, com credenciais por variável de ambiente
-  (`LITESTREAM_ACCESS_KEY_ID`, `LITESTREAM_SECRET_ACCESS_KEY`, `HAIKO_S3_BUCKET`…).
+  (`LITESTREAM_ACCESS_KEY_ID`, `LITESTREAM_SECRET_ACCESS_KEY`, `ENGRAMIND_S3_BUCKET`…).
 - Com `LITESTREAM_ENABLED=false` (ex.: uma instalação sem S3), o entrypoint roda
-  `haikocampus serve` direto e `get_status` avisa que não há backup.
-- `haiko doctor` confere integridade (`PRAGMA integrity_check`), migrações, extensões carregadas e,
+  `engramind serve` direto e `get_status` avisa que não há backup.
+- `engramind doctor` confere integridade (`PRAGMA integrity_check`), migrações, extensões carregadas e,
   quando o Litestream existe, a idade da última réplica. A idade também aparece em `get_status`.
 
 ### Docker (mesmo padrão do sap-middleman)
@@ -717,12 +717,12 @@ citado nela precisa existir em `haiko help --json` (§15).
   artefato de produção.
 
 **`docker-compose.yml`**, com um único serviço e **sem perfis** (`docker compose up -d --build`):
-- `name: haikocampus-${APP_PORT}`.
-- Serviço `api`: `build` do `Dockerfile`, `image: ${API_IMAGE:-haikocampus-api:latest}`,
+- `name: engramind-${APP_PORT}`.
+- Serviço `api`: `build` do `Dockerfile`, `image: ${API_IMAGE:-engramind-api:latest}`,
   `container_name: ${CONTAINER_NAME}`, `init: true`, `restart: unless-stopped`, limites de CPU e
   memória e porta `${APP_PORT}`.
 - Variáveis obrigatórias com `${VAR:?…}` (porta, pepper, chave de cifra).
-- Rede externa configurável (padrão igual à do sap-middleman) e o volume nomeado `haiko-data:/data`.
+- Rede externa configurável (padrão igual à do sap-middleman) e o volume nomeado `engramind-data:/data`.
 
 **`.env.example`**, só com infraestrutura:
 
@@ -730,30 +730,30 @@ citado nela precisa existir em `haiko help --json` (§15).
 APP_ENV=production
 APP_HOST=0.0.0.0
 APP_PORT=4300
-CONTAINER_NAME=haikocampus-api
-# API_IMAGE=haikocampus-api:4300
+CONTAINER_NAME=engramind-api
+# API_IMAGE=engramind-api:4300
 
-DATABASE_PATH=/data/haikocampus.db
+DATABASE_PATH=/data/engramind.db
 MODELS_PATH=/data/models
 
 # Aceito só com o banco vazio, para criar o primeiro token admin.
-BOOTSTRAP_ADMIN_TOKEN=hk.00000000-0000-4000-8000-000000000001.substitua-por-32-ou-mais-caracteres
+BOOTSTRAP_ADMIN_TOKEN=eng.00000000-0000-4000-8000-000000000001.substitua-por-32-ou-mais-caracteres
 TOKEN_PEPPER=substitua-por-um-segredo-longo
 # Chave (base64, 32 bytes) que cifra os segredos de configuração: openssl rand -base64 32
 SECRETS_KEY=
 
 REQUEST_TIMEOUT_SECS=30
 MAX_BODY_BYTES=1048576
-MCP_ALLOWED_HOSTS=localhost,127.0.0.1,haikocampus-api
+MCP_ALLOWED_HOSTS=localhost,127.0.0.1,engramind-api
 
 LITESTREAM_ENABLED=false
-HAIKO_S3_BUCKET=
-HAIKO_S3_PATH=haikocampus
-HAIKO_S3_ENDPOINT=
+ENGRAMIND_S3_BUCKET=
+ENGRAMIND_S3_PATH=engramind
+ENGRAMIND_S3_ENDPOINT=
 LITESTREAM_ACCESS_KEY_ID=
 LITESTREAM_SECRET_ACCESS_KEY=
 
-RUST_LOG=haikocampus=info,tower_http=warn
+RUST_LOG=engramind=info,tower_http=warn
 LOG_FORMAT=compact
 LOG_ANSI=true
 TZ=America/Sao_Paulo
@@ -765,7 +765,7 @@ TZ=America/Sao_Paulo
 
 - Toda mutação incrementa `channels.version` e enfileira um evento.
 - **Webhooks por app.** O app informa `webhook_url`, e o segredo fica cifrado. O serviço envia `POST`
-  assinado com HMAC-SHA256 (`Haiko-Signature: t=<ts>,v1=<hex>`) a todo app que tenha algum agente
+  assinado com HMAC-SHA256 (`Engramind-Signature: t=<ts>,v1=<hex>`) a todo app que tenha algum agente
   assinando o canal afetado. Apps com token `admin` recebem todos os eventos.
 - Payload mínimo, sem textos:
   `{ id, type, channel, channel_version, memory_ids, at }`, com tipos `memory.created`,
@@ -811,7 +811,7 @@ TZ=America/Sao_Paulo
 2. Por turno:
    1. `get_context` (com `If-None-Match` e `channels` do projeto) vai para a parte estável do prompt;
    2. opcionalmente, `get_hints` com a mensagem do turno, colocado no fim.
-3. Ferramentas: registre o MCP com o token do agente e o cabeçalho `Haiko-Channels`, e repasse só as
+3. Ferramentas: registre o MCP com o token do agente e o cabeçalho `Engramind-Channels`, e repasse só as
    ferramentas que a política do sistema permite. A alternativa é a skill com a CLI.
 4. Reaja aos webhooks ou ao `304` para saber quando reconstruir o prompt.
 5. Para trazer memórias que já existem, use `import_memories` (token `admin`), um canal por lista de
@@ -913,7 +913,7 @@ TZ=America/Sao_Paulo
    local `multilingual-e5-small`.
 9. **Canais só pelas ferramentas administrativas.** Um token `agent` nunca cria canais. Um agente
    que precisa criá-los recebe um token `admin` vinculado a ele (§4), com os escopos mínimos.
-10. **Nomes**: serviço `haikocampus`, CLI `haiko`, tokens `hk.…`, cabeçalhos `Haiko-*`, variáveis
-    `HAIKO_*` e recursos MCP `haiko://`.
+10. **Nomes**: serviço `engramind`, CLI `engramind`, tokens `eng.…`, cabeçalhos `Engramind-*`, variáveis
+    `ENGRAMIND_*` e recursos MCP `engramind://`.
 
 Não há decisões em aberto.

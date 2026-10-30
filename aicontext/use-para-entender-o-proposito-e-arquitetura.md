@@ -2,7 +2,7 @@
 
 ## Propósito
 
-O Haikocampus centraliza as memórias de agentes de IA, que hoje ficam espalhadas por sistema e por papel, e deixa qualquer sistema consumir a mesma rede. Guarda fatos duráveis e curtos em canais, redige título e texto pelo Redator e entrega o contexto pronto para o prompt, estável para o cache do provedor de LLM.
+O Engramind centraliza as memórias de agentes de IA, que hoje ficam espalhadas por sistema e por papel, e deixa qualquer sistema consumir a mesma rede. Guarda fatos duráveis e curtos em canais, redige título e texto pelo Redator e entrega o contexto pronto para o prompt, estável para o cache do provedor de LLM.
 
 Glossário completo em §0 do desenho. Termos centrais: **app**, **agente**, **agente curador**, **canal**, **assinatura** (modo `inject`/`search`/`manage` e acesso), **Redator** e **contexto**.
 
@@ -10,8 +10,8 @@ Glossário completo em §0 do desenho. Termos centrais: **app**, **agente**, **a
 
 ```text
 Sistema consumidor / gestor / agente com shell
-  -> Bearer hk.<token_id>.<segredo>
-Haikocampus
+  -> Bearer eng.<token_id>.<segredo>
+Engramind
   -> Principal { app, agent?, kind, scopes }
   -> acesso efetivo = escopos do token ∩ acesso da assinatura
   -> core (mesmas regras para REST, MCP e CLI)
@@ -39,7 +39,7 @@ Haikocampus
 
 ## Arquitetura alvo
 
-- Binário Rust único: servidor (`haikocampus serve`) e CLI (`haiko`).
+- Binário Rust único: servidor (`engramind serve`) e CLI (`engramind`).
 - `axum` 0.8 + `tokio` + `tower-http` (timeout, limite de corpo, tracing, request id).
 - `core` único; adaptadores REST (`utoipa`), MCP (`rmcp`, stateless) e CLI (`clap`, `--json`).
 - `Store` com implementação SQLite: `rusqlite` bundled, WAL, FTS5, `sqlite-vec`; uma thread escritora e um pool de leitores.

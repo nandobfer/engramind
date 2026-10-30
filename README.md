@@ -1,4 +1,4 @@
-# Haikocampus
+# Engramind
 
 Rede de memórias para agentes de IA. Um serviço em Rust, com SQLite (WAL), sqlite-vec e FTS5, replicado para S3 pelo Litestream.
 
@@ -8,7 +8,7 @@ As memórias ficam em **canais** (ex.: `eng/global`, `eng/projeto-atlas`). Cada 
 
 ## Por que existe
 
-Memórias de agentes costumam ficar espalhadas, uma coleção por sistema e por papel. O Haikocampus centraliza essas memórias e deixa qualquer sistema consumir a mesma rede.
+Memórias de agentes costumam ficar espalhadas, uma coleção por sistema e por papel. O Engramind centraliza essas memórias e deixa qualquer sistema consumir a mesma rede.
 
 Inspirado nos conceitos do [Magic Context](https://github.com/cortexkit), adaptado para canais e para acesso pela rede.
 
@@ -33,7 +33,7 @@ Inspirado nos conceitos do [Magic Context](https://github.com/cortexkit), adapta
 
 ```
 Sistema gestor ──REST + webhooks──┐
-Sistemas consumidores ──MCP/REST──┼──▶ haikocampus (Rust: axum + tokio)
+Sistemas consumidores ──MCP/REST──┼──▶ engramind (Rust: axum + tokio)
 Agente com shell (CLI + skill) ───┘        │
                                            ├─ auth: Bearer token → Principal
                                            ├─ REST (OpenAPI + Swagger UI)
@@ -45,12 +45,12 @@ Agente com shell (CLI + skill) ───┘        │
                                                        consolidador, webhooks
                                            │
                                            ▼ rusqlite (WAL) + sqlite-vec + FTS5
-                              /data/haikocampus.db ──Litestream──▶ S3
+                              /data/engramind.db ──Litestream──▶ S3
 ```
 
 - **Uma única camada de domínio** (`core`). REST, MCP e CLI são adaptadores finos sobre ela.
 - **O armazenamento fica atrás de uma interface (`Store`).** Hoje há uma implementação em SQLite. Uma migração futura para Postgres + pgvector troca só essa implementação.
-- **A CLI `haiko` é o mesmo binário**, agindo como cliente HTTP da API. Ela não abre o banco, exceto nos comandos de operação do servidor (`haiko serve`, `haiko migrate`, `haiko doctor`).
+- **A CLI `engramind` é o mesmo binário**, agindo como cliente HTTP da API. Ela não abre o banco, exceto nos comandos de operação do servidor (`engramind serve`, `engramind migrate`, `engramind doctor`).
 
 ## Conceitos principais
 
@@ -84,7 +84,7 @@ Combinações válidas: `read`, `read+write`, `read+delete` e `read+write+delete
 
 **Acesso efetivo** = escopos do token ∩ acesso da assinatura. A assinatura pode restringir o acesso, mas nunca ampliar o que o token permite. O MCP lista em `tools/list` apenas as ferramentas que o token pode usar.
 
-O formato do token é `hk.<token_id>.<segredo>`. O segredo aparece uma única vez, na emissão, e é guardado só como hash com pepper.
+O formato do token é `eng.<token_id>.<segredo>`. O segredo aparece uma única vez, na emissão, e é guardado só como hash com pepper.
 
 ## Contexto
 
@@ -147,7 +147,7 @@ cp .env.example .env   # preencha as variáveis obrigatórias
 docker compose up -d --build
 ```
 
-O banco fica em `/data/haikocampus.db`, num volume nomeado (`haiko-data`). Nunca monte o banco em NFS ou em bind mount compartilhado entre hosts.
+O banco fica em `/data/engramind.db`, num volume nomeado (`engramind-data`). Nunca monte o banco em NFS ou em bind mount compartilhado entre hosts.
 
 ## Desenvolvimento
 

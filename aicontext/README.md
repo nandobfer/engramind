@@ -1,10 +1,10 @@
 # Contexto para desenvolvimento assistido
 
-Este diretório contém regras operacionais concisas para qualquer trabalho no Haikocampus. O desenho completo, com justificativas, está em [`../docs/design.md`](../docs/design.md).
+Este diretório contém regras operacionais concisas para qualquer trabalho no Engramind. O desenho completo, com justificativas, está em [`../docs/design.md`](../docs/design.md).
 
 ## Estado atual
 
-Nada implementado. O repositório tem apenas o `README.md`, o desenho (`docs/design.md`), o `AGENTS.md` e este diretório. O desenho está revisado e sem decisões em aberto; o próximo passo é a **fase 1 (Núcleo)** do §22.
+Nada implementado. O repositório tem apenas o `README.md`, o desenho (`docs/design.md`), o `AGENTS.md` e este diretório. O desenho está revisado. O plano de implementação está em [`../specs/`](../specs/README.md), em etapas entregáveis (001 a 009) que substituem as fases do §22; o próximo passo é a etapa **001 (Fundação operável)**, depois de resolver as perguntas abertas do `clarify.md` dela.
 
 Atualize esta seção a cada fase concluída, listando as capacidades que de fato existem.
 
@@ -42,6 +42,7 @@ Não crie guias de módulo antes do código existir.
 - `docs/design.md`: desenho e decisões tomadas; fonte de verdade do que ainda não foi implementado.
 - `docs/guides/`: guias de uso compilados no binário (a criar).
 - `docs/decisions/`: decisões arquiteturais posteriores ao desenho (a criar).
+- `specs/NNN-etapa/`: plano de cada etapa entregável (`spec`, `clarify`, `contracts`, `plan`, `tasks`; `implement` e `report` na execução).
 
 ## Regra de atualização
 
