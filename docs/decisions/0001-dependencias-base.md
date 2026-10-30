@@ -14,7 +14,7 @@ O desenho (§3) fixa a stack; o sap-middleman é a referência para o que o dese
 | `rusqlite` 0.40 (`bundled`) | SQLite com FTS5 compilado |
 | `rusqlite_migration` 2.6 | migrações embutidas (`migrations/*.sql`) |
 | `sqlite-vec` 0.1.9 | extensão vetorial (registrada uma vez por processo) |
-| `utoipa` 5 + `utoipa-swagger-ui` 9 (`vendored`) | OpenAPI e Swagger UI |
+| `utoipa` 5 + `utoipa-swagger-ui` 9 (`vendored`, `debug-embed`) | OpenAPI e Swagger UI; `debug-embed` embute os arquivos da UI também em build de dev, sem o que os shards do CI (que não têm o `target/` da compilação) respondem 404 em `/docs/` |
 | `clap` 4 | CLI (`engramind` / `eng`) |
 | `tracing`, `tracing-subscriber` | logs `compact`/`json` |
 | `thiserror`, `anyhow` | erros de domínio e de startup |

@@ -33,7 +33,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "syn
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["chrono", "env-filter", "json"] }
 utoipa = { version = "5.5", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "vendored"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "debug-embed", "vendored"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 zeroize = { version = "1", features = ["derive"] }
 
