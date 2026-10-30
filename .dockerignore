@@ -1,0 +1,14 @@
+.git
+.github
+.config
+.env
+.env.*
+!.env.example
+target
+data
+specs
+tests
+aicontext
+**/*.log
+# A imagem rust:<versão> já traz o toolchain; o arquivo pediria componentes de dev.
+rust-toolchain.toml

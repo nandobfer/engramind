@@ -1,0 +1,301 @@
+name: CI/CD
+
+# CI roda em todo push na main e em todo pull request: lint, compose e a suíte em shards.
+# Os testes são compilados uma única vez (`cargo nextest archive`) e cada shard só executa.
+# Localmente, rode só os testes afetados (AGENTS.md, "Qualidade obrigatória").
+# CD (build + deploy) roda apenas para a main: constrói a imagem no runner,
+# exporta, transfere por SCP e recria o serviço no servidor de produção.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.98.0
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: lint-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Instalar o toolchain fixado
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
+
+      - name: Cache do Cargo
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          shared-key: lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Formatação
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+  build-tests:
+    name: Build tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: build-tests-${{ github.workflow }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Instalar o toolchain fixado
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+
+      - name: Cache do Cargo
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          shared-key: tests
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Instalar o cargo-nextest
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: cargo-nextest
+
+      # Compila uma vez; os shards só executam o arquivo (D-012).
+      - name: Compilar os testes
+        run: cargo nextest archive --locked --workspace --all-targets --all-features --archive-file nextest.tar.zst
+
+      - name: Publicar o arquivo de testes
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: nextest-archive
+          path: nextest.tar.zst
+          retention-days: 1
+
+  test:
+    name: Test (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: build-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # O grupo inclui o shard: sem ele o `cancel-in-progress` cancelaria o shard irmão.
+    concurrency:
+      group: ci-${{ github.workflow }}-${{ github.ref }}-${{ matrix.shard }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Para mudar a quantidade de shards, basta editar esta lista. A partição é por hash:
+        # o shard de cada teste não muda quando outros testes entram.
+        shard: [1, 2, 3, 4]
+    steps:
+      # O checkout traz os arquivos lidos em tempo de execução (ex.: docs/openapi.json).
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Instalar o cargo-nextest
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: cargo-nextest
+
+      - name: Baixar o arquivo de testes
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: nextest-archive
+
+      # `cargo-nextest nextest` executa o arquivo sem Cargo nem toolchain de compilação.
+      - name: Rodar o shard
+        run: >-
+          cargo-nextest nextest run --profile ci
+          --archive-file nextest.tar.zst
+          --workspace-remap .
+          --partition hash:${{ matrix.shard }}/${{ strategy.job-total }}
+
+      - name: Publicar o relatório JUnit
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: junit-${{ matrix.shard }}
+          path: target/nextest/ci/junit.xml
+          retention-days: 7
+          if-no-files-found: ignore
+
+  compose:
+    name: Compose
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Validar o Compose
+        run: ./scripts/check-compose.sh
+
+  coverage:
+    name: Coverage
+    # Só na main e em paralelo ao build: recompilar tudo instrumentado no PR anularia os shards (Q-005).
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Instalar o toolchain fixado
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component llvm-tools-preview
+
+      - name: Cache do Cargo
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          shared-key: coverage
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Instalar cargo-llvm-cov e cargo-nextest
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
+
+      - name: Gerar a cobertura
+        run: cargo llvm-cov nextest --locked --workspace --all-features --all-targets --lcov --output-path lcov.info
+
+      - name: Publicar a cobertura
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: coverage-lcov
+          path: lcov.info
+          retention-days: 7
+
+  build:
+    name: Build image
+    needs: [lint, test, compose]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Configurar Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # O cache `gha` guarda a camada de dependências do cargo-chef entre execuções (D-018).
+      - name: Construir a imagem
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: ${{ vars.DEPLOY_PLATFORM || 'linux/amd64' }}
+          load: true
+          tags: ${{ vars.DEPLOY_IMAGE_REPOSITORY || 'engramind-api' }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Valores efêmeros gerados aqui, só para o smoke test; nunca são Secrets.
+      - name: Smoke test da imagem
+        env:
+          IMAGE: ${{ vars.DEPLOY_IMAGE_REPOSITORY || 'engramind-api' }}:${{ github.sha }}
+        run: |
+          docker run -d --name engramind-smoke -p 8000:8000 \
+            -e APP_ENV=production -e APP_PORT=8000 \
+            -e MCP_ALLOWED_HOSTS=localhost \
+            -e TOKEN_PEPPER="$(openssl rand -hex 32)" \
+            -e SECRETS_KEY="$(openssl rand -base64 32)" \
+            -e LITESTREAM_ENABLED=false \
+            "$IMAGE"
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/health/ready; then
+              echo
+              docker exec engramind-smoke eng doctor
+              docker rm -f engramind-smoke
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs engramind-smoke
+          docker rm -f engramind-smoke
+          exit 1
+
+      - name: Exportar a imagem
+        env:
+          IMAGE: ${{ vars.DEPLOY_IMAGE_REPOSITORY || 'engramind-api' }}:${{ github.sha }}
+        run: |
+          docker save "$IMAGE" | gzip -9 > engramind-image.tar.gz
+          sha256sum engramind-image.tar.gz > engramind-image.tar.gz.sha256
+
+      - name: Publicar o artefato
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: engramind-image
+          path: |
+            engramind-image.tar.gz
+            engramind-image.tar.gz.sha256
+          retention-days: 3
+          compression-level: 0
+
+  deploy:
+    name: Deploy production
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Baixar o artefato da imagem
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: engramind-image
+
+      # Node só para o script de deploy (`npx tsx`); não há package.json neste repositório.
+      - name: Configurar Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+          package-manager-cache: false
+
+      - name: Preparar credenciais SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 644 "$HOME/.ssh/known_hosts"
+          echo "DEPLOY_SSH_KEY=$HOME/.ssh/deploy_key" >> "$GITHUB_ENV"
+          echo "DEPLOY_KNOWN_HOSTS=$HOME/.ssh/known_hosts" >> "$GITHUB_ENV"
+
+      - name: Validar o artefato
+        run: |
+          sha256sum -c engramind-image.tar.gz.sha256
+          echo "DEPLOY_IMAGE_SHA256=$(cut -d ' ' -f1 engramind-image.tar.gz.sha256)" >> "$GITHUB_ENV"
+
+      - name: Executar o deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_USER: ${{ secrets.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PORT: ${{ vars.DEPLOY_SSH_PORT || '22' }}
+          DEPLOY_REMOTE_DIR: ${{ vars.DEPLOY_REMOTE_DIR }}
+          DEPLOY_PROJECT_NAME: ${{ vars.DEPLOY_PROJECT_NAME }}
+          DEPLOY_SERVICE: ${{ vars.DEPLOY_SERVICE || 'api' }}
+          DEPLOY_IMAGE_REPOSITORY: ${{ vars.DEPLOY_IMAGE_REPOSITORY || 'engramind-api' }}
+          DEPLOY_IMAGE_TAG: ${{ github.sha }}
+          DEPLOY_IMAGE_ARCHIVE: ${{ github.workspace }}/engramind-image.tar.gz
+          DEPLOY_PLATFORM: ${{ vars.DEPLOY_PLATFORM || 'linux/amd64' }}
+          DEPLOY_REQUIRED_NETWORKS: ${{ vars.DEPLOY_REQUIRED_NETWORKS || 'engramind-network,minio-network' }}
+          DEPLOY_HEALTHCHECK_URL: ${{ vars.DEPLOY_HEALTHCHECK_URL }}
+        run: npx --yes tsx scripts/deploy-production.ts

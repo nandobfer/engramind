@@ -1,0 +1,59 @@
+# Um único serviço, sem perfis (desenho §16): `docker compose up -d --build`.
+# Antes do primeiro `up`: `docker network create engramind-network`.
+name: engramind-${APP_PORT:?APP_PORT is required}
+
+services:
+  api:
+    build:
+      context: .
+      network: host
+    image: ${API_IMAGE:-engramind-api:latest}
+    container_name: ${CONTAINER_NAME:?CONTAINER_NAME is required}
+    init: true
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_HOST: 0.0.0.0
+      APP_PORT: ${APP_PORT}
+      DATABASE_PATH: /data/engramind.db
+      MODELS_PATH: /data/models
+      BOOTSTRAP_ADMIN_TOKEN: ${BOOTSTRAP_ADMIN_TOKEN:-}
+      TOKEN_PEPPER: ${TOKEN_PEPPER:?TOKEN_PEPPER is required}
+      SECRETS_KEY: ${SECRETS_KEY:?SECRETS_KEY is required}
+      REQUEST_TIMEOUT_SECS: ${REQUEST_TIMEOUT_SECS:-30}
+      MAX_BODY_BYTES: ${MAX_BODY_BYTES:-1048576}
+      READ_POOL_SIZE: ${READ_POOL_SIZE:-4}
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:?MCP_ALLOWED_HOSTS is required}
+      LITESTREAM_ENABLED: ${LITESTREAM_ENABLED:-false}
+      ENGRAMIND_S3_BUCKET: ${ENGRAMIND_S3_BUCKET:-}
+      ENGRAMIND_S3_PATH: ${ENGRAMIND_S3_PATH:-engramind}
+      ENGRAMIND_S3_ENDPOINT: ${ENGRAMIND_S3_ENDPOINT:-http://minio:9000}
+      LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID:-}
+      LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY:-}
+      RUST_LOG: ${RUST_LOG:-engramind=info,tower_http=warn}
+      LOG_FORMAT: ${LOG_FORMAT:-compact}
+      LOG_ANSI: ${LOG_ANSI:-true}
+      TZ: ${TZ:-America/Sao_Paulo}
+    ports:
+      - "${APP_PORT}:${APP_PORT}"
+    volumes:
+      - engramind-data:/data
+    networks:
+      - engramind
+      - s3
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+
+networks:
+  engramind:
+    external: true
+    name: ${ENGRAMIND_NETWORK:-engramind-network}
+  s3:
+    external: true
+    name: ${S3_NETWORK:-minio-network}
+
+volumes:
+  engramind-data:

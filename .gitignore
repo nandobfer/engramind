@@ -1,0 +1,11 @@
+/.env
+/.env.*
+!/.env.example
+/target/
+/data/
+/.idea/
+/.vscode/
+*.log
+/junit.xml
+/lcov.info
+/nextest.tar.zst

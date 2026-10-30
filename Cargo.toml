@@ -1,0 +1,62 @@
+[package]
+name = "engramind"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Rede de memórias para agentes de IA"
+publish = false
+
+[lib]
+doctest = false
+
+[[bin]]
+name = "engramind"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8.9", features = ["json", "macros"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
+hmac = "0.12"
+rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite_migration = "2.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlite-vec = "0.1.9"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["chrono", "env-filter", "json"] }
+utoipa = { version = "5.5", features = ["axum_extras", "chrono", "uuid"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum", "vendored"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+zeroize = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+http = "1"
+http-body-util = "0.1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# SQLite compilado otimizado deixa os testes de banco mais rápidos (D-017).
+[profile.dev.package.libsqlite3-sys]
+opt-level = 3

@@ -1,0 +1,13 @@
+# Override de produção.
+#
+# Aplicado junto do `docker-compose.yml` pelo pipeline de deploy (`-f docker-compose.yml
+# -f docker-compose.deploy.yml`). Ele fixa a imagem já construída no GitHub Actions e
+# impede build/pull no servidor de produção.
+#
+# A imagem é informada por `API_IMAGE` (repositório:tag) e o serviço é recriado com
+# `docker compose up -d --no-build --pull never api`, reutilizando portas, redes, limites
+# e o `.env` do `docker-compose.yml` sem alterações.
+services:
+  api:
+    image: ${API_IMAGE:?defina API_IMAGE (repositório:tag)}
+    pull_policy: never

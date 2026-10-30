@@ -1,0 +1,12 @@
+[profile.default]
+# Explícito de propósito, como o `maxWorkers: "100%"` do opex/dndicas: usa todos os núcleos
+# (2 ou 4 no runner do GitHub, todos na máquina do dev). Cada teste roda no próprio processo.
+test-threads = "num-cpus"
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 4 }
+
+[profile.ci]
+failure-output = "immediate-final"
+
+[profile.ci.junit]
+path = "junit.xml"
