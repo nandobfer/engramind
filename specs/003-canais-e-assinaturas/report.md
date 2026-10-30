@@ -20,6 +20,6 @@ FR-001 a FR-014 implementados (detalhes em `implement.md`). As perguntas Q-001 a
 
 ## Pendências
 
-- PR, CI nos shards e deploy ainda não executados.
+- PR #4 com o CI verde (lint, build, 4 shards, compose); merge e deploy pendentes.
 - `SCOPE_REQUIRED` com `details.channel` é coberto pelos testes unitários do resolvedor. Nas três vias, ele só aparece quando houver operação que exija `write`/`delete` num canal (memórias, 004).
 - `CHANNEL_ARCHIVED`, a exclusão das memórias junto com o canal (Q-002) e os webhooks `channel.updated`/`subscription.updated` ficam para a 004 e a 008.
