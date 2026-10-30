@@ -1,7 +1,7 @@
 # Contracts - identidades e as três vias
 
 **Criado em**: 2026-10-30
-**Status**: Draft
+**Status**: Implementado
 **Feature**: [`spec.md`](spec.md)
 
 ## Módulos
@@ -11,18 +11,24 @@ src/core/mod.rs            # Core<S: Store>: ponto de entrada das operações
 src/core/principal.rs      # Principal, TokenKind, Scope, ScopeSet
 src/core/authz.rs          # require(principal, operation)
 src/core/operations.rs     # OPERATIONS (catálogo único)
-src/core/identities/       # apps, agents, tokens (model, service)
-src/core/settings/         # catálogo SETTINGS, validação, service
+src/core/model.rs          # tipos persistidos (apps, agentes, tokens, auditoria, configurações)
+src/core/ids.rs            # ids app_/ag_/tk_ e carimbos RFC 3339
+src/core/pagination.rs     # cursor opaco
+src/core/auth.rs           # authenticate: Bearer → Principal (+ rate limit)
+src/core/usage.rs          # rate limit e last_used_at em memória (D-020)
+src/core/identities.rs     # apps, agentes e tokens
+src/core/settings.rs       # catálogo SETTINGS, validação, service
 src/core/audit.rs
-src/core/idempotency.rs
+src/core/idempotency.rs    # Core::mutate
 src/core/status.rs
+src/core/bootstrap.rs
+src/core/background.rs     # flush de last_used_at (10 s) e limpeza da idempotência (1 h)
 src/core/docs/             # catalog (guias), openapi_index, search (portados)
 src/auth/token.rs          # TokenService (portado)
 src/auth/middleware.rs     # require_auth → Principal nas extensions
-src/auth/rate_limit.rs
 src/rest/<grupo>.rs        # handlers finos + #[utoipa::path]
-src/mcp/                   # server, tools, contract, transport
-src/cli/                   # client, profiles, commands/<grupo>.rs, output.rs, exit_codes.rs
+src/mcp/                   # mod (transporte), tools (EngramindServer), contract
+src/cli/                   # mod (comandos), client, remote, profiles, help, output
 docs/guides/*.md
 ```
 
@@ -109,7 +115,7 @@ Todas `STRICT`. Ids públicos `app_`, `ag_`, `tk_` + 8 hex minúsculos, gerados 
 | `issue_token` | admin·write | `POST /v1/tokens` | `engramind tokens issue` |
 | `update_token` | admin·write | `PATCH /v1/tokens/{token}` | `engramind tokens update <token>` |
 | `revoke_token` | admin·delete | `POST /v1/tokens/{token}/revoke` | `engramind tokens revoke <token>` |
-| `get_settings` | admin·read | `GET /v1/settings` | `engramind settings get [chave]` |
+| `get_settings` | admin·read | `GET /v1/settings?key=` | `engramind settings get [chave]` |
 | `update_settings` | admin·write | `PUT /v1/settings` | `engramind settings set <chave> <valor>` |
 | `get_status` | admin·read | `GET /v1/status` | `engramind status` |
 | `get_audit` | admin·read | `GET /v1/audit` | `engramind audit list` |
@@ -123,20 +129,24 @@ Todas `STRICT`. Ids públicos `app_`, `ag_`, `tk_` + 8 hex minúsculos, gerados 
 
 `{app}` e `{agent}` aceitam id (`app_…`, `ag_…`) ou slug (`app-a`, `app-a/desenvolvedor` codificado como `app-a%2Fdesenvolvedor`).
 
-Comandos locais da CLI (sem operação): `serve`, `migrate`, `doctor`, `help`, `profiles add|list|remove|use`.
+Comandos locais da CLI (sem operação): `serve`, `migrate`, `doctor`, `help`, `profiles add|list|remove|use`. `profiles add <nome>` grava `--url`, `--token` e `--channels` (flags globais ou variáveis) — D-019.
+
+MCP: os argumentos de cada ferramenta são os parâmetros de caminho e de query mais as propriedades do corpo, e `idempotency_key` nas mutações; `update_settings` recebe `{ "settings": { … }, "idempotency_key" }` (D-017).
+
+Erros locais da CLI (fora do catálogo do servidor): `CLI_CONFIG_INVALID` (saída 2), `CLI_CONNECTION_FAILED` (8) e `CLI_UNEXPECTED_RESPONSE` (1).
 
 Rota técnica: `POST /mcp` (`mcp`, tag MCP, Bearer), contrato documentado como no sap-middleman.
 
 ## Corpos principais
 
 ```jsonc
-// POST /v1/tokens
+// POST /v1/tokens  (app pode ser omitido quando agent é informado — D-018)
 { "app": "app-a", "agent": "app-a/curador", "kind": "agent", "scopes": ["read","write"],
   "label": "curador produção", "expires_at": null }
 // 201
 { "token": { "id": "tk_3f9e1a7c", "kind": "agent", "scopes": ["read","write"], "app": {...}, "agent": {...},
              "label": "...", "expires_at": null, "created_at": "..." },
-  "secret": "eng.tk_3f9e1a7c.<segredo>" }        // única vez
+  "secret": "eng.tk_3f9e1a7c.<segredo>" }        // única vez; a repetição idempotente omite (D-014)
 
 // GET /v1/whoami
 { "token_id": "tk_…", "kind": "agent", "scopes": ["read"], "app": {...}, "agent": {...},
@@ -162,7 +172,7 @@ Rota técnica: `POST /mcp` (`mcp`, tag MCP, Bearer), contrato documentado como n
 |---|---|
 | `AUTH_INVALID` | 401 |
 | `SCOPE_REQUIRED` | 403 |
-| `APP_NOT_FOUND`, `AGENT_NOT_FOUND`, `TOKEN_NOT_FOUND`, `GUIDE_NOT_FOUND`, `OPERATION_NOT_FOUND`, `SCHEMA_NOT_FOUND`, `SECTION_NOT_FOUND` | 404 |
+| `APP_NOT_FOUND`, `AGENT_NOT_FOUND`, `TOKEN_NOT_FOUND`, `GUIDE_NOT_FOUND`, `OPERATION_NOT_FOUND`, `SCHEMA_NOT_FOUND`, `SECTION_NOT_FOUND`, `TAG_NOT_FOUND` | 404 |
 | `SLUG_ALREADY_EXISTS`, `IDEMPOTENCY_KEY_CONFLICT`, `LAST_ADMIN_TOKEN` | 409 |
 | `SETTING_UNKNOWN`, `SETTING_INVALID` | 400 |
 | `RATE_LIMITED` | 429 |

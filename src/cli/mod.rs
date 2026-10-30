@@ -1,17 +1,28 @@
-//! Árvore de comandos. O binário atende pelos nomes `engramind` e `eng` (D-003).
+//! Árvore de comandos. O binário atende pelos nomes `engramind` e `eng` (D-003). `serve`,
+//! `migrate` e `doctor` abrem o banco; os demais comandos são clientes HTTP da API, um por
+//! operação do catálogo (`core::operations`), com os mesmos parâmetros e códigos de erro.
 
+pub mod client;
+pub mod help;
 pub mod output;
+pub mod profiles;
+pub mod remote;
 
 use std::process::ExitCode;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 use crate::{
     HttpSettings, Settings, build_app,
     config::DatabaseSettings,
-    core::pepper::{self, PepperCheck},
+    core::{
+        self, Core,
+        bootstrap::BootstrapOutcome,
+        pepper::{self, PepperCheck},
+    },
     doctor::{self, CheckStatus},
+    mcp::McpSettings,
     observability::{self, LogTarget},
     store::SqliteStore,
 };
@@ -21,14 +32,59 @@ use crate::{
     name = "engramind",
     version,
     about = "Rede de memórias para agentes de IA",
-    long_about = "Rede de memórias para agentes de IA. Também invocável como `eng`."
+    long_about = "Rede de memórias para agentes de IA. Também invocável como `eng`.",
+    disable_help_subcommand = true
 )]
 pub struct Cli {
     /// Saída em JSON.
     #[arg(long, global = true)]
     pub json: bool,
+    #[command(flatten)]
+    pub connection: ConnectionArgs,
     #[command(subcommand)]
     pub command: Command,
+}
+
+/// Conexão com a API: flags, depois variáveis de ambiente, depois o perfil.
+#[derive(Debug, Clone, Default, Args)]
+pub struct ConnectionArgs {
+    /// URL da API (ou ENGRAMIND_URL).
+    #[arg(long, global = true, env = "ENGRAMIND_URL", value_name = "URL")]
+    pub url: Option<String>,
+    /// Token `eng.<token_id>.<segredo>` (ou ENGRAMIND_TOKEN).
+    #[arg(
+        long,
+        global = true,
+        env = "ENGRAMIND_TOKEN",
+        hide_env_values = true,
+        value_name = "TOKEN"
+    )]
+    pub token: Option<String>,
+    /// Canais padrão da conexão, separados por vírgula (ou ENGRAMIND_CHANNELS).
+    #[arg(long, global = true, env = "ENGRAMIND_CHANNELS", value_name = "CANAIS")]
+    pub channels: Option<String>,
+    /// Perfil de `~/.config/engramind/config.toml` (padrão: `default_profile`).
+    #[arg(long, global = true, value_name = "PERFIL")]
+    pub profile: Option<String>,
+}
+
+/// Chave de idempotência das mutações.
+#[derive(Debug, Clone, Default, Args)]
+pub struct IdempotencyArgs {
+    /// Repete a resposta gravada para a mesma chave e o mesmo corpo por 24 h.
+    #[arg(long, value_name = "CHAVE")]
+    pub idempotency_key: Option<String>,
+}
+
+/// Paginação das listas.
+#[derive(Debug, Clone, Default, Args)]
+pub struct PageArgs {
+    /// Cursor devolvido em `next_cursor`.
+    #[arg(long)]
+    pub cursor: Option<String>,
+    /// Itens por página, de 1 a 200 (padrão 50).
+    #[arg(long)]
+    pub limit: Option<u32>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -39,6 +95,264 @@ pub enum Command {
     Migrate,
     /// Confere integridade, migrações, extensões e a idade da última réplica.
     Doctor,
+    /// Descreve os comandos (`--json`: árvore completa, base da skill e dos testes).
+    Help,
+    /// Gerencia os perfis de conexão locais.
+    #[command(subcommand)]
+    Profiles(ProfilesCommand),
+    /// Identifica o token e lista as operações permitidas.
+    Whoami,
+    /// Apps (token admin).
+    #[command(subcommand)]
+    Apps(AppsCommand),
+    /// Agentes (token admin).
+    #[command(subcommand)]
+    Agents(AgentsCommand),
+    /// Tokens (token admin).
+    #[command(subcommand)]
+    Tokens(TokensCommand),
+    /// Configurações (token admin).
+    #[command(subcommand)]
+    Settings(SettingsCommand),
+    /// Mostra versão, banco, backup e contagens (token admin).
+    Status,
+    /// Auditoria (token admin).
+    #[command(subcommand)]
+    Audit(AuditCommand),
+    /// Documentação da versão em execução.
+    #[command(subcommand)]
+    Docs(DocsCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ProfilesCommand {
+    /// Grava um perfil com `--url`, `--token` e `--channels` (arquivo com permissão 0600).
+    Add {
+        name: String,
+        /// Torna este o perfil padrão.
+        #[arg(long)]
+        default: bool,
+    },
+    /// Lista os perfis, com o token mascarado.
+    List,
+    /// Remove um perfil.
+    Remove { name: String },
+    /// Define o perfil padrão.
+    Use { name: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AppsCommand {
+    /// Lista os apps.
+    List {
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Mostra um app (id ou slug).
+    Get { app: String },
+    /// Cria um app.
+    Create {
+        #[arg(long)]
+        slug: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Altera ou desativa um app.
+    Update {
+        app: String,
+        #[command(flatten)]
+        changes: UpdateArgs,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Exclui um app com seus agentes e tokens.
+    Delete {
+        app: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+/// Campos de `update` de apps e agentes.
+#[derive(Debug, Clone, Default, Args)]
+pub struct UpdateArgs {
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Nova descrição; `""` limpa.
+    #[arg(long)]
+    pub description: Option<String>,
+    /// Desativa: os tokens deixam de autenticar.
+    #[arg(long, conflicts_with = "enable")]
+    pub disable: bool,
+    /// Reativa.
+    #[arg(long)]
+    pub enable: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentsCommand {
+    /// Lista os agentes.
+    List {
+        /// Só os agentes deste app.
+        #[arg(long)]
+        app: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Mostra um agente (id ou app/agente).
+    Get { agent: String },
+    /// Cria um agente num app.
+    Create {
+        #[arg(long)]
+        app: String,
+        #[arg(long)]
+        slug: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Altera ou desativa um agente.
+    Update {
+        agent: String,
+        #[command(flatten)]
+        changes: UpdateArgs,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Exclui um agente com seus tokens.
+    Delete {
+        agent: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TokensCommand {
+    /// Lista os tokens, sem segredos.
+    List {
+        #[arg(long)]
+        app: Option<String>,
+        #[arg(long)]
+        agent: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Emite um token; o segredo aparece só nesta saída.
+    Issue {
+        /// App dono (id ou slug); opcional com --agent.
+        #[arg(long)]
+        app: Option<String>,
+        /// Agente (id ou app/agente); obrigatório para --kind agent.
+        #[arg(long)]
+        agent: Option<String>,
+        /// `agent` ou `admin`.
+        #[arg(long, default_value = "agent")]
+        kind: String,
+        /// `read`, `read,write`, `read,delete` ou `read,write,delete`.
+        #[arg(long, default_value = "read")]
+        scopes: String,
+        #[arg(long)]
+        label: Option<String>,
+        /// RFC 3339 no futuro.
+        #[arg(long)]
+        expires_at: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Altera rótulo, escopos ou expiração de um token.
+    Update {
+        /// Id do token (`tk_…`).
+        #[arg(value_name = "TOKEN_ID")]
+        token_id: String,
+        /// Novo rótulo; `""` limpa.
+        #[arg(long)]
+        label: Option<String>,
+        #[arg(long)]
+        scopes: Option<String>,
+        #[arg(long, conflicts_with = "no_expiration")]
+        expires_at: Option<String>,
+        /// Remove a expiração.
+        #[arg(long)]
+        no_expiration: bool,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Revoga um token imediatamente.
+    Revoke {
+        /// Id do token (`tk_…`).
+        #[arg(value_name = "TOKEN_ID")]
+        token_id: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SettingsCommand {
+    /// Lê as configurações (todas ou uma chave).
+    Get { key: Option<String> },
+    /// Altera uma configuração; o valor é lido como JSON (`600`, `true`, `null` volta ao padrão).
+    Set {
+        key: String,
+        value: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuditCommand {
+    /// Lista os eventos, do mais recente ao mais antigo.
+    List {
+        #[arg(long)]
+        entity: Option<String>,
+        #[arg(long)]
+        entity_id: Option<String>,
+        #[arg(long)]
+        action: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DocsCommand {
+    /// Visão geral do serviço e dos guias disponíveis ao token.
+    Overview,
+    /// Lista os guias com seções e operações.
+    Guides,
+    /// Lê um guia ou uma seção dele.
+    Guide {
+        guide: String,
+        #[arg(long)]
+        section: Option<String>,
+    },
+    /// Busca nos guias e nas operações por palavras-chave.
+    Search {
+        #[arg(required = true, num_args = 1..)]
+        terms: Vec<String>,
+        #[arg(long)]
+        limit: Option<u32>,
+    },
+    /// Lista as operações visíveis ao token.
+    Operations {
+        #[arg(long)]
+        guide: Option<String>,
+        #[arg(long)]
+        tag: Option<String>,
+    },
+    /// Contrato completo de uma operação.
+    Operation { operation: String },
+    /// Esquema OpenAPI com as referências.
+    Schema { schema: String },
 }
 
 pub async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
@@ -46,6 +360,16 @@ pub async fn run(cli: Cli) -> anyhow::Result<ExitCode> {
         Command::Serve => serve().await.map(|()| ExitCode::SUCCESS),
         Command::Migrate => migrate(cli.json).await,
         Command::Doctor => run_doctor(cli.json).await,
+        Command::Help => Ok(help::run(cli.json)),
+        Command::Profiles(command) => Ok(remote::profiles(command, &cli.connection, cli.json)
+            .unwrap_or_else(|error| {
+                output::error_envelope(
+                    &client::local_error("CLI_CONFIG_INVALID", format!("{error:#}")),
+                    cli.json,
+                );
+                ExitCode::from(client::local_exit_code("CLI_CONFIG_INVALID"))
+            })),
+        command => Ok(remote::run(command, &cli.connection, cli.json).await),
     }
 }
 
@@ -76,7 +400,40 @@ async fn serve() -> anyhow::Result<()> {
         PepperCheck::Verified => {}
     }
 
-    let app = build_app(store, HttpSettings::from(&settings));
+    let core = Core::new(
+        store,
+        settings.token_pepper.clone(),
+        settings.database.clone(),
+    );
+    core.reload_settings()
+        .await
+        .context("falha ao carregar as configuracoes")?;
+    match core
+        .bootstrap(settings.bootstrap_admin_token.as_ref())
+        .await
+        .context("falha no bootstrap do token admin")?
+    {
+        BootstrapOutcome::Created(token_id) => tracing::info!(
+            event = "security.bootstrap_created",
+            token_id = %token_id,
+            "token admin do bootstrap criado"
+        ),
+        BootstrapOutcome::Ignored => tracing::warn!(
+            event = "security.bootstrap_ignored",
+            "BOOTSTRAP_ADMIN_TOKEN ignorado: o banco ja tem tokens"
+        ),
+        BootstrapOutcome::MissingWithEmptyDatabase => tracing::warn!(
+            event = "security.bootstrap_missing",
+            "nenhum token cadastrado e BOOTSTRAP_ADMIN_TOKEN ausente: ninguem consegue administrar"
+        ),
+        BootstrapOutcome::NotConfigured => {}
+    }
+    let background = core::background::spawn(core.clone());
+
+    let mcp_settings = McpSettings {
+        allowed_hosts: settings.mcp_allowed_hosts.clone(),
+    };
+    let app = build_app(core.clone(), HttpSettings::from(&settings), &mcp_settings);
     let listener = tokio::net::TcpListener::bind(settings.address())
         .await
         .context("falha ao abrir porta HTTP")?;
@@ -93,6 +450,10 @@ async fn serve() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("servidor HTTP falhou")?;
+    background.abort();
+    if let Err(error) = core.flush_usage().await {
+        tracing::warn!(event = "tokens.touch_failed", error = %error, "falha ao gravar last_used_at");
+    }
     tracing::info!(event = "application.stopped", "Engramind encerrado");
     Ok(())
 }

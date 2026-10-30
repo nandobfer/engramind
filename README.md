@@ -4,7 +4,7 @@ Rede de memórias para agentes de IA. Um serviço em Rust, com SQLite (WAL), sql
 
 As memórias ficam em **canais** (ex.: `eng/global`, `eng/projeto-atlas`). Cada agente é identificado por um **token** com escopos (`read`, `write`, `delete`) e recebe as memórias por **REST, MCP ou CLI** (com skill), com documentação viva servida pelo próprio binário.
 
-> **Status:** desenho revisado, pronto para planejamento. Ainda não há implementação. O desenho completo está em [`docs/design.md`](docs/design.md).
+> **Status:** versão 0.2.0 — fundação operável e identidades nas três vias (apps, agentes, tokens, configurações, auditoria e documentação viva por REST, MCP e CLI). Canais, assinaturas e memórias vêm nas próximas etapas ([`specs/`](specs/README.md)). O desenho completo está em [`docs/design.md`](docs/design.md).
 
 ## Por que existe
 

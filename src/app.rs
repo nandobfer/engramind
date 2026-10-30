@@ -6,15 +6,25 @@ use axum::{
     http::{HeaderValue, Method, header},
     middleware::{self, Next},
     response::{IntoResponse, Redirect, Response},
-    routing::{MethodRouter, get},
+    routing::{MethodRouter, get, patch, post},
 };
 use utoipa_swagger_ui::{Config as SwaggerConfig, SwaggerUi};
 
-use crate::{config::Settings, error::ApiError, health, observability, openapi, store::AppStore};
+use crate::{
+    auth,
+    config::Settings,
+    core::Core,
+    error::ApiError,
+    health,
+    mcp::{self, McpSettings},
+    observability, openapi, rest,
+    store::AppStore,
+};
 
 #[derive(Clone)]
 pub struct AppState {
     pub store: AppStore,
+    pub core: Core<AppStore>,
 }
 
 /// Limites HTTP derivados de `Settings`.
@@ -36,7 +46,10 @@ impl From<&Settings> for HttpSettings {
 /// Rotas servidas pela Swagger UI (fora de `routes()`), também documentadas no OpenAPI.
 pub const SWAGGER_ROUTES: &[&str] = &["/docs", "/openapi.json"];
 
-/// Ponto único de registro das rotas: o teste de contrato compara esta lista com o OpenAPI.
+/// Rota do MCP (serviço `rmcp`, fora de `routes()`), também documentada no OpenAPI.
+pub const MCP_ROUTE: &str = "/mcp";
+
+/// Rotas públicas, sem token.
 fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
     vec![
         ("/", get(openapi::root_docs_redirect)),
@@ -45,17 +58,69 @@ fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
     ]
 }
 
+/// Rotas `/v1`, protegidas por `require_auth`. Uma entrada por operação do catálogo.
+fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
+    use rest::{audit, docs, identities, settings, status};
+    vec![
+        ("/v1/whoami", get(identities::whoami)),
+        (
+            "/v1/apps",
+            get(identities::list_apps).post(identities::create_app),
+        ),
+        (
+            "/v1/apps/{app}",
+            get(identities::get_app)
+                .patch(identities::update_app)
+                .delete(identities::delete_app),
+        ),
+        (
+            "/v1/agents",
+            get(identities::list_agents).post(identities::create_agent),
+        ),
+        (
+            "/v1/agents/{agent}",
+            get(identities::get_agent)
+                .patch(identities::update_agent)
+                .delete(identities::delete_agent),
+        ),
+        (
+            "/v1/tokens",
+            get(identities::list_tokens).post(identities::issue_token),
+        ),
+        ("/v1/tokens/{token}", patch(identities::update_token)),
+        ("/v1/tokens/{token}/revoke", post(identities::revoke_token)),
+        (
+            "/v1/settings",
+            get(settings::get_settings).put(settings::update_settings),
+        ),
+        ("/v1/status", get(status::get_status)),
+        ("/v1/audit", get(audit::get_audit)),
+        ("/v1/docs/overview", get(docs::get_overview)),
+        ("/v1/docs/guides", get(docs::list_guides)),
+        ("/v1/docs/guides/{guide}", get(docs::get_guide)),
+        ("/v1/docs/search", get(docs::search_docs)),
+        ("/v1/docs/operations", get(docs::list_operations)),
+        ("/v1/docs/operations/{operation}", get(docs::get_operation)),
+        ("/v1/docs/schemas/{schema}", get(docs::get_schema)),
+    ]
+}
+
 /// Caminhos de todas as rotas do router (exceto os ativos internos da Swagger UI).
 pub fn route_paths() -> Vec<&'static str> {
     routes()
         .into_iter()
+        .chain(protected_routes())
         .map(|(path, _)| path)
         .chain(SWAGGER_ROUTES.iter().copied())
+        .chain([MCP_ROUTE])
         .collect()
 }
 
-pub fn build_app(store: AppStore, http: HttpSettings) -> Router {
-    let state = AppState { store };
+pub fn build_app(core: Core<AppStore>, http: HttpSettings, mcp_settings: &McpSettings) -> Router {
+    let state = AppState {
+        store: core.store().clone(),
+        core: core.clone(),
+    };
     let docs = Router::new()
         .merge(
             SwaggerUi::new("/docs")
@@ -64,12 +129,36 @@ pub fn build_app(store: AppStore, http: HttpSettings) -> Router {
         )
         .layer(middleware::from_fn(no_store));
 
+    let mut protected = Router::new();
+    for (path, method_router) in protected_routes() {
+        protected = protected.route(path, method_router);
+    }
+    let protected = protected.route_layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth::require_auth,
+    ));
+
+    let mcp = Router::new()
+        .route_service(
+            MCP_ROUTE,
+            mcp::service(core, mcp_settings, http.max_body_bytes),
+        )
+        .layer(middleware::from_fn(
+            mcp::contract::normalize_transport_errors,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_auth,
+        ));
+
     let mut router = Router::new();
     for (path, method_router) in routes() {
         router = router.route(path, method_router);
     }
 
     router
+        .merge(protected)
+        .merge(mcp)
         .merge(docs)
         .fallback(not_found)
         .method_not_allowed_fallback(method_not_allowed)

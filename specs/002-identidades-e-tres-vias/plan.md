@@ -11,7 +11,7 @@ Criar o `core` com principal, autorização e catálogo de operações; implemen
 
 | Item | Valor |
 |------|-------|
-| Novas dependências | `hmac`, `sha2`, `rand`, `rmcp` 3.4 (`server`, `macros`, `transport-streamable-http-server`), `schemars`, `reqwest` (rustls, json), `toml`, `dirs` |
+| Novas dependências | `rand` 0.8, `rmcp` 3.4.0 (`server`, `macros`, `transport-streamable-http-server`), `schemars` 1.2, `reqwest` 0.12 (rustls, json), `toml`, `dirs` (`hmac` e `sha2` já vieram na 001) |
 | Testes | HTTP em processo, MCP via `oneshot` com JSON-RPC, CLI contra um servidor de teste em porta efêmera |
 
 ## Áreas afetadas

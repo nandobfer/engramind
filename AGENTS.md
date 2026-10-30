@@ -41,7 +41,7 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 
 ## Segurança
 
-- Todo acesso é por Bearer token `eng.<token_id>.<segredo>`; o segredo é comparado em tempo constante com o hash SHA-256 + `TOKEN_PEPPER` e aparece uma única vez, na emissão.
+- Todo acesso é por Bearer token `eng.<token_id>.<segredo>`; o segredo é comparado em tempo constante com o HMAC-SHA256 que usa o `TOKEN_PEPPER` como chave e aparece uma única vez, na emissão.
 - Tipos `agent` e `admin`; escopos `read`, `write`, `delete` (`write` e `delete` exigem `read`).
 - **Acesso efetivo = escopos do token ∩ acesso da assinatura.** A assinatura restringe, nunca amplia. Aplique isso no `core`, nunca só no adaptador.
 - Token `agent` nunca alcança ferramentas administrativas nem cria canais.

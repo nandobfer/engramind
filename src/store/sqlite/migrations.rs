@@ -4,7 +4,10 @@ use rusqlite::Connection;
 use rusqlite_migration::{M, Migrations};
 
 /// Migrações embutidas no binário, em ordem. Nunca edite uma migração aplicada.
-const SOURCES: &[&str] = &[include_str!("../../../migrations/0001_init.sql")];
+const SOURCES: &[&str] = &[
+    include_str!("../../../migrations/0001_init.sql"),
+    include_str!("../../../migrations/0002_identities.sql"),
+];
 
 static MIGRATIONS: LazyLock<Migrations<'static>> =
     LazyLock::new(|| Migrations::new(SOURCES.iter().map(|sql| M::up(sql)).collect()));

@@ -3,6 +3,11 @@
 
 mod cli;
 mod contract;
+mod docs;
 mod health;
+mod identities;
+mod logging;
+mod matrix;
+mod mcp;
 mod store;
 mod support;

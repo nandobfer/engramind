@@ -114,7 +114,7 @@ struct LtxFile {
 
 /// Idade da última réplica pelo `litestream ltx` (D-009). Fora do contêiner, sem o binário,
 /// o item é pulado.
-async fn backup_check(settings: &DatabaseSettings) -> Check {
+pub async fn backup_check(settings: &DatabaseSettings) -> Check {
     if !settings.litestream_enabled {
         return Check::new(
             "backup",
