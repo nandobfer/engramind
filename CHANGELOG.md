@@ -2,6 +2,12 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.4.1] - 2026-10-30
+
+### Corrigido
+
+- Teste `identities::lists_are_paginated_by_cursor` instável: apps criados no mesmo milissegundo desempatam pelo id aleatório; o teste passa a conferir só a partição em páginas. Sem mudança de comportamento.
+
 ## [0.4.0] - 2026-10-30
 
 Etapa 004 — memórias.

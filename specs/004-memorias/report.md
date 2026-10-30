@@ -25,6 +25,7 @@ FR-001 a FR-016 implementados (detalhes em `implement.md`). As perguntas Q-001 a
 
 ## Pendências
 
-- PR, CI, merge e deploy.
+- PR #5 com o CI verde (lint, build, 4 shards, compose), merge e deploy: produção na 0.4.0 com `/health/ready` 200 (4 de 4 migrações), contêiner `healthy` com a imagem do commit e `eng doctor` todo ok, inclusive `memory_fts` e a réplica no MinIO.
+- O job Coverage da `main` falhou por um teste instável da 002 (`identities::lists_are_paginated_by_cursor`, desempate por id aleatório no mesmo milissegundo), corrigido na 0.4.1.
 - Fluxo do curador do §5 seguindo só a skill: coberto pelos comandos testados (`channels list`, `memories list --fields title`, `memories create --origin-source`), sem um teste de ponta a ponta com um agente real.
 - Workers de `redact`/`embed` (006/007), webhooks e `import_memories` (008).

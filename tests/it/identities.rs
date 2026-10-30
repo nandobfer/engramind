@@ -607,7 +607,9 @@ async fn lists_are_paginated_by_cursor() {
             .map(|app| app["slug"].as_str().expect("slug").to_owned())
             .collect()
     };
-    assert_eq!(slugs(&first), ["bootstrap", "a1"]);
+    // A ordem é `(created_at, id)`: apps criados no mesmo milissegundo desempatam pelo id
+    // aleatório, então só a partição em páginas é determinística.
+    assert_eq!(slugs(&first).len(), 2);
     let cursor = first["next_cursor"].as_str().expect("cursor");
     let (_, second) = context
         .call(
@@ -617,8 +619,12 @@ async fn lists_are_paginated_by_cursor() {
             None,
         )
         .await;
-    assert_eq!(slugs(&second), ["a2", "a3"]);
+    assert_eq!(slugs(&second).len(), 2);
     assert!(second["next_cursor"].is_null());
+    let mut all = slugs(&first);
+    all.extend(slugs(&second));
+    all.sort();
+    assert_eq!(all, ["a1", "a2", "a3", "bootstrap"]);
 
     for query in ["limit=0", "limit=201", "cursor=%25%25"] {
         let (status, body) = context
