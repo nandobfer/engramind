@@ -1,0 +1,11 @@
+# Réplica contínua do SQLite (desenho §16). As variáveis são expandidas pelo Litestream;
+# as credenciais vêm de LITESTREAM_ACCESS_KEY_ID e LITESTREAM_SECRET_ACCESS_KEY.
+dbs:
+  - path: ${DATABASE_PATH}
+    replica:
+      type: s3
+      bucket: ${ENGRAMIND_S3_BUCKET}
+      path: ${ENGRAMIND_S3_PATH}
+      endpoint: ${ENGRAMIND_S3_ENDPOINT}
+      region: us-east-1
+      force-path-style: true

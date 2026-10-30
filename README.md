@@ -143,8 +143,10 @@ Sem embeddings (desligados ou pendentes), a busca usa só o texto.
 - `docker-compose.yml` com um único serviço, sem perfis:
 
 ```bash
-cp .env.example .env   # preencha as variáveis obrigatórias
+docker network create engramind-network   # uma vez por host
+cp .env.example .env                       # preencha as variáveis obrigatórias
 docker compose up -d --build
+docker compose exec api eng doctor
 ```
 
 O banco fica em `/data/engramind.db`, num volume nomeado (`engramind-data`). Nunca monte o banco em NFS ou em bind mount compartilhado entre hosts.
@@ -154,11 +156,14 @@ O banco fica em `/data/engramind.db`, num volume nomeado (`engramind-data`). Nun
 O desenvolvimento acontece fora do Docker:
 
 ```bash
-cargo run -- serve
-cargo test
-cargo clippy -- -D warnings
+cargo run -- serve                          # APP_PORT, TOKEN_PEPPER e SECRETS_KEY no .env
+cargo nextest run -E 'test(/<modulo>::/)'   # só os testes afetados
+cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+./scripts/test.sh                           # suíte completa com cobertura (só quando necessário)
 ```
+
+Os testes rodam com `cargo-nextest`; os de integração ficam num único binário, `tests/it/`.
 
 Os testes usam provedores falsos e determinísticos (LLM roteirizado, embeddings por hash e servidor de webhook de teste).
 
