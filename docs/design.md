@@ -518,11 +518,21 @@ rodar em dois lugares:
   | `embedding.provider` | Campos usados | Exemplos |
   |---|---|---|
   | `local` | `model` (um dos modelos suportados pelo `fastembed`) | `multilingual-e5-small`, `multilingual-e5-base`, `bge-m3` |
-  | `openai_compatible` | `base_url`, `model`, `api_key`🔒, `dimensions` opcional | OpenAI `text-embedding-3-small`, OpenRouter, DeepSeek, LM Studio |
+  | `openai_compatible` | `base_url`, `model`, `api_key`🔒, `dimensions` opcional | Qualquer serviço com `POST /v1/embeddings` no formato da OpenAI: OpenAI, OpenRouter (vários modelos de embedding de vários provedores numa chave só), Mistral, Jina, Together, LM Studio, vLLM |
   | `ollama` | `base_url`, `model` | `nomic-embed-text`, `bge-m3` |
   | `gemini` | `model`, `api_key`🔒 | `gemini-embedding-001` |
   | `off` | — | desliga a busca por sentido |
 
+- **Só modelos de embedding servem.** Modelos de chat (Claude, GPT, DeepSeek Chat…) geram texto, não
+  vetores, e não podem ser usados aqui. Provedores que não oferecem endpoint de embeddings (ex.:
+  Anthropic, DeepSeek) ficam de fora, a não ser por um roteador como o OpenRouter. O provedor e o
+  modelo de embedding são independentes do Redator: é normal o Redator usar um modelo de chat de um
+  provedor e os embeddings usarem outro.
+- **Prefixos por modelo.** Alguns modelos esperam marcar o que é consulta e o que é documento
+  (`query:`/`passage:` na família e5, `input_type` em outros). A configuração tem
+  `query_prefix`/`document_prefix` (preenchidos automaticamente para os modelos locais conhecidos).
+- `list_embedding_models { provider, base_url?, api_key? }` lista os modelos disponíveis quando o
+  provedor oferece a listagem (local, Ollama, OpenRouter), para a tela do sistema gestor montar o seletor.
 - `test_embedding` valida a configuração proposta antes de salvar: chama o provedor, devolve a
   dimensão detectada e a latência, e recusa salvar se falhar.
 - Cada modelo tem uma dimensão fixa. Salvar outro provedor ou modelo enfileira `reembed_all`
@@ -545,7 +555,7 @@ global e, quando indicado, sobreposição **por canal**.
 | `categories` | lista `{ key, label, priority }` (as 5 do Magic Context) | — |
 | `memory` | `text_min` (3), `text_max` (4000), `dedupe_exact` (true), `similar_threshold` (0.85) | text_max |
 | `redator` | `enabled` (true), `provider`, `model`, `api_key`🔒, `base_url`, `instructions`, `rewrite_text` (true), `title_max` (100), `min_similarity` (0.80), `timeout_ms` (30000), `max_attempts` (3), `fallback_models[]` | instructions, rewrite_text |
-| `embedding` | `provider` (`local`; ou `openai_compatible`, `ollama`, `gemini`, `off`), `model` (`multilingual-e5-small`), `base_url`, `api_key`🔒, `dimensions`, `batch_size` (32), `timeout_ms` (15000) | — |
+| `embedding` | `provider` (`local`; ou `openai_compatible`, `ollama`, `gemini`, `off`), `model` (`multilingual-e5-small`), `base_url`, `api_key`🔒, `dimensions`, `query_prefix`, `document_prefix`, `batch_size` (32), `timeout_ms` (15000) | — |
 | `search` | `vector_weight` (1.0), `text_weight` (1.0), `rrf_k` (60), `default_limit` (10), `hint_threshold` (0.80), `hint_limit` (3) | — |
 | `consolidation` | `enabled` (false), `schedule` (cron, `0 3 * * *`), `tasks[]`, `duplicate_threshold` (0.92), `stale_after_days` (90), `auto_archive_stale` (false) | enabled |
 | `webhooks` | `enabled` (true), `timeout_ms` (5000), `max_attempts` (5) | — |
@@ -582,7 +592,7 @@ Cada operação existe nas três vias com o mesmo nome base, os mesmos parâmetr
 | | `create_app`, `update_app`, `create_agent`, `update_agent`, `issue_token`, `update_token` | admin·write |
 | | `revoke_token`, `delete_app`, `delete_agent` | admin·delete |
 | **Configurações** | `get_settings`, `get_channel_settings` | admin·read |
-| | `update_settings`, `update_channel_settings`, `set_secret`, `test_redator`, `test_embedding` | admin·write |
+| | `update_settings`, `update_channel_settings`, `set_secret`, `test_redator`, `test_embedding`, `list_embedding_models` | admin·write |
 | **Operação** | `get_status`, `list_jobs`, `get_audit`, `get_usage`, `list_llm_calls` | admin·read |
 | | `retry_job`, `run_consolidation`, `reembed_all`, `import_memories` | admin·write |
 | **Documentação** | `get_overview`, `list_guides`, `get_guide`, `search_docs`, `list_operations`, `get_operation`, `get_schema` | qualquer token (guias de admin ocultos para agent) |
