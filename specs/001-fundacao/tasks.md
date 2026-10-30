@@ -38,12 +38,12 @@
 - [x] T036 - `.github/workflows/ci-cd.yml` (lint, build-tests, 4 shards, compose, coverage, build, deploy).
 - [x] T037 - `Dockerfile` com `cargo-chef`; smoke test da imagem no CI.
 - [x] T038 - `scripts/deploy-production.ts` e `docker-compose.deploy.yml` da skill `setup-ci-cd`.
-- [ ] T039 - Entregar ao usuário a lista de Secrets/Variables do Environment `production` e a proteção da `main` com os checks obrigatórios.
+- [x] T039 - Entregar ao usuário a lista de Secrets/Variables do Environment `production` e a proteção da `main` com os checks obrigatórios.
 
 ## Qualidade e docs
 
-- [ ] T040 - Medir compilação e shards no primeiro PR; registrar no `report.md`.
+- [x] T040 - Medir compilação e shards no primeiro PR; registrar no `report.md`.
 - [x] T041 - `docs/decisions/0001-dependencias-base.md`, `0002-store-e-escritor-unico.md`, `0003-binario-unico-engramind.md`, `0004-unsafe-sqlite-vec.md`, `0005-testes-e-ci-rapidos.md`, `0006-cd-por-artefato.md`.
 - [x] T042 - `CHANGELOG.md` 0.1.0, `aicontext/README.md`, `aicontext/use-quando-configurar-deploy.md` (redes e CD), `aicontext/use-sempre-que-desenvolver.md` e `AGENTS.md` (como rodar só os testes afetados, layout `tests/it/`, nada de arquivo novo em `tests/`).
 - [x] T043 - Verificação manual: compose com e sem Litestream e restore.
-- [ ] T044 - `implement.md` e `report.md`.
+- [x] T044 - `implement.md` e `report.md`.
