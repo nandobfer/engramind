@@ -104,6 +104,14 @@ async fn database_checks(path: &Path, read_pool_size: usize) -> Vec<Check> {
             report.fts5,
             format!("SQLite {}", report.sqlite_version),
         ),
+        match report.memory_fts {
+            Some(result) => Check::from_bool("memory_fts", result == "ok", result),
+            None => Check::new(
+                "memory_fts",
+                CheckStatus::Skip,
+                "memorias ainda nao migradas",
+            ),
+        },
     ]
 }
 

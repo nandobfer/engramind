@@ -21,11 +21,20 @@ engramind channels get eng/global
 
 - `archive_channel` tira o canal do contexto, da busca e das dicas padrão, e também de `list_channels` sem `include_archived`. O canal continua legível quando citado pelo slug.
 - `restore_channel` devolve o canal ao uso.
-- `delete_channel` só exclui um canal arquivado; um canal ativo recebe `409 CHANNEL_NOT_ARCHIVED`. A exclusão remove o canal e as assinaturas **exatas** dele, e as por prefixo continuam. A auditoria guarda o canal e quantas assinaturas saíram.
+- Um canal arquivado não recebe escrita de memórias (`409 CHANNEL_ARCHIVED`); a leitura e `delete_memory` continuam.
+- `delete_channel` só exclui um canal arquivado; um canal ativo recebe `409 CHANNEL_NOT_ARCHIVED`. A exclusão remove o canal, as memórias dele (com as revisões) e as assinaturas **exatas**; as por prefixo continuam. A auditoria guarda o canal e quantas assinaturas (`subscriptions_removed`) e memórias (`memories_removed`) saíram.
 
 ```bash
 engramind channels archive eng/legado
 engramind channels delete eng/legado
+```
+
+### Estatísticas
+
+`channel_stats` mostra, para quem tem `read` efetivo no canal, as memórias por status e por categoria, quantas esperam título ou embedding, a soma de `retrieval_count`, a última mudança e a `version` do canal (que cresce a cada mudança de memória).
+
+```bash
+engramind channels stats eng/global --json
 ```
 
 ## Assinaturas

@@ -26,6 +26,9 @@ Todo erro usa o envelope único:
 | `TOKEN_NOT_FOUND` | 404 | 5 | Token inexistente. |
 | `CHANNEL_NOT_FOUND` | 404 | 5 | Canal inexistente; canais nunca nascem implicitamente. |
 | `SUBSCRIPTION_NOT_FOUND` | 404 | 5 | Assinatura inexistente. |
+| `MEMORY_NOT_FOUND` | 404 | 5 | Memória inexistente ou num canal fora do alcance do token (ou do `Engramind-Channels`). |
+| `REVISION_NOT_FOUND` | 404 | 5 | A memória não tem a versão pedida em `revert_memory`. |
+| `CATEGORY_NOT_FOUND` | 400 | 2 | Categoria fora de `categories.list`; `details.valid` lista as aceitas. |
 | `GUIDE_NOT_FOUND` | 404 | 5 | Guia inexistente ou oculto para o token; `details.valid` lista os visíveis. |
 | `SECTION_NOT_FOUND` | 404 | 5 | Seção inexistente no guia; `details.valid` lista as seções. |
 | `OPERATION_NOT_FOUND` | 404 | 5 | Operação inexistente ou oculta para o token; `details.valid` lista as visíveis. |
@@ -35,6 +38,10 @@ Todo erro usa o envelope único:
 | `SLUG_ALREADY_EXISTS` | 409 | 6 | Já existe um app, um agente no mesmo app ou um canal com esse slug. |
 | `SUBSCRIPTION_EXISTS` | 409 | 6 | O agente já assina esse alvo (mesmo canal exato ou mesmo prefixo). |
 | `CHANNEL_NOT_ARCHIVED` | 409 | 6 | Só um canal arquivado pode ser excluído; arquive antes. |
+| `CHANNEL_ARCHIVED` | 409 | 6 | O canal está arquivado e não recebe escrita; restaure-o antes. |
+| `MEMORY_VERSION_CONFLICT` | 409 | 6 | A memória mudou desde `expected_version`; `details.current_version` traz a atual. |
+| `MEMORY_DUPLICATE` | 409 | 6 | Já existe uma memória com o mesmo texto no canal; `details.existing_id` aponta para ela. |
+| `CATEGORY_IN_USE` | 409 | 6 | A mudança de `categories.list` retira categorias usadas; `details.in_use` traz a contagem. |
 | `IDEMPOTENCY_KEY_CONFLICT` | 409 | 6 | A mesma `Idempotency-Key` já foi usada com outra operação ou outro corpo. |
 | `LAST_ADMIN_TOKEN` | 409 | 6 | A mudança deixaria a rede sem nenhum token `admin` ativo com `write`. |
 | `SETTING_UNKNOWN` | 400 | 2 | Chave de configuração desconhecida; `details.valid` lista as chaves. |
@@ -57,6 +64,10 @@ Todo erro usa o envelope único:
 - `403 SCOPE_REQUIRED`: o token não tem o tipo ou o escopo; `details.required_kind` e `details.required_scope` dizem o que falta. Com `details.channel`, quem restringe é a assinatura daquele canal.
 - `403 CHANNEL_NOT_SUBSCRIBED`: peça ao gestor uma assinatura no canal, ou confira se ele está no `Engramind-Channels` da conexão.
 - `409 CHANNEL_NOT_ARCHIVED`: arquive o canal (`archive_channel`) antes de excluí-lo.
+- `409 CHANNEL_ARCHIVED`: o canal foi arquivado; peça ao gestor para restaurá-lo ou escreva em outro canal.
+- `409 MEMORY_VERSION_CONFLICT`: outro agente mudou a memória; releia (`get_memory`), refaça a edição sobre a versão atual e mande o novo `expected_version`.
+- `409 MEMORY_DUPLICATE`: o texto já existe em `details.existing_id`; edite ou use aquela memória em vez de duplicar.
+- `409 CATEGORY_IN_USE`: mova ou recategorize as memórias de `details.in_use` antes de retirar a categoria.
 - `409 IDEMPOTENCY_KEY_CONFLICT`: a chave já foi usada com outro corpo; gere uma chave nova para a nova intenção.
 - `409 LAST_ADMIN_TOKEN`: emita outro token `admin` com `write` antes de revogar, desativar ou excluir o último.
 - `429 RATE_LIMITED`: espere os segundos de `Retry-After`.

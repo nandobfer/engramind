@@ -2,6 +2,35 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.4.0] - 2026-10-30
+
+Etapa 004 — memórias.
+
+### Adicionado
+
+- Memórias nas três vias: `list_memories`, `get_memory`, `search_memories`, `memory_history`, `create_memory`, `update_memory`, `archive_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `move_memory`, `revert_memory` e `delete_memory` (tag OpenAPI `Memories`, qualquer token, com o acesso efetivo do canal).
+- Toda mutação de memória grava, na mesma transação, a memória, a revisão (menos a exclusão), a auditoria (só metadados e o hash do texto), `memories.version`, `channels.version` (os dois canais no `move`), os jobs e a idempotência.
+- Criação com título provisório (primeira frase, até 100 caracteres), `title_state`/`embedding_state` `pending` e os jobs `redact` e `embed` na fila `jobs` (os workers chegam na 006/007). A escrita nunca espera o LLM.
+- Duplicata exata por `content_hash` normalizado (NFC, espaços colapsados, minúsculo): a criação devolve a existente com `duplicate: true` e `200`; edição, `revert` e `move` recebem `409 MEMORY_DUPLICATE`.
+- `similar` na resposta de escrita: até três memórias do canal com Jaccard dos termos ≥ `memory.similar_threshold`.
+- Edição com `expected_version` (`409 MEMORY_VERSION_CONFLICT` com `details.current_version`); `revert_memory` restaura uma versão numa revisão nova; `delete_memory` mantém a última revisão.
+- Busca textual FTS5/BM25 sem acentos nos canais `inject` e `search` (mais os `manage` e arquivados citados), com filtros, `exclude_ids`, `include_archived`, `fields` e `rank`/`score`. `retrieval_count` e `last_retrieved_at` gravados em lote a cada 5 s.
+- `list_memories` com `channels`, `categories`, `status`, `author`, `since`, `fields` e paginação por cursor. Memória num canal fora do alcance responde `404 MEMORY_NOT_FOUND`.
+- `channel_stats` (tag `Channels`) e as configurações por canal `get_channel_settings`/`update_channel_settings` (tag `Settings`), gravadas em `channels.settings_json`.
+- Configurações `categories.list`, `memory.text_min`, `memory.text_max` (por canal), `memory.dedupe_exact` e `memory.similar_threshold`. Retirar uma categoria em uso dá `409 CATEGORY_IN_USE`.
+- CLI `engramind memories …`, `engramind channels stats` e `engramind channels settings get|set`; `--text -` lê o texto da entrada padrão (erro local `CLI_INPUT_INVALID`).
+- `engramind doctor` confere o `memory_fts` contra `memories` (`integrity-check`).
+- Skill `skills/engramind/SKILL.md`, conferida contra `engramind help --json`, e o guia `escrever-memorias`.
+- Novos códigos de erro: `MEMORY_NOT_FOUND` e `REVISION_NOT_FOUND` (404, saída 5), `CATEGORY_NOT_FOUND` (400, saída 2), `CHANNEL_ARCHIVED`, `MEMORY_VERSION_CONFLICT`, `MEMORY_DUPLICATE` e `CATEGORY_IN_USE` (409, saída 6).
+- Migração `0004_memories.sql` (`memories`, `memory_revisions`, `memory_fts` com triggers, `jobs`).
+- Decisões `docs/decisions/0011` e `0012`. Nova dependência `unicode-normalization`.
+
+### Alterado
+
+- `delete_channel` também apaga as memórias do canal e as revisões delas; a auditoria registra `memories_removed`.
+- Um canal arquivado não recebe escrita de memórias (`409 CHANNEL_ARCHIVED`).
+- `SettingView.min`/`max` passam a ser números (`integer` e `number`) e `null` para `boolean`; novos tipos `number`, `boolean` e `categories`.
+
 ## [0.3.0] - 2026-10-30
 
 Etapa 003 — canais e assinaturas.

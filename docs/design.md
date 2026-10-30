@@ -274,15 +274,15 @@ channels      (id, slug UNIQUE, name, description, priority, settings_json,
 subscriptions (id, agent_id, target, is_prefix, mode, access NULL, priority NULL, created_at)
               -- target do prefixo sem o `*`; UNIQUE (agent_id, target, is_prefix)
 
-memories      (id, channel_id, category, title, text, status, importance NULL,
+memories      (seq, id, channel_id, category, title, text, status, importance NULL,
                content_hash, version, title_state, embedding_state,
                author_app_id, author_agent_id, origin_source, origin_label,
                retrieval_count, injected_count, last_retrieved_at, verified_at NULL,
                merged_into NULL, stale_candidate, created_at, updated_at, archived_at)
 memory_revisions (id, memory_id, version, title, text, category, status,
                   app_id, agent_id, reason, created_at)
-memory_fts    -- FTS5 externa (title, text), tokenizer unicode61 remove_diacritics 2,
-              -- sincronizada por trigger
+memory_fts    -- FTS5 externa (title, text) com content_rowid = memories.seq (rowid explícito,
+              -- estável no VACUUM), tokenizer unicode61 remove_diacritics 2, sincronizada por trigger
 memory_vectors (memory_id PK, model_id, dims, embedding BLOB)  -- formato float32 do sqlite-vec
 
 settings      (key PK, value_json, updated_by_app, updated_at)
@@ -329,6 +329,12 @@ Regras gerais:
 5. Responde na hora, porque a escrita nunca espera o LLM. A resposta traz `similar`: até três
    memórias do mesmo canal com similaridade acima de `memory.similar_threshold`, pelo FTS na hora e
    pelo vetor quando já existir. Com isso o agente pode preferir `update_memory` a uma quase-duplicata.
+   Sem vetor, a nota é o Jaccard dos termos dos 10 melhores candidatos do FTS (decisão 0012).
+
+Duplicatas e canais arquivados (decisão 0011): na edição, no `revert` e no destino do `move`, um
+texto igual a outra memória do canal dá `409 MEMORY_DUPLICATE`; um canal arquivado não recebe
+escrita (`409 CHANNEL_ARCHIVED`); uma memória num canal fora do alcance do token responde
+`404 MEMORY_NOT_FOUND`.
 
 ### Redator
 
@@ -465,8 +471,10 @@ Parâmetros: `{ query, channels?, categories?, limit?, include_archived?, exclud
    - Se o volume crescer, a etapa troca para uma tabela `vec0` com `channel_id` como chave de
      partição (índice KNN), sem mudar o contrato.
 2. **Textual**: FTS5 com BM25 sobre título e texto (sem acentos, `unicode61 remove_diacritics 2`).
+   A consulta vira termos entre aspas unidos por `OR`, com o título pesando o dobro (decisão 0012).
 3. **Fusão RRF**: `score = Σ peso / (rrf_k + posição)`, com pesos configuráveis. Sem embeddings
-   (desligados ou ainda pendentes), a busca usa só o FTS.
+   (desligados ou ainda pendentes), a busca usa só o FTS. A resposta é
+   `{ results: [{ rank, score, memory }] }`.
 4. `exclude_ids` tira o que já está no contexto. A resposta traz o `version` do contexto, e o
    consumidor pode passar `exclude_context: true` para o serviço excluir sozinho.
 5. Incrementa `retrieval_count` e `last_retrieved_at` (em lote).

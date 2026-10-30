@@ -371,6 +371,36 @@ mod catalog {
         assert!(checked > 10, "poucos comandos citados: {checked}");
     }
 
+    /// A skill da CLI só cita comandos existentes em `engramind help --json` (§14, FR-016).
+    #[test]
+    fn every_command_cited_in_the_skill_exists() {
+        let help = help::document();
+        let paths: Vec<Vec<&str>> = help
+            .commands
+            .iter()
+            .map(|command| command.path.split(' ').collect())
+            .collect();
+        let skill = snapshot_path()
+            .parent()
+            .and_then(|docs| docs.parent())
+            .expect("raiz")
+            .join("skills/engramind/SKILL.md");
+        let text = std::fs::read_to_string(&skill).expect("skill");
+        let mut checked = 0;
+        for cited in cited_commands(&text) {
+            let words: Vec<&str> = cited
+                .split_whitespace()
+                .take_while(|word| !word.starts_with('-') && !word.starts_with('<'))
+                .collect();
+            let exists = paths.iter().any(|command| {
+                words.len() >= command.len() && words[..command.len()] == command[..]
+            });
+            assert!(exists, "SKILL.md: engramind {cited}");
+            checked += 1;
+        }
+        assert!(checked >= 8, "poucos comandos citados na skill: {checked}");
+    }
+
     #[test]
     fn every_error_code_is_documented_with_status_and_exit_code() {
         let errors = guide("erros.md");
@@ -389,12 +419,15 @@ mod catalog {
     fn every_setting_is_documented_with_type_and_default() {
         let settings = guide("configuracoes.md");
         for spec in SETTINGS {
-            let SettingType::Integer { min, max } = spec.kind;
+            let default = match spec.kind {
+                SettingType::Categories => "as 5 do Magic Context".to_owned(),
+                _ => spec.default.to_owned(),
+            };
             let row = format!(
-                "| `{}` | {} | {} | {min} a {max} | {} |",
+                "| `{}` | {} | {default} | {} | {} |",
                 spec.key,
                 spec.kind.name(),
-                spec.default,
+                spec.kind.range(),
                 if spec.channel_override { "sim" } else { "não" }
             );
             assert!(settings.contains(&row), "configuracoes.md sem {row}");

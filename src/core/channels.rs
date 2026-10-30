@@ -12,9 +12,9 @@ use super::{
     idempotency::Mutation,
     identities::{MAX_DESCRIPTION, MAX_NAME, next_cursor, optional_text, text},
     ids,
-    model::{Channel, ChannelPatch, Lookup, Network, NewChannel, double_option},
+    model::{Channel, ChannelPatch, ChannelStats, Lookup, Network, NewChannel, double_option},
     pagination::{Cursor, PageRequest, paginate},
-    principal::Principal,
+    principal::{Principal, Scope},
     selection::{Selection, validate_channel_slug},
     store_error,
 };
@@ -186,6 +186,24 @@ impl<S: Store> Core<S> {
         let network = self.network().await?;
         let channel = find_in(&network, channel)?;
         Ok(access::reach_channel(&network, principal, &selection, channel)?.view())
+    }
+
+    /// Contagens das memórias do canal; exige `read` efetivo nele.
+    pub async fn channel_stats(
+        &self,
+        principal: &Principal,
+        channel: &str,
+        header: Option<&str>,
+    ) -> Result<ChannelStats, ApiError> {
+        self.authorize(principal, "channel_stats")?;
+        let selection = Selection::parse(header, None)?;
+        let reach = self
+            .require_channel(principal, &selection, channel, Scope::Read)
+            .await?;
+        self.store()
+            .channel_stats(reach.channel.id)
+            .await?
+            .ok_or_else(channel_not_found)
     }
 
     pub async fn create_channel(

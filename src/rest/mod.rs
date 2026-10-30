@@ -4,6 +4,7 @@ pub mod audit;
 pub mod channels;
 pub mod docs;
 pub mod identities;
+pub mod memories;
 pub mod settings;
 pub mod status;
 pub mod subscriptions;

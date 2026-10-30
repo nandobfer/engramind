@@ -8,15 +8,19 @@ pub mod authz;
 pub mod background;
 pub mod bootstrap;
 pub mod channels;
+pub mod counters;
 pub mod docs;
 pub mod idempotency;
 pub mod identities;
 pub mod ids;
+pub mod memories;
+pub mod memory_text;
 pub mod model;
 pub mod operations;
 pub mod pagination;
 pub mod pepper;
 pub mod principal;
+pub mod search;
 pub mod selection;
 pub mod settings;
 pub mod status;
@@ -33,7 +37,7 @@ use crate::{
 };
 
 use self::{
-    access::NetworkCache, docs::Docs, model::Actor, operations::OperationSpec,
+    access::NetworkCache, counters::Counters, docs::Docs, model::Actor, operations::OperationSpec,
     principal::Principal, settings::SettingsSnapshot, usage::Usage,
 };
 
@@ -49,6 +53,7 @@ struct Inner<S> {
     docs: Docs,
     settings: RwLock<SettingsSnapshot>,
     usage: Usage,
+    counters: Counters,
     network: NetworkCache,
     database: DatabaseSettings,
 }
@@ -63,6 +68,7 @@ impl<S: Store> Core<S> {
                 docs: Docs::new(crate::openapi::document()),
                 settings: RwLock::new(SettingsSnapshot::default()),
                 usage: Usage::default(),
+                counters: Counters::default(),
                 network: NetworkCache::default(),
                 database,
             }),
@@ -90,6 +96,10 @@ impl<S: Store> Core<S> {
 
     pub(crate) fn usage(&self) -> &Usage {
         &self.inner.usage
+    }
+
+    pub(crate) fn counters(&self) -> &Counters {
+        &self.inner.counters
     }
 
     pub(crate) fn network_cache(&self) -> &NetworkCache {
@@ -156,6 +166,10 @@ pub(crate) fn store_error(error: StoreError, not_found: impl FnOnce() -> ApiErro
         StoreError::Conflict("CHANNEL_NOT_ARCHIVED") => {
             ApiError::new("CHANNEL_NOT_ARCHIVED", "Arquive o canal antes de exclui-lo")
         }
+        StoreError::Conflict("CHANNEL_ARCHIVED") => ApiError::new(
+            "CHANNEL_ARCHIVED",
+            "O canal esta arquivado; restaure-o antes de escrever",
+        ),
         StoreError::Conflict("SUBSCRIPTION_EXISTS") => {
             ApiError::new("SUBSCRIPTION_EXISTS", "O agente ja assina esse alvo")
         }

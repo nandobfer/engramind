@@ -117,3 +117,61 @@ async fn requests_and_tool_calls_log_identity_without_secrets_or_arguments() {
         assert!(!output.contains(forbidden), "{forbidden} no log");
     }
 }
+
+#[tokio::test]
+async fn memory_text_never_reaches_the_logs() {
+    let context = TestContext::new().await;
+    let buffer = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(engramind::observability::log_filter("debug").expect("filter"))
+        .with_writer(buffer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    tracing::callsite::rebuild_interest_cache();
+
+    context.create_channel("eng/global").await;
+    let created = context
+        .create_memory(ADMIN_TOKEN, "eng/global", "texto-sigiloso-da-memoria abc")
+        .await;
+    let id = created["memory"]["id"].as_str().expect("id");
+    context
+        .call(
+            "PATCH",
+            &format!("/v1/memories/{id}"),
+            Some(ADMIN_TOKEN),
+            Some(json!({ "text": "edicao-sigilosa-da-memoria abc" })),
+        )
+        .await;
+    context
+        .call(
+            "POST",
+            "/v1/memories/search",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "query": "consulta-sigilosa" })),
+        )
+        .await;
+    context
+        .call_tool(
+            ADMIN_TOKEN,
+            "create_memory",
+            json!({ "channel": "eng/global", "text": "texto-sigiloso-pelo-mcp" }),
+        )
+        .await;
+
+    let (output, events) = events(&buffer);
+    assert!(
+        events
+            .iter()
+            .any(|event| event["span"]["operation"] == "create_memory"),
+        "{output}"
+    );
+    for forbidden in [
+        "texto-sigiloso-da-memoria",
+        "edicao-sigilosa-da-memoria",
+        "consulta-sigilosa",
+        "texto-sigiloso-pelo-mcp",
+    ] {
+        assert!(!output.contains(forbidden), "{forbidden} no log");
+    }
+}

@@ -42,6 +42,7 @@ pub const TAG_AUTHENTICATION: &str = "Authentication";
 pub const TAG_IDENTITIES: &str = "Identities";
 pub const TAG_CHANNELS: &str = "Channels";
 pub const TAG_NETWORK: &str = "Network";
+pub const TAG_MEMORIES: &str = "Memories";
 pub const TAG_SETTINGS: &str = "Settings";
 pub const TAG_STATUS: &str = "Status";
 pub const TAG_AUDIT: &str = "Audit";
@@ -107,6 +108,35 @@ const fn mutation(
         method,
         path,
         cli,
+    }
+}
+
+/// Mutação de qualquer token; o acesso efetivo no canal é conferido no `core`.
+#[allow(clippy::too_many_arguments)]
+const fn any_mutation(
+    name: &'static str,
+    tag: &'static str,
+    summary: &'static str,
+    scope: Scope,
+    destructive: bool,
+    idempotent: bool,
+    method: &'static str,
+    path: &'static str,
+    cli: &'static [&'static str],
+) -> OperationSpec {
+    OperationSpec {
+        kind: RequiredKind::Any,
+        ..mutation(
+            name,
+            tag,
+            summary,
+            scope,
+            destructive,
+            idempotent,
+            method,
+            path,
+            cli,
+        )
     }
 }
 
@@ -275,6 +305,14 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/channels/{channel}",
         &["channels", "get"],
     ),
+    read(
+        "channel_stats",
+        TAG_CHANNELS,
+        "Contagens das memórias de um canal",
+        RequiredKind::Any,
+        "/v1/channels/{channel}/stats",
+        &["channels", "stats"],
+    ),
     mutation(
         "create_channel",
         TAG_NETWORK,
@@ -372,6 +410,140 @@ pub const OPERATIONS: &[OperationSpec] = &[
         &["subscriptions", "remove"],
     ),
     read(
+        "list_memories",
+        TAG_MEMORIES,
+        "Lista as memórias dos canais alcançados",
+        RequiredKind::Any,
+        "/v1/memories",
+        &["memories", "list"],
+    ),
+    read(
+        "get_memory",
+        TAG_MEMORIES,
+        "Mostra uma memória",
+        RequiredKind::Any,
+        "/v1/memories/{memory}",
+        &["memories", "get"],
+    ),
+    OperationSpec {
+        method: "POST",
+        ..read(
+            "search_memories",
+            TAG_MEMORIES,
+            "Busca memórias por texto",
+            RequiredKind::Any,
+            "/v1/memories/search",
+            &["memories", "search"],
+        )
+    },
+    read(
+        "memory_history",
+        TAG_MEMORIES,
+        "Lista as revisões de uma memória",
+        RequiredKind::Any,
+        "/v1/memories/{memory}/history",
+        &["memories", "history"],
+    ),
+    any_mutation(
+        "create_memory",
+        TAG_MEMORIES,
+        "Grava uma memória num canal",
+        Scope::Write,
+        false,
+        false,
+        "POST",
+        "/v1/memories",
+        &["memories", "create"],
+    ),
+    any_mutation(
+        "update_memory",
+        TAG_MEMORIES,
+        "Edita o texto ou a categoria de uma memória",
+        Scope::Write,
+        false,
+        true,
+        "PATCH",
+        "/v1/memories/{memory}",
+        &["memories", "update"],
+    ),
+    any_mutation(
+        "archive_memory",
+        TAG_MEMORIES,
+        "Arquiva uma memória",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/memories/{memory}/archive",
+        &["memories", "archive"],
+    ),
+    any_mutation(
+        "restore_memory",
+        TAG_MEMORIES,
+        "Restaura uma memória arquivada",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/memories/{memory}/restore",
+        &["memories", "restore"],
+    ),
+    any_mutation(
+        "pin_memory",
+        TAG_MEMORIES,
+        "Fixa uma memória (status permanent)",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/memories/{memory}/pin",
+        &["memories", "pin"],
+    ),
+    any_mutation(
+        "unpin_memory",
+        TAG_MEMORIES,
+        "Desafixa uma memória",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/memories/{memory}/unpin",
+        &["memories", "unpin"],
+    ),
+    any_mutation(
+        "move_memory",
+        TAG_MEMORIES,
+        "Move uma memória para outro canal",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/memories/{memory}/move",
+        &["memories", "move"],
+    ),
+    any_mutation(
+        "revert_memory",
+        TAG_MEMORIES,
+        "Restaura o conteúdo de uma versão anterior numa revisão nova",
+        Scope::Write,
+        false,
+        false,
+        "POST",
+        "/v1/memories/{memory}/revert",
+        &["memories", "revert"],
+    ),
+    any_mutation(
+        "delete_memory",
+        TAG_MEMORIES,
+        "Exclui uma memória, mantendo a última revisão",
+        Scope::Delete,
+        true,
+        true,
+        "DELETE",
+        "/v1/memories/{memory}",
+        &["memories", "delete"],
+    ),
+    read(
         "get_settings",
         TAG_SETTINGS,
         "Lê as configurações com valores padrão",
@@ -389,6 +561,25 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "PUT",
         "/v1/settings",
         &["settings", "set"],
+    ),
+    read(
+        "get_channel_settings",
+        TAG_SETTINGS,
+        "Lê as configurações de um canal com as sobreposições",
+        Admin,
+        "/v1/channels/{channel}/settings",
+        &["channels", "settings", "get"],
+    ),
+    mutation(
+        "update_channel_settings",
+        TAG_SETTINGS,
+        "Altera as sobreposições de configuração de um canal",
+        Scope::Write,
+        false,
+        true,
+        "PUT",
+        "/v1/channels/{channel}/settings",
+        &["channels", "settings", "set"],
     ),
     read(
         "get_status",
@@ -498,9 +689,10 @@ mod tests {
     #[test]
     fn hints_are_consistent_with_the_method_and_scope() {
         for operation in OPERATIONS {
+            // `search_memories` é leitura por POST (o corpo leva filtros).
             assert_eq!(
                 operation.read_only,
-                operation.method == "GET",
+                operation.method == "GET" || operation.name == "search_memories",
                 "{}",
                 operation.name
             );
@@ -508,7 +700,12 @@ mod tests {
                 assert!(!operation.destructive && operation.idempotent);
                 assert!(matches!(operation.scope, None | Some(Scope::Read)));
             } else {
-                assert_eq!(operation.kind, RequiredKind::Admin, "{}", operation.name);
+                assert_eq!(
+                    operation.kind == RequiredKind::Any,
+                    operation.tag == TAG_MEMORIES,
+                    "{}",
+                    operation.name
+                );
             }
             if operation.scope == Some(Scope::Delete) {
                 assert!(operation.destructive, "{}", operation.name);

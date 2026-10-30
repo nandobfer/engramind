@@ -39,8 +39,14 @@ fn parse(value: Option<String>) -> Result<Option<serde_json::Value>, StoreError>
 pub(super) fn update_settings(
     transaction: &Transaction,
     changes: &[SettingChange],
+    retained_categories: Option<&[String]>,
     context: &WriteContext,
 ) -> Result<Vec<SettingRow>, StoreError> {
+    if let Some(retained) = retained_categories
+        && super::memories::categories_in_use_outside(transaction, retained)?
+    {
+        return Err(StoreError::Conflict("CATEGORY_IN_USE"));
+    }
     for change in changes {
         let before: Option<String> = rusqlite::OptionalExtension::optional(transaction.query_row(
             "SELECT value_json FROM settings WHERE key = ?1",

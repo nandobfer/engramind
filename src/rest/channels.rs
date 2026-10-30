@@ -8,7 +8,7 @@ use crate::{
     auth::Auth,
     core::{
         channels::{ChannelList, CreateChannelBody, ListChannelsQuery, UpdateChannelBody},
-        model::Channel,
+        model::{Channel, ChannelStats},
     },
     error::{ApiError, ErrorResponse},
     http::{ApiJson, ApiPath, ApiQuery},
@@ -269,4 +269,40 @@ pub async fn delete_channel(
         .delete_channel(&principal, &channel, key.as_deref())
         .await?;
     Ok(mutation(StatusCode::OK, result))
+}
+
+#[utoipa::path(
+    get,
+    path = "/v1/channels/{channel}/stats",
+    operation_id = "channel_stats",
+    tag = "Channels",
+    summary = "Contagens das memórias de um canal",
+    description = "Total e por status, por categoria, pendências de título e embedding, soma de `retrieval_count`, a última mudança e a `version` do canal. Exige `read` efetivo no canal.",
+    params(
+        ("channel" = String, Path, description = "Id (`ch_…`) ou slug do canal"),
+        ("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão: slugs e prefixos separados por vírgula")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "Estatísticas do canal", body = ChannelStats),
+        (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
+        (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `CHANNEL_NOT_SUBSCRIBED`", body = ErrorResponse),
+        (status = 404, description = "`CHANNEL_NOT_FOUND`", body = ErrorResponse),
+        (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
+        (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
+        (status = 504, description = "`REQUEST_TIMEOUT`", body = ErrorResponse)
+    )
+)]
+pub async fn channel_stats(
+    State(state): State<AppState>,
+    Auth(principal): Auth,
+    header: ChannelsHeader,
+    ApiPath(channel): ApiPath<String>,
+) -> Result<Json<ChannelStats>, ApiError> {
+    state
+        .core
+        .channel_stats(&principal, &channel, header.as_deref())
+        .await
+        .map(Json)
 }

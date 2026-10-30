@@ -383,6 +383,7 @@ mod tests {
                 subscription("sub_9", "amplo", "eng/*", Mode::Search, None),
                 subscription("sub_10", "amplo", "eng/global", Mode::Inject, Some("read")),
             ],
+            ..Network::default()
         }
     }
 

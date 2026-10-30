@@ -409,4 +409,345 @@ pub struct SubscriptionPatch {
 pub struct Network {
     pub channels: Vec<Channel>,
     pub subscriptions: Vec<Subscription>,
+    /// Sobreposições de configuração por canal (`channels.settings_json`), pelo id do canal.
+    pub channel_settings: ChannelOverrides,
+}
+
+/// `id do canal → chave → valor`.
+pub type ChannelOverrides =
+    std::collections::BTreeMap<String, std::collections::BTreeMap<String, serde_json::Value>>;
+
+/// Estado de uma memória (desenho §7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryStatus {
+    Active,
+    /// Fixada: entra primeiro no contexto e o consolidador nunca toca.
+    Permanent,
+    /// Fora do contexto e das dicas; buscável com `include_archived`.
+    Archived,
+}
+
+impl MemoryStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Active => "active",
+            Self::Permanent => "permanent",
+            Self::Archived => "archived",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "active" => Some(Self::Active),
+            "permanent" => Some(Self::Permanent),
+            "archived" => Some(Self::Archived),
+            _ => None,
+        }
+    }
+}
+
+/// Origem do título: `pending` (provisório, aguardando o Redator), `ready` ou `fallback`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleState {
+    Pending,
+    Ready,
+    Fallback,
+}
+
+impl TitleState {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "ready" => Some(Self::Ready),
+            "fallback" => Some(Self::Fallback),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbeddingState {
+    Pending,
+    Ready,
+    Failed,
+    Off,
+}
+
+impl EmbeddingState {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "ready" => Some(Self::Ready),
+            "failed" => Some(Self::Failed),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+}
+
+/// Quem escreveu: ids sempre; slugs `null` quando o app ou o agente foi excluído.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Author {
+    #[schema(example = "app_3f9e1a7c")]
+    pub app_id: String,
+    #[schema(example = "app-a")]
+    pub app: Option<String>,
+    #[schema(example = "ag_5b1c9d2e")]
+    pub agent_id: Option<String>,
+    /// `app/agente`.
+    #[schema(example = "app-a/curador")]
+    pub agent: Option<String>,
+}
+
+/// Proveniência informada por quem escreveu.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Origin {
+    /// De onde veio, por exemplo `curator` ou `import` (até 64 caracteres).
+    #[schema(example = "curator")]
+    pub source: String,
+    /// Referência livre, por exemplo o caso que originou a memória (até 200 caracteres).
+    #[schema(example = "caso 123")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Memory {
+    #[schema(example = "m_8f2a1c3d")]
+    pub id: String,
+    /// Slug do canal.
+    #[schema(example = "eng/global")]
+    pub channel: String,
+    #[schema(example = "ch_1a2b3c4d")]
+    pub channel_id: String,
+    #[schema(example = "CONSTRAINTS")]
+    pub category: String,
+    #[schema(example = "Use cargo-nextest localmente")]
+    pub title: String,
+    pub title_state: TitleState,
+    pub text: String,
+    pub status: MemoryStatus,
+    /// Calculada pelo consolidador; `null` até lá e depois de cada edição do texto.
+    pub importance: Option<f64>,
+    /// Cresce a cada mudança; base do `expected_version`.
+    #[schema(example = 1)]
+    pub version: i64,
+    pub embedding_state: EmbeddingState,
+    pub author: Author,
+    pub origin: Option<Origin>,
+    /// Gravado em lote a cada 5 s; pode atrasar alguns segundos.
+    pub retrieval_count: i64,
+    pub injected_count: i64,
+    pub last_retrieved_at: Option<String>,
+    pub verified_at: Option<String>,
+    #[schema(example = "2026-10-30T12:00:00.000Z")]
+    pub created_at: String,
+    #[schema(example = "2026-10-30T12:00:00.000Z")]
+    pub updated_at: String,
+    pub archived_at: Option<String>,
+}
+
+/// Uma memória com `fields=title`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct MemoryTitle {
+    #[schema(example = "m_8f2a1c3d")]
+    pub id: String,
+    #[schema(example = "Use cargo-nextest localmente")]
+    pub title: String,
+    #[schema(example = "eng/global")]
+    pub channel: String,
+    #[schema(example = "CONSTRAINTS")]
+    pub category: String,
+    pub status: MemoryStatus,
+}
+
+impl Memory {
+    pub fn title_view(&self) -> MemoryTitle {
+        MemoryTitle {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            channel: self.channel.clone(),
+            category: self.category.clone(),
+            status: self.status,
+        }
+    }
+}
+
+/// Uma memória parecida com a escrita, para o agente preferir editar a duplicar.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct SimilarMemory {
+    #[schema(example = "m_1b2c3d4e")]
+    pub id: String,
+    pub title: String,
+    #[schema(example = "eng/global")]
+    pub channel: String,
+    /// Similaridade de 0 a 1.
+    #[schema(example = 0.91)]
+    pub score: f64,
+}
+
+/// Resposta de `create_memory` e `update_memory`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct MemoryWrite {
+    pub memory: Memory,
+    /// `true` quando o texto já existia no canal e nada foi gravado.
+    pub duplicate: bool,
+    /// Até três memórias do mesmo canal com similaridade ≥ `memory.similar_threshold`.
+    pub similar: Vec<SimilarMemory>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct MemoryRevision {
+    #[schema(example = 1)]
+    pub version: i64,
+    pub title: String,
+    pub text: String,
+    #[schema(example = "CONSTRAINTS")]
+    pub category: String,
+    pub status: MemoryStatus,
+    pub author: Author,
+    /// `create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move` ou `revert`.
+    #[schema(example = "create")]
+    pub reason: String,
+    #[schema(example = "2026-10-30T12:00:00.000Z")]
+    pub created_at: String,
+}
+
+/// Job a enfileirar junto com a mutação; o `Store` completa o payload com `memory_id` e
+/// `version`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewJob {
+    pub kind: &'static str,
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Memória a gravar; `similar` vai junto para a resposta (e a idempotência) ser a final.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewMemory {
+    pub channel_id: String,
+    pub category: String,
+    pub title: String,
+    pub text: String,
+    pub status: MemoryStatus,
+    pub content_hash: Vec<u8>,
+    pub origin: Option<Origin>,
+    pub dedupe: bool,
+    pub jobs: Vec<NewJob>,
+    pub similar: Vec<SimilarMemory>,
+}
+
+/// Memória alvo de uma mutação: a escrita só acontece se ela ainda estiver nesse canal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryTarget {
+    pub id: String,
+    pub channel_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryContent {
+    pub title: String,
+    pub text: String,
+    pub content_hash: Vec<u8>,
+}
+
+/// Edição: sem mudança efetiva, nada é gravado (Q-007). Texto ou título novos voltam
+/// `title_state`/`embedding_state` para `pending` e enfileiram `jobs`; texto novo zera
+/// `importance`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryPatch {
+    pub expected_version: Option<i64>,
+    pub content: Option<MemoryContent>,
+    pub category: Option<String>,
+    pub dedupe: bool,
+    pub reason: &'static str,
+    pub jobs: Vec<NewJob>,
+    pub similar: Vec<SimilarMemory>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusAction {
+    Archive,
+    Restore,
+    Pin,
+    Unpin,
+}
+
+impl StatusAction {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Archive => "archive",
+            Self::Restore => "restore",
+            Self::Pin => "pin",
+            Self::Unpin => "unpin",
+        }
+    }
+}
+
+/// Filtro de `list_memories`, já resolvido para ids.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MemoryFilter {
+    pub channel_ids: Vec<String>,
+    pub categories: Vec<String>,
+    pub statuses: Vec<MemoryStatus>,
+    pub author_app_id: Option<String>,
+    pub author_agent_id: Option<String>,
+    /// `updated_at >= since`.
+    pub since: Option<String>,
+}
+
+/// Busca textual: termos já normalizados, ordem por relevância.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TextQuery {
+    pub terms: Vec<String>,
+    pub channel_ids: Vec<String>,
+    pub categories: Vec<String>,
+    pub statuses: Vec<MemoryStatus>,
+    pub exclude_ids: Vec<String>,
+    pub limit: u32,
+}
+
+/// Contadores de uma memória a somar em lote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetrievalBump {
+    pub memory_id: String,
+    pub count: i64,
+    pub at: String,
+}
+
+/// Estatísticas de um canal.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct MemoryCounts {
+    pub total: u64,
+    pub active: u64,
+    pub permanent: u64,
+    pub archived: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PendingCounts {
+    /// Memórias com título provisório (`title_state = pending`).
+    pub title: u64,
+    /// Memórias sem vetor ainda (`embedding_state = pending`).
+    pub embedding: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ChannelStats {
+    #[schema(example = "eng/global")]
+    pub channel: String,
+    #[schema(example = "ch_1a2b3c4d")]
+    pub channel_id: String,
+    pub version: i64,
+    pub memories: MemoryCounts,
+    /// Memórias por categoria.
+    #[schema(example = json!({ "CONSTRAINTS": 3 }))]
+    pub by_category: std::collections::BTreeMap<String, u64>,
+    pub pending: PendingCounts,
+    /// Soma de `retrieval_count` das memórias do canal.
+    pub retrievals: u64,
+    /// Última mudança de memória do canal.
+    pub last_memory_at: Option<String>,
 }

@@ -155,6 +155,46 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
             "/v1/settings".into(),
             Some(json!({ "limits.max_batch": 100 })),
         ),
+        "channel_stats" => ("GET", "/v1/channels/matrix%2Fcanal/stats".into(), None),
+        "get_channel_settings" => ("GET", "/v1/channels/matrix%2Fcanal/settings".into(), None),
+        "update_channel_settings" => (
+            "PUT",
+            "/v1/channels/matrix%2Fcanal/settings".into(),
+            Some(json!({ "memory.text_max": 4000 })),
+        ),
+        "list_memories" => ("GET", "/v1/memories".into(), None),
+        "get_memory" => ("GET", "/v1/memories/m_ffffffff".into(), None),
+        "search_memories" => (
+            "POST",
+            "/v1/memories/search".into(),
+            Some(json!({ "query": "matriz" })),
+        ),
+        "memory_history" => ("GET", "/v1/memories/m_ffffffff/history".into(), None),
+        "create_memory" => (
+            "POST",
+            "/v1/memories".into(),
+            Some(json!({ "channel": "matrix/canal", "text": format!("memoria da matriz {n}") })),
+        ),
+        "update_memory" => (
+            "PATCH",
+            "/v1/memories/m_ffffffff".into(),
+            Some(json!({ "category": "NAMING" })),
+        ),
+        "archive_memory" | "restore_memory" | "pin_memory" | "unpin_memory" => {
+            let action = name.trim_end_matches("_memory");
+            ("POST", format!("/v1/memories/m_ffffffff/{action}"), None)
+        }
+        "move_memory" => (
+            "POST",
+            "/v1/memories/m_ffffffff/move".into(),
+            Some(json!({ "to": "matrix/canal" })),
+        ),
+        "revert_memory" => (
+            "POST",
+            "/v1/memories/m_ffffffff/revert".into(),
+            Some(json!({ "version": 1 })),
+        ),
+        "delete_memory" => ("DELETE", "/v1/memories/m_ffffffff".into(), None),
         "get_status" => ("GET", "/v1/status".into(), None),
         "get_audit" => ("GET", "/v1/audit".into(), None),
         "get_overview" => ("GET", "/v1/docs/overview".into(), None),
@@ -194,6 +234,19 @@ fn mcp_arguments(name: &str) -> Value {
         "update_subscription" => json!({ "subscription": "sub_ffffffff", "mode": "search" }),
         "unsubscribe" => json!({ "subscription": "sub_ffffffff" }),
         "update_settings" => json!({ "settings": { "limits.max_batch": 100 } }),
+        "channel_stats" | "get_channel_settings" => json!({ "channel": "matrix/canal" }),
+        "update_channel_settings" => {
+            json!({ "channel": "matrix/canal", "settings": { "memory.text_max": 4000 } })
+        }
+        "get_memory" | "memory_history" | "archive_memory" | "restore_memory" | "pin_memory"
+        | "unpin_memory" | "delete_memory" => json!({ "memory": "m_ffffffff" }),
+        "search_memories" => json!({ "query": "matriz" }),
+        "create_memory" => {
+            json!({ "channel": "matrix/canal", "text": format!("memoria da matriz {n}") })
+        }
+        "update_memory" => json!({ "memory": "m_ffffffff", "category": "NAMING" }),
+        "move_memory" => json!({ "memory": "m_ffffffff", "to": "matrix/canal" }),
+        "revert_memory" => json!({ "memory": "m_ffffffff", "version": 1 }),
         "get_guide" => json!({ "guide": "overview" }),
         "search_docs" => json!({ "q": "token" }),
         "get_operation" => json!({ "operation": "whoami" }),
@@ -306,6 +359,65 @@ fn cli_arguments(name: &str) -> Vec<String> {
             "set".into(),
             "limits.max_batch".into(),
             "100".into(),
+        ],
+        "channel_stats" => vec!["channels".into(), "stats".into(), "matrix/canal".into()],
+        "get_channel_settings" => vec![
+            "channels".into(),
+            "settings".into(),
+            "get".into(),
+            "matrix/canal".into(),
+        ],
+        "update_channel_settings" => vec![
+            "channels".into(),
+            "settings".into(),
+            "set".into(),
+            "matrix/canal".into(),
+            "memory.text_max".into(),
+            "4000".into(),
+        ],
+        "get_memory" | "memory_history" | "archive_memory" | "restore_memory" | "pin_memory"
+        | "unpin_memory" | "delete_memory" => {
+            let operation = OPERATIONS
+                .iter()
+                .find(|operation| operation.name == name)
+                .expect("operation");
+            let mut args: Vec<String> = operation
+                .cli
+                .iter()
+                .map(|part| (*part).to_owned())
+                .collect();
+            args.push("m_ffffffff".into());
+            args
+        }
+        "search_memories" => vec!["memories".into(), "search".into(), "matriz".into()],
+        "create_memory" => vec![
+            "memories".into(),
+            "create".into(),
+            "--channel".into(),
+            "matrix/canal".into(),
+            "--text".into(),
+            format!("memoria da matriz {n}"),
+        ],
+        "update_memory" => vec![
+            "memories".into(),
+            "update".into(),
+            "m_ffffffff".into(),
+            "--category".into(),
+            "NAMING".into(),
+        ],
+        "move_memory" => vec![
+            "memories".into(),
+            "move".into(),
+            "m_ffffffff".into(),
+            "--to".into(),
+            "matrix/canal".into(),
+        ],
+        "revert_memory" => vec![
+            "memories".into(),
+            "revert".into(),
+            "m_ffffffff".into(),
+            "--version".into(),
+            "1".into(),
         ],
         "get_guide" => vec!["docs".into(), "guide".into(), "overview".into()],
         "search_docs" => vec!["docs".into(), "search".into(), "token".into()],

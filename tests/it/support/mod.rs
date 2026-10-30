@@ -219,6 +219,32 @@ impl TestContext {
         body["secret"].as_str().expect("secret").to_owned()
     }
 
+    /// Conexão direta com o banco do teste, para conferir invariantes.
+    pub fn db(&self) -> rusqlite::Connection {
+        rusqlite::Connection::open(self.dir.path().join("engramind.db")).expect("open db")
+    }
+
+    /// Contagem de uma consulta `SELECT COUNT(*) …`.
+    pub fn count(&self, sql: &str) -> i64 {
+        self.db()
+            .query_row(sql, [], |row| row.get(0))
+            .expect("count")
+    }
+
+    /// Grava uma memória pelo REST e devolve a resposta (`201` ou `200` em duplicata).
+    pub async fn create_memory(&self, token: &str, channel: &str, text: &str) -> Value {
+        let (status, body) = self
+            .call(
+                "POST",
+                "/v1/memories",
+                Some(token),
+                Some(json!({ "channel": channel, "text": text })),
+            )
+            .await;
+        assert!(status.is_success(), "{status} {body}");
+        body
+    }
+
     /// Requisição JSON-RPC ao `/mcp`.
     pub async fn rpc(&self, token: &str, method: &str, params: Value) -> (StatusCode, Value) {
         self.rpc_with(token, method, params, &[]).await

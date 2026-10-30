@@ -1,7 +1,7 @@
 # Spec - memórias
 
 **Criado em**: 2026-10-30
-**Status**: Draft
+**Status**: Implementada
 **Versão alvo**: 0.4.0
 **Input**: Desenho §6, §7 (exceto Redator e embeddings), §9 (`search_memories` textual), §12 (`categories`, `memory`), §13 (Memórias, `channel_stats`, configurações por canal), §14.
 

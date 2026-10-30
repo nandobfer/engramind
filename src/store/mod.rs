@@ -12,14 +12,19 @@ use utoipa::ToSchema;
 use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
-        Channel, ChannelPatch, IdemRow, IdentityCounts, Lookup, Network, NewAgent, NewApp,
-        NewChannel, NewSubscription, NewToken, SettingChange, SettingRow, Subscription,
-        SubscriptionPatch, Token, TokenFilter, TokenPatch, WriteContext,
+        Channel, ChannelPatch, ChannelStats, IdemRow, IdentityCounts, Lookup, Memory, MemoryFilter,
+        MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent, NewApp,
+        NewChannel, NewMemory, NewSubscription, NewToken, RetrievalBump, SettingChange, SettingRow,
+        StatusAction, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
+        WriteContext,
     },
     pagination::{Page, PageRequest},
 };
 
 pub use sqlite::SqliteStore;
+
+/// Sobreposições de configuração de um canal: `chave → valor`.
+pub type ChannelSettingsMap = std::collections::BTreeMap<String, serde_json::Value>;
 
 /// Implementação usada pelo `AppState` (D-004). Trocar de banco altera só este alias.
 pub type AppStore = SqliteStore;
@@ -193,10 +198,110 @@ pub trait Store: Clone + Send + Sync + 'static {
 
     // Configurações, idempotência e auditoria.
 
+    /// Aplica as sobreposições do canal (`None` remove) e devolve as resultantes; incrementa
+    /// `channels.version`.
+    fn update_channel_settings(
+        &self,
+        channel_id: String,
+        changes: Vec<SettingChange>,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<ChannelSettingsMap, StoreError>> + Send;
+
+    // Memórias. Toda mutação grava memória, revisão, auditoria (sem texto), `memories.version`,
+    // `channels.version`, jobs e idempotência na mesma transação. Canal arquivado →
+    // `Conflict("CHANNEL_ARCHIVED")`; memória fora do canal de `MemoryTarget` → `NotFound`.
+
+    fn get_memory(
+        &self,
+        id: String,
+    ) -> impl Future<Output = Result<Option<Memory>, StoreError>> + Send;
+    /// Id de outra memória do canal com o mesmo `content_hash`.
+    fn find_memory_by_hash(
+        &self,
+        channel_id: String,
+        content_hash: Vec<u8>,
+        exclude: Option<String>,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+    /// Por `updated_at` decrescente.
+    fn list_memories(
+        &self,
+        filter: MemoryFilter,
+        page: PageRequest,
+    ) -> impl Future<Output = Result<Page<Memory>, StoreError>> + Send;
+    /// Da versão mais nova à mais antiga.
+    fn memory_history(
+        &self,
+        id: String,
+        page: PageRequest,
+    ) -> impl Future<Output = Result<Page<MemoryRevision>, StoreError>> + Send;
+    fn get_revision(
+        &self,
+        id: String,
+        version: i64,
+    ) -> impl Future<Output = Result<Option<MemoryRevision>, StoreError>> + Send;
+    /// Busca textual por relevância (BM25 sem acentos no SQLite).
+    fn search_text(
+        &self,
+        query: TextQuery,
+    ) -> impl Future<Output = Result<Vec<Memory>, StoreError>> + Send;
+    /// Com `dedupe`, texto igual no canal devolve a existente com `duplicate: true` e não grava
+    /// a memória (a idempotência fica com status 200).
+    fn create_memory(
+        &self,
+        new: NewMemory,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<MemoryWrite, StoreError>> + Send;
+    /// `Conflict("MEMORY_VERSION_CONFLICT")` com `expected_version` divergente;
+    /// `Conflict("MEMORY_DUPLICATE")` quando o texto novo repete outra memória do canal.
+    fn update_memory(
+        &self,
+        target: MemoryTarget,
+        patch: MemoryPatch,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<MemoryWrite, StoreError>> + Send;
+    /// Sem mudança de estado, devolve a memória intacta.
+    fn set_memory_status(
+        &self,
+        target: MemoryTarget,
+        action: StatusAction,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Memory, StoreError>> + Send;
+    /// Incrementa a versão dos dois canais; duplicata no destino →
+    /// `Conflict("MEMORY_DUPLICATE")`.
+    fn move_memory(
+        &self,
+        target: MemoryTarget,
+        to_channel_id: String,
+        dedupe: bool,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Memory, StoreError>> + Send;
+    /// Mantém só a última revisão.
+    fn delete_memory(
+        &self,
+        target: MemoryTarget,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Memory, StoreError>> + Send;
+    /// Soma `retrieval_count` e avança `last_retrieved_at` sem mudar `version`.
+    fn bump_retrievals(
+        &self,
+        batch: Vec<RetrievalBump>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn channel_stats(
+        &self,
+        channel_id: String,
+    ) -> impl Future<Output = Result<Option<ChannelStats>, StoreError>> + Send;
+    /// Memórias por categoria em toda a rede.
+    fn category_counts(
+        &self,
+    ) -> impl Future<Output = Result<Vec<(String, u64)>, StoreError>> + Send;
+
     fn get_settings(&self) -> impl Future<Output = Result<Vec<SettingRow>, StoreError>> + Send;
+    /// Com `retained_categories`, falha com `Conflict("CATEGORY_IN_USE")` se alguma memória
+    /// usa uma categoria fora da lista.
     fn update_settings(
         &self,
         changes: Vec<SettingChange>,
+        retained_categories: Option<Vec<String>>,
         context: WriteContext,
     ) -> impl Future<Output = Result<Vec<SettingRow>, StoreError>> + Send;
     fn find_idempotency(
@@ -261,4 +366,7 @@ pub struct DoctorReport {
     pub vec_version: Option<String>,
     pub fts5: bool,
     pub journal_mode: String,
+    /// `integrity-check` do `memory_fts` contra `memories` (`ok` quando sincronizado), ou
+    /// `None` antes da migração das memórias.
+    pub memory_fts: Option<String>,
 }

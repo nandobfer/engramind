@@ -47,6 +47,13 @@ const GUIDES: &[GuideSource] = &[
         content: include_str!("../../../docs/guides/canais-e-assinaturas.md"),
     },
     GuideSource {
+        id: "escrever-memorias",
+        file: "escrever-memorias.md",
+        audience: Audience::All,
+        tags: &["Memories"],
+        content: include_str!("../../../docs/guides/escrever-memorias.md"),
+    },
+    GuideSource {
         id: "integracao-mcp",
         file: "integracao-mcp.md",
         audience: Audience::All,

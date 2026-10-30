@@ -11,7 +11,7 @@
 
 ## Operações
 
-- Qualquer token·read: `list_channels`, `get_channel` e `list_subscriptions` (tag `Channels`).
+- Qualquer token·read: `list_channels`, `get_channel`, `channel_stats` e `list_subscriptions` (tag `Channels`).
 - admin·write: `create_channel`, `update_channel`, `archive_channel`, `restore_channel`, `subscribe`, `update_subscription` e `unsubscribe` (tag `Network`).
 - admin·delete: `delete_channel`.
 
@@ -25,7 +25,9 @@ Guia: `canais-e-assinaturas`.
 - A seleção só restringe. Com o cabeçalho e o parâmetro, vale a interseção.
 - O slug do canal é imutável; o prefixo é gravado sem o `*`.
 - Toda mutação de canal incrementa `channels.version`. Toda mutação de canal, assinatura, agente ou app chama `Core::network_changed()` depois do commit.
-- `delete_channel` só exclui canal arquivado e leva as assinaturas exatas. A cascata de `agents` remove as assinaturas, e a auditoria registra `subscriptions_removed`.
+- `delete_channel` só exclui canal arquivado e leva as assinaturas exatas, as memórias e as revisões delas (`memories_removed` na auditoria). A cascata de `agents` remove as assinaturas, e a auditoria registra `subscriptions_removed`.
+- Canal arquivado não recebe escrita de memórias (`409 CHANNEL_ARCHIVED`).
+- `Network.channel_settings` traz as sobreposições de configuração por canal; mudá-las chama `network_changed()`. Mutações de memória também invalidam o cache, porque mudam `channels.version`.
 - Na CLI, nenhum subcomando tem argumento `channels` (o global vira o cabeçalho).
 
 Desenho: §4, §5, §6 e §19. Decisão: `0010`.
