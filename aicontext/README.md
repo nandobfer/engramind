@@ -4,7 +4,7 @@ Este diretório contém regras operacionais concisas para qualquer trabalho no E
 
 ## Estado atual
 
-Versão **0.8.0**: etapas **001 (Fundação operável)**, **002 (Identidades e as três vias)**, **003 (Canais e assinaturas)**, **004 (Memórias)**, **005 (Contexto)**, **006 (Redator)**, **007 (Embeddings e busca híbrida)** e **008 (Integração)** implementadas. O plano está em [`../specs/`](../specs/README.md); a próxima etapa é a **009 (Consolidação)**.
+Versão **0.9.0**: etapas **001 (Fundação operável)**, **002 (Identidades e as três vias)**, **003 (Canais e assinaturas)**, **004 (Memórias)**, **005 (Contexto)**, **006 (Redator)**, **007 (Embeddings e busca híbrida)**, **008 (Integração)** e **009 (Consolidação)** implementadas. O plano está em [`../specs/`](../specs/README.md); a escala (`vec0` particionado, Postgres) só ganha spec quando uma medição justificar.
 
 Existe de fato:
 
@@ -20,12 +20,13 @@ Existe de fato:
 - embeddings: provedores `local` (fastembed + ONNX Runtime por `ORT_DYLIB_PATH`), `openai_compatible`, `ollama`, `gemini` e `off`; job `embed` (lotes, compare-and-set, `model_id` vigente em `schema_meta`), troca de modelo com reindexação atômica, `reembed_all`, `test_embedding`, `list_embedding_models`, `get_status.embedding` e a guarda de sentido real — ver [`embeddings.md`](embeddings.md);
 - busca híbrida (`search_memories` com ramo vetorial, RRF ponderado e `mode`) e `get_hints` — ver [`search.md`](search.md);
 - integração: eventos em toda mutação de memória, canal, assinatura e configuração (inclusive o Redator), webhooks por app (URL e segredo cifrado, HMAC-SHA256, job `webhook` com backoff próprio), `import_memories`, `get_usage`, `get_status` completo, `/metrics` (token `admin`·`read`) e a retenção horária — ver [`webhooks.md`](webhooks.md);
+- consolidação: job `consolidate` por canal (agendado por cron com `croner` ou por `run_consolidation`, com `dry_run` sem LLM), fusão de duplicatas pelo Redator com guarda de sentido, importância em `importance_pending` promovida só com `channels.version`, desuso (`stale_candidate`, `last_injected_at`, arquivamento opcional), pares recusados e `mark_verified` — ver [`consolidation.md`](consolidation.md);
 - REST em `/v1` com `#[utoipa::path]` em toda rota e o snapshot `docs/openapi.json`; MCP em `POST /mcp` com uma ferramenta por operação, filtrada pelo token; guias em `docs/guides/` compilados no binário;
-- `Store` SQLite com as migrações `0001_init.sql`, `0002_identities.sql`, `0003_channels.sql`, `0004_memories.sql`, `0005_usage.sql`, `0006_redator.sql`, `0007_vectors.sql` e `0008_integration.sql`;
+- `Store` SQLite com as migrações `0001_init.sql`, `0002_identities.sql`, `0003_channels.sql`, `0004_memories.sql`, `0005_usage.sql`, `0006_redator.sql`, `0007_vectors.sql`, `0008_integration.sql` e `0009_consolidation.sql`;
 - imagem Docker com Litestream e a biblioteca do ONNX Runtime, compose de um serviço, `scripts/check-compose.sh`, `scripts/test.sh`;
 - testes com `cargo-nextest` (unitários e o binário `tests/it/`, com a matriz tipo × escopo × operação nas três vias, o cenário de canais do §19, as invariantes das memórias e os testes de contrato do §15, inclusive a skill) e CI/CD em `.github/workflows/ci-cd.yml`.
 
-Ainda não existe: a consolidação (`run_consolidation`, `mark_verified`, com o cosseno em `similar`).
+Ainda não existe: a escala (índice `vec0` particionado por canal e o `Store` Postgres + pgvector). O `similar` da escrita continua textual (decisão 0021).
 
 Atualize esta seção a cada fase concluída, listando as capacidades que de fato existem.
 
@@ -62,7 +63,7 @@ Não crie guias de módulo antes do código existir.
 - `aicontext/`: regras normativas, curtas e acionáveis.
 - `docs/design.md`: desenho e decisões tomadas; fonte de verdade do que ainda não foi implementado.
 - `docs/guides/`: guias de uso compilados no binário e servidos por `get_guide`.
-- `docs/decisions/`: decisões arquiteturais posteriores ao desenho (`0001` a `0006` na 001; `0007` a `0009` na 002; `0010` na 003; `0011` e `0012` na 004; `0013` e `0014` na 005; `0015` a `0017` na 006; `0018` a `0021` na 007; `0022` a `0024` na 008).
+- `docs/decisions/`: decisões arquiteturais posteriores ao desenho (`0001` a `0006` na 001; `0007` a `0009` na 002; `0010` na 003; `0011` e `0012` na 004; `0013` e `0014` na 005; `0015` a `0017` na 006; `0018` a `0021` na 007; `0022` a `0024` na 008; `0025` e `0026` na 009).
 - `specs/NNN-etapa/`: plano de cada etapa entregável (`spec`, `clarify`, `contracts`, `plan`, `tasks`; `implement` e `report` na execução).
 
 ## Regra de atualização

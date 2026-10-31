@@ -15,6 +15,11 @@ use crate::{
     core::{
         audit::AuditList,
         channels::{ChannelList, CreateChannelBody, UpdateChannelBody},
+        consolidation::{
+            ConsolidationJobRef, ConsolidationPlan, ConsolidationRun, ConsolidationStatus,
+            ConsolidationTotals, PlannedMerge, PlannedStale, RunConsolidationBody, Task,
+            plan::SkipReason,
+        },
         context::{
             ContextCategory, ContextChannel, ContextContent, ContextCounts, ContextDocument,
             ContextFormat, ContextLine, ContextNotModified, ContextTitle, ContextView,
@@ -113,6 +118,7 @@ use crate::{
         crate::rest::memories::pin_memory,
         crate::rest::memories::unpin_memory,
         crate::rest::memories::move_memory,
+        crate::rest::memories::mark_verified,
         crate::rest::memories::revert_memory,
         crate::rest::memories::delete_memory,
         crate::rest::subscriptions::list_subscriptions,
@@ -128,6 +134,7 @@ use crate::{
         crate::rest::embeddings::test_embedding,
         crate::rest::embeddings::list_embedding_models,
         crate::rest::embeddings::reembed_all,
+        crate::rest::consolidation::run_consolidation,
         crate::rest::jobs::list_jobs,
         crate::rest::jobs::retry_job,
         crate::rest::jobs::list_llm_calls,
@@ -170,6 +177,8 @@ use crate::{
         EmbeddingStatus, TestEmbeddingBody, TestEmbeddingResult, ListEmbeddingModelsBody,
         EmbeddingModelList, EmbeddingModelEntry, ReindexState,
         Job, JobState, JobList, JobCount, LlmCall, LlmCallList, LlmActivity,
+        RunConsolidationBody, ConsolidationRun, ConsolidationPlan, PlannedMerge, PlannedStale,
+        ConsolidationJobRef, Task, SkipReason, ConsolidationStatus, ConsolidationTotals,
         AuditEvent, AuditList, DocText,
         McpJsonRpcRequest, McpJsonRpcResponse, McpJsonRpcError
     )),
@@ -188,6 +197,7 @@ use crate::{
         (name = "Embeddings", description = "Teste, modelos e reindexação dos embeddings (token admin)"),
         (name = "Status", description = "Estado e uso do serviço (token admin)"),
         (name = "Integration", description = "Importação de memórias de outros sistemas (token admin)"),
+        (name = "Consolidation", description = "Consolidação: duplicatas, importância e desuso (token admin)"),
         (name = "Jobs", description = "Fila de jobs e chamadas ao LLM (token admin)"),
         (name = "Audit", description = "Auditoria das mutações (token admin)"),
         (name = "Documentation", description = "Guias e contrato da versão em execução"),

@@ -17,6 +17,7 @@ Ferramentas para quem opera o Engramind. Todas exigem um token `admin` com `read
 | `embedding` | Provedor, modelo, `model_id`, dimensão e estado da reindexação. |
 | `webhooks` | `enabled`, `apps` com webhook, `pending`, `delivered_24h` e `failed_24h`. |
 | `retention` | Última execução da retenção (`last_run_at`) e as linhas removidas por tabela; `null` antes da primeira. |
+| `consolidation` | Canais com `consolidation.enabled`, `schedule`, `next_run_at`, `last_scheduled_at`, jobs `consolidate` na fila (`queued`, `running`), as ações das últimas 24 h (`last_24h`) e as chamadas ao LLM com `purpose = consolidation` (`llm_last_24h`); detalhes no guia `consolidacao`. |
 
 ```bash
 engramind status --json
@@ -64,6 +65,7 @@ scrape_configs:
 | `engramind_backup_replica_age_seconds` | gauge | — |
 | `engramind_database_size_bytes` | gauge | — |
 | `engramind_retention_removed_total` | counter | `table` |
+| `engramind_consolidation_actions_total` | counter | `task`, `action` |
 
 `operation` é o nome da operação do catálogo, inclusive em cada ferramenta MCP (todas passam pela rota `/mcp`); fica vazio nas rotas técnicas. Os rótulos nunca têm slugs, ids, URLs nem textos. A taxa de `304` do contexto sai de `http_requests_total{operation="get_context",status="304"}` sobre o total de `get_context`; as falhas de autenticação, de `engramind_auth_failures_total` (`missing`, `invalid`, `inactive`). O custo do LLM é contado em micro-dólares (`/ 1e6` para dólares). As métricas são do processo: reiniciar zera os contadores.
 
@@ -96,7 +98,7 @@ A auditoria de `app.create` e `app.update` mostra o webhook só como `webhook: {
 
 ## Fila de jobs
 
-O trabalho assíncrono roda numa fila em tabela (`jobs`), sem broker. A escrita de uma memória grava os jobs na mesma transação e responde na hora; um runner por tipo os executa depois do commit. Há três runners: `redact` (Redator) e `embed` (vetores da busca por sentido), com 2 jobs em paralelo cada, e `webhook` (entrega dos eventos aos apps), com 4.
+O trabalho assíncrono roda numa fila em tabela (`jobs`), sem broker. A escrita de uma memória grava os jobs na mesma transação e responde na hora; um runner por tipo os executa depois do commit. Há quatro runners: `redact` (Redator) e `embed` (vetores da busca por sentido), com 2 jobs em paralelo cada, `webhook` (entrega dos eventos aos apps), com 4, e `consolidate` (consolidação de um canal, guia `consolidacao`), com 1 e lease de 30 min.
 
 - **Captura**: o runner pega o job pronto mais antigo do tipo com um único `UPDATE … RETURNING`, marca `running`, conta a tentativa e reserva um lease (`locked_until`). Ele acorda a cada commit que enfileira e, sem aviso, a cada segundo.
 - **Lease vencido**: um job `running` cujo lease venceu (o processo caiu no meio) volta a ser capturável.

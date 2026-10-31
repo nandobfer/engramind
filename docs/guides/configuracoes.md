@@ -72,6 +72,12 @@ No REST, `PUT /v1/settings` com `{ "limits.rate_per_minute": 1200 }`; no MCP, `u
 | `retention.llm_calls_days` | integer | 90 | 1 a 3650 | não | Dias de `llm_calls` guardados. |
 | `retention.audit_days` | integer | — | 1 a 3650 | não | Dias de `audit_log` guardados; vazio guarda para sempre. |
 | `retention.jobs_days` | integer | 30 | 1 a 3650 | não | Dias que jobs `done` e `failed` ficam na fila depois de terminar; `queued` e `running` nunca saem. |
+| `consolidation.enabled` | boolean | false | — | sim | Liga o consolidador no canal (agendado e `run_consolidation`); desligado, o canal nunca é alterado por ele. |
+| `consolidation.schedule` | cron | `0 3 * * *` | expressão cron de 5 campos, em UTC | não | Horário da consolidação agendada (cron de 5 campos, em UTC): um job `consolidate` por canal habilitado. |
+| `consolidation.tasks` | list | ["duplicates", "importance", "stale"] | 1 a 3 itens sem repetição entre `duplicates`, `importance`, `stale` | não | Tarefas da consolidação agendada e o padrão de `run_consolidation`; sempre executadas na ordem `duplicates`, `importance`, `stale`. |
+| `consolidation.duplicate_threshold` | number | 0.92 | 0 a 1 | não | Cosseno mínimo entre duas memórias para o par ir ao Redator como duplicata. |
+| `consolidation.stale_after_days` | integer | 90 | 1 a 3650 | não | Dias sem edição, recuperação, injeção nem `mark_verified` para uma memória ativa virar `stale_candidate`. |
+| `consolidation.auto_archive_stale` | boolean | false | — | não | Arquiva as candidatas por desuso em vez de só sinalizá-las. |
 
 As categorias padrão são `PROJECT_RULES` (prioridade 50), `ARCHITECTURE` (40), `CONSTRAINTS` (30), `CONFIG_VALUES` (20) e `NAMING` (10). Mudar `label` e `priority` é livre; uma `key` nova vale na hora. Retirar uma `key` usada por alguma memória é recusado com `409 CATEGORY_IN_USE` e a contagem em `details.in_use`.
 

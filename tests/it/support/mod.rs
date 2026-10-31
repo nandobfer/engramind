@@ -89,6 +89,37 @@ impl TestContext {
         }
     }
 
+    /// Outro `Core` (e router) sobre o mesmo banco, como depois de reiniciar o serviço: sem os
+    /// caches em memória do primeiro.
+    pub async fn reopened(&self) -> Router {
+        let core = Core::new(
+            self.store.clone(),
+            Secret::new(PEPPER.to_owned()),
+            SecretKey::new([7; 32]),
+            DatabaseSettings {
+                path: self.dir.path().join("engramind.db"),
+                read_pool_size: 2,
+                litestream_enabled: false,
+            },
+            ModelsSettings {
+                path: self.dir.path().join("models"),
+                onnx_runtime: None,
+            },
+        );
+        core.set_local_embedder(Arc::new(HashEmbedder::new()));
+        core.reload_settings().await.expect("settings");
+        build_app(
+            core,
+            HttpSettings {
+                request_timeout: Duration::from_secs(5),
+                max_body_bytes: MAX_BODY_BYTES,
+            },
+            &McpSettings {
+                allowed_hosts: AllowedHosts::default(),
+            },
+        )
+    }
+
     pub async fn send(&self, request: Request<Body>) -> Response {
         self.app.clone().oneshot(request).await.expect("response")
     }

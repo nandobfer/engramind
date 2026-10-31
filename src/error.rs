@@ -320,6 +320,12 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         description: "Já há uma reindexação com jobs na fila; acompanhe em `get_status.embedding`.",
     },
     ErrorCodeDoc {
+        code: "CONSOLIDATION_DISABLED",
+        status: 409,
+        exit_code: 6,
+        description: "O canal está com `consolidation.enabled = false`; ligue a configuração no canal ou use `dry_run` para só pré-visualizar.",
+    },
+    ErrorCodeDoc {
         code: "PAYLOAD_TOO_LARGE",
         status: 413,
         exit_code: 1,

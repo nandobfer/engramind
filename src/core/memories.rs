@@ -66,6 +66,8 @@ pub struct ListMemoriesQuery {
     pub author: Option<String>,
     /// Só as alteradas a partir deste instante (RFC 3339).
     pub since: Option<String>,
+    /// `true`: só as candidatas por desuso (`stale_candidate`); `false`: só as demais.
+    pub stale: Option<bool>,
     pub fields: Option<Fields>,
     /// Cursor opaco devolvido em `next_cursor`.
     pub cursor: Option<String>,
@@ -466,6 +468,7 @@ impl<S: Store> Core<S> {
             author_app_id,
             author_agent_id,
             since,
+            stale: query.stale,
         };
         let page = self.store().list_memories(filter, page).await?;
         let fields = query.fields.unwrap_or_default();
@@ -795,6 +798,44 @@ impl<S: Store> Core<S> {
             memory,
             header,
             key,
+        )
+        .await
+    }
+
+    /// `mark_verified` (009 FR-006): registra a conferência sem revisão, sem mudar `version`
+    /// nem o contexto e sem evento; limpa `stale_candidate`.
+    pub async fn mark_verified(
+        &self,
+        principal: &Principal,
+        memory: &str,
+        header: Option<&str>,
+        key: Option<&str>,
+    ) -> Result<Mutation<Memory>, ApiError> {
+        let operation = self.authorize(principal, "mark_verified")?;
+        let id = memory_id(memory)?;
+        let input = json!({ "memory": id });
+        let core = self.clone();
+        let principal_owned = principal.clone();
+        let header = header.map(str::to_owned);
+        self.mutate(
+            principal,
+            operation,
+            key,
+            &input,
+            200,
+            |context| async move {
+                let memory = core
+                    .reach_memory(&principal_owned, header.as_deref(), &id, Scope::Write)
+                    .await?;
+                let target = MemoryTarget {
+                    id: memory.id,
+                    channel_id: memory.channel_id,
+                };
+                core.store()
+                    .mark_verified(target, context)
+                    .await
+                    .map_err(memory_error)
+            },
         )
         .await
     }

@@ -48,6 +48,10 @@ pub enum SettingType {
     },
     /// Só gravado por `set_secret` (cifrado); a leitura mostra `{ configured, updated_at }`.
     Secret,
+    /// Expressão cron de 5 campos, avaliada em UTC (009).
+    Cron,
+    /// Lista de 1 a todos os textos da lista, sem repetição (009).
+    ChoiceList(&'static [&'static str]),
 }
 
 impl SettingType {
@@ -62,6 +66,8 @@ impl SettingType {
             Self::Url => "url",
             Self::TextList { .. } => "list",
             Self::Secret => "secret",
+            Self::Cron => "cron",
+            Self::ChoiceList(_) => "list",
         }
     }
 
@@ -83,6 +89,16 @@ impl SettingType {
                 format!("até {max_items} itens de 1 a {max_len} caracteres")
             }
             Self::Secret => "só gravado (`set_secret`)".to_owned(),
+            Self::Cron => "expressão cron de 5 campos, em UTC".to_owned(),
+            Self::ChoiceList(choices) => format!(
+                "1 a {} itens sem repetição entre {}",
+                choices.len(),
+                choices
+                    .iter()
+                    .map(|choice| format!("`{choice}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
 
@@ -93,7 +109,8 @@ impl SettingType {
                 serde_json::Number::from_f64(min),
                 serde_json::Number::from_f64(max),
             ),
-            Self::Boolean | Self::Choice(_) | Self::Url | Self::Secret => (None, None),
+            Self::Boolean | Self::Choice(_) | Self::Url | Self::Secret | Self::Cron => (None, None),
+            Self::ChoiceList(choices) => (Some(1.into()), Some((choices.len() as u64).into())),
             Self::Categories => (Some(1.into()), Some((MAX_CATEGORIES as u64).into())),
             Self::Text { max } => (Some(1.into()), Some((max as u64).into())),
             Self::TextList { max_items, .. } => (Some(0.into()), Some((max_items as u64).into())),
@@ -159,6 +176,14 @@ pub const RETENTION_USAGE_DAYS: &str = "retention.usage_days";
 pub const RETENTION_LLM_CALLS_DAYS: &str = "retention.llm_calls_days";
 pub const RETENTION_AUDIT_DAYS: &str = "retention.audit_days";
 pub const RETENTION_JOBS_DAYS: &str = "retention.jobs_days";
+pub const CONSOLIDATION_ENABLED: &str = "consolidation.enabled";
+pub const CONSOLIDATION_SCHEDULE: &str = "consolidation.schedule";
+pub const CONSOLIDATION_TASKS: &str = "consolidation.tasks";
+pub const CONSOLIDATION_DUPLICATE_THRESHOLD: &str = "consolidation.duplicate_threshold";
+pub const CONSOLIDATION_STALE_AFTER_DAYS: &str = "consolidation.stale_after_days";
+pub const CONSOLIDATION_AUTO_ARCHIVE_STALE: &str = "consolidation.auto_archive_stale";
+/// Tarefas do consolidador, na ordem de execução (009).
+pub const CONSOLIDATION_TASK_NAMES: &[&str] = &["duplicates", "importance", "stale"];
 /// Provedores de embedding (`embedding.provider`).
 pub const EMBEDDING_PROVIDERS: &[&str] = &["local", "openai_compatible", "ollama", "gemini", "off"];
 /// Chaves que definem o espaço dos vetores: mudar uma delas valida o provedor e reindexa.
@@ -585,6 +610,54 @@ pub const SETTINGS: &[SettingSpec] = &[
         description: "Dias que jobs `done` e `failed` ficam na fila depois de terminar; `queued` e `running` nunca saem.",
         since: "0.8.0",
     },
+    SettingSpec {
+        key: CONSOLIDATION_ENABLED,
+        kind: SettingType::Boolean,
+        default: "false",
+        channel_override: true,
+        description: "Liga o consolidador no canal (agendado e `run_consolidation`); desligado, o canal nunca é alterado por ele.",
+        since: "0.9.0",
+    },
+    SettingSpec {
+        key: CONSOLIDATION_SCHEDULE,
+        kind: SettingType::Cron,
+        default: "\"0 3 * * *\"",
+        channel_override: false,
+        description: "Horário da consolidação agendada (cron de 5 campos, em UTC): um job `consolidate` por canal habilitado.",
+        since: "0.9.0",
+    },
+    SettingSpec {
+        key: CONSOLIDATION_TASKS,
+        kind: SettingType::ChoiceList(CONSOLIDATION_TASK_NAMES),
+        default: "[\"duplicates\", \"importance\", \"stale\"]",
+        channel_override: false,
+        description: "Tarefas da consolidação agendada e o padrão de `run_consolidation`; sempre executadas na ordem `duplicates`, `importance`, `stale`.",
+        since: "0.9.0",
+    },
+    SettingSpec {
+        key: CONSOLIDATION_DUPLICATE_THRESHOLD,
+        kind: SettingType::Number { min: 0.0, max: 1.0 },
+        default: "0.92",
+        channel_override: false,
+        description: "Cosseno mínimo entre duas memórias para o par ir ao Redator como duplicata.",
+        since: "0.9.0",
+    },
+    SettingSpec {
+        key: CONSOLIDATION_STALE_AFTER_DAYS,
+        kind: SettingType::Integer { min: 1, max: 3650 },
+        default: "90",
+        channel_override: false,
+        description: "Dias sem edição, recuperação, injeção nem `mark_verified` para uma memória ativa virar `stale_candidate`.",
+        since: "0.9.0",
+    },
+    SettingSpec {
+        key: CONSOLIDATION_AUTO_ARCHIVE_STALE,
+        kind: SettingType::Boolean,
+        default: "false",
+        channel_override: false,
+        description: "Arquiva as candidatas por desuso em vez de só sinalizá-las.",
+        since: "0.9.0",
+    },
 ];
 
 pub fn spec(key: &str) -> Option<&'static SettingSpec> {
@@ -753,6 +826,41 @@ pub fn validate(spec: &SettingSpec, value: &Value) -> Result<(), ApiError> {
             ),
         },
         SettingType::Secret => Err(setting_is_secret(spec.key)),
+        SettingType::Cron => match value
+            .as_str()
+            .map(crate::core::consolidation::schedule::parse)
+        {
+            Some(Ok(_)) => Ok(()),
+            _ => invalid(
+                format!(
+                    "{} deve ser uma expressao cron de 5 campos (minuto hora dia mes dia-da-semana)",
+                    spec.key
+                ),
+                json!({ "key": spec.key, "type": "cron" }),
+            ),
+        },
+        SettingType::ChoiceList(choices) => {
+            let items = value
+                .as_array()
+                .map(|items| items.iter().map(Value::as_str).collect::<Option<Vec<_>>>());
+            match items {
+                Some(Some(items))
+                    if !items.is_empty()
+                        && items.iter().all(|item| choices.contains(item))
+                        && items.iter().collect::<BTreeSet<_>>().len() == items.len() =>
+                {
+                    Ok(())
+                }
+                _ => invalid(
+                    format!(
+                        "{} deve ser uma lista sem repeticao de: {}",
+                        spec.key,
+                        choices.join(", ")
+                    ),
+                    json!({ "key": spec.key, "type": "list", "choices": choices }),
+                ),
+            }
+        }
     }
 }
 
@@ -1144,7 +1252,7 @@ pub fn view(
                 min,
                 max,
                 choices: match spec.kind {
-                    SettingType::Choice(choices) => {
+                    SettingType::Choice(choices) | SettingType::ChoiceList(choices) => {
                         Some(choices.iter().map(|choice| (*choice).to_owned()).collect())
                     }
                     _ => None,
@@ -1461,9 +1569,50 @@ mod tests {
                 BUDGET_TOKENS,
                 TITLES_BUDGET_TOKENS,
                 REDATOR_INSTRUCTIONS,
-                REDATOR_REWRITE_TEXT
+                REDATOR_REWRITE_TEXT,
+                CONSOLIDATION_ENABLED
             ])
         );
+    }
+
+    #[test]
+    fn consolidation_settings_validate_cron_and_task_lists() {
+        let schedule = spec(CONSOLIDATION_SCHEDULE).expect("schedule");
+        assert!(validate(schedule, &json!("0 3 * * *")).is_ok());
+        assert!(validate(schedule, &json!("*/30 2-4 * * 1-5")).is_ok());
+        for invalid in [
+            json!("0 0 3 * * *"),
+            json!("todo dia"),
+            json!(3),
+            json!(null),
+        ] {
+            let error = validate(schedule, &invalid).expect_err("cron invalido");
+            assert_eq!(error.code, "SETTING_INVALID");
+            assert_eq!(error.details.expect("details")["type"], "cron");
+        }
+        let tasks = spec(CONSOLIDATION_TASKS).expect("tasks");
+        assert!(validate(tasks, &json!(["stale"])).is_ok());
+        assert!(validate(tasks, &json!(["stale", "duplicates"])).is_ok());
+        for invalid in [
+            json!([]),
+            json!(["stale", "stale"]),
+            json!(["outra"]),
+            json!("stale"),
+            json!([1]),
+        ] {
+            assert_eq!(
+                validate(tasks, &invalid).expect_err("lista invalida").code,
+                "SETTING_INVALID"
+            );
+        }
+        let snapshot = SettingsSnapshot::default();
+        assert!(!snapshot.boolean(CONSOLIDATION_ENABLED));
+        assert_eq!(
+            snapshot.text_list(CONSOLIDATION_TASKS),
+            vec!["duplicates", "importance", "stale"]
+        );
+        assert!(channel_spec(CONSOLIDATION_ENABLED).is_ok());
+        assert!(channel_spec(CONSOLIDATION_SCHEDULE).is_err());
     }
 
     #[test]

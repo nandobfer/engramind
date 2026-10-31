@@ -220,6 +220,7 @@ pub(super) fn update_channel(
             params![name, description, priority, id],
         )
         .map_err(sql_error)?;
+    super::memories::promote_importance(transaction, id)?;
     let after = load_channel(transaction, id)?;
     journal::audit(
         transaction,
@@ -255,6 +256,7 @@ pub(super) fn set_channel_archived(
             params![archived_at, id],
         )
         .map_err(sql_error)?;
+    super::memories::promote_importance(transaction, id)?;
     let after = load_channel(transaction, id)?;
     journal::audit(
         transaction,
@@ -363,6 +365,7 @@ pub(super) fn update_channel_settings(
             params![json, id],
         )
         .map_err(sql_error)?;
+    super::memories::promote_importance(transaction, id)?;
     journal::audit(
         transaction,
         context,

@@ -28,7 +28,7 @@ Rotas públicas, sem token: `GET /health/live`, `GET /health/ready`, `GET /opena
 
 ## Memórias
 
-Memórias são fatos duráveis e curtos gravados num canal, com revisões e auditoria. Como escrever bem, editar com `expected_version` e reverter está no guia `escrever-memorias`; buscar por sentido e pedir dicas, no guia `busca-e-dicas`.
+Memórias são fatos duráveis e curtos gravados num canal, com revisões e auditoria. Como escrever bem, editar com `expected_version`, reverter e registrar uma conferência (`mark_verified`) está no guia `escrever-memorias`; buscar por sentido e pedir dicas, no guia `busca-e-dicas`. O consolidador opcional (duplicatas, importância e desuso) está no guia `consolidacao` (token admin).
 
 ## Contexto
 

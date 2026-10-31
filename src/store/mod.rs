@@ -10,6 +10,11 @@ use thiserror::Error;
 use utoipa::ToSchema;
 
 use crate::core::{
+    consolidation::{
+        ConsolidationActivity, ConsolidationEnqueue, ConsolidationInput, ConsolidationRun,
+        DeclinedPair,
+        job::{MemoryMerge, StaleOutcome, StaleWrite},
+    },
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
         Channel, ChannelPatch, ChannelStats, ContextSnapshot, EmbedSource, EmbeddingState,
@@ -535,6 +540,59 @@ pub trait Store: Clone + Send + Sync + 'static {
         before: String,
         limit: u32,
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+
+    // Consolidação (009).
+    /// Memórias `active` do canal, com o vetor do modelo vigente, e os pares recusados.
+    fn consolidation_input(
+        &self,
+        channel_id: String,
+    ) -> impl Future<Output = Result<ConsolidationInput, StoreError>> + Send;
+    /// Um job `consolidate` por canal sem um pendente (o pendente é devolvido com
+    /// `already_queued`); grava a auditoria (manual), o horário (agendado) e a idempotência.
+    fn enqueue_consolidation(
+        &self,
+        request: ConsolidationEnqueue,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<ConsolidationRun, StoreError>> + Send;
+    /// Fusão de um par. Conteúdo ou status mudado → `Conflict("MEMORY_CHANGED")`; texto igual a
+    /// outra memória do canal → `Conflict("MEMORY_DUPLICATE")`.
+    fn merge_memories(
+        &self,
+        merge: MemoryMerge,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn decline_pair(
+        &self,
+        pair: DeclinedPair,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Grava `importance_pending` das que ainda têm o conteúdo lido; devolve quantas.
+    fn set_importance_pending(
+        &self,
+        channel_id: String,
+        scores: Vec<(String, Vec<u8>, f64)>,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+    fn apply_stale(
+        &self,
+        write: StaleWrite,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<StaleOutcome, StoreError>> + Send;
+    /// Auditoria `consolidation.run`, resumo em `schema_meta` e limpeza dos pares velhos.
+    fn finish_consolidation(
+        &self,
+        channel_id: String,
+        summary: serde_json::Value,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    fn consolidation_activity(
+        &self,
+        since: String,
+    ) -> impl Future<Output = Result<ConsolidationActivity, StoreError>> + Send;
+    /// `verified_at` e auditoria, sem revisão nem `version`.
+    fn mark_verified(
+        &self,
+        target: MemoryTarget,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Memory, StoreError>> + Send;
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

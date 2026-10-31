@@ -439,7 +439,7 @@ mod catalog {
             let default = match spec.kind {
                 _ if spec.default == "null" => "—".to_owned(),
                 SettingType::Categories => "as 5 do Magic Context".to_owned(),
-                SettingType::Choice(_) | SettingType::Text { .. } => {
+                SettingType::Choice(_) | SettingType::Text { .. } | SettingType::Cron => {
                     format!("`{}`", spec.default.trim_matches('"'))
                 }
                 _ => spec.default.to_owned(),

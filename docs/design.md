@@ -278,7 +278,11 @@ memories      (seq, id, channel_id, category, title, text, status, importance NU
                content_hash, version, title_state, embedding_state,
                author_app_id, author_agent_id, origin_source, origin_label,
                retrieval_count, injected_count, last_retrieved_at, verified_at NULL,
-               merged_into NULL, stale_candidate, created_at, updated_at, archived_at)
+               merged_into NULL, stale_candidate, created_at, updated_at, archived_at,
+               importance_pending NULL, last_injected_at NULL)
+              -- importance_pending: nota do consolidador até a próxima mudança do canal (009)
+consolidation_pairs (memory_a, memory_b, hash_a, hash_b, decided_at)
+              -- pares que o Redator recusou fundir; valem enquanto os dois hashes forem os mesmos
 memory_revisions (id, memory_id, version, title, text, category, status,
                   app_id, agent_id, reason, created_at)
 memory_fts    -- FTS5 externa (title, text) com content_rowid = memories.seq (rowid explícito,
@@ -309,7 +313,10 @@ Regras gerais:
 - `jobs` é uma fila em tabela, sem broker. Os workers tokio pegam trabalho com
   `UPDATE … RETURNING` e `locked_until`, com backoff exponencial.
 - Os contadores (`retrieval_count`, `injected_count`, `last_used_at`) são acumulados em memória e
-  gravados em lote a cada poucos segundos, para não disputar o escritor.
+  gravados em lote a cada poucos segundos, para não disputar o escritor. O lote de injeções também
+  avança `last_injected_at`.
+- Toda transação que incrementa `channels.version` promove `importance_pending → importance` das
+  memórias do canal (009, decisão 0026): a ordem do contexto nunca muda sem mudar a `version`.
 - Retenção configurável, aplicada a cada hora em lotes (008, decisão 0024): `usage_log` e
   `llm_calls` (padrão de 90 dias), `audit_log` (padrão: sempre), jobs `done`/`failed` terminados
   (`retention.jobs_days`, 30 dias) e `idempotency` (24 h). Índices `audit_log (at)` e
@@ -536,6 +543,29 @@ mesma fila de jobs. Tarefas:
 - `run_consolidation { channel? , tasks? , dry_run? }` executa sob demanda. O `dry_run` devolve o
   que seria feito.
 
+Como ficou (009, decisões 0025 e 0026):
+
+- Um job `consolidate` por canal (concorrência 1, lease de 30 min), agendado por cron de 5 campos
+  em UTC (`croner`, verificado a cada minuto, um disparo por horário mesmo depois de vários
+  perdidos) ou pedido por `run_consolidation`. Tarefas na ordem `duplicates`, `importance`,
+  `stale`; limites por canal e execução: 20 pares e 200 classificações (lotes de 20).
+- O `dry_run` é síncrono, sem LLM e sem gravar: devolve os candidatos (pares com o cosseno,
+  memórias a classificar, sinalizações, limpezas e arquivamentos). A execução avalia exatamente
+  esses candidatos; só ela sabe se o Redator funde.
+- Fusão: cosseno exato entre os vetores do modelo vigente; o texto fundido passa pela guarda de
+  sentido contra cada original; a mantida soma os contadores da outra e volta a ter título e vetor
+  refeitos. Eventos `memory.updated` (a mantida) e `memory.archived` (a fundida). Pares recusados
+  não voltam ao Redator enquanto os textos forem os mesmos.
+- Importância: só as não classificadas; a nota fica em `importance_pending` até a próxima mudança
+  real do canal.
+- Desuso: último uso = maior entre `updated_at`, `last_retrieved_at`, `last_injected_at` e
+  `verified_at`; a tarefa sinaliza e limpa (sem `version` nem evento) ou arquiva.
+- Sem Redator, `duplicates` e `importance` são puladas; sem embeddings, `duplicates`. As chamadas
+  usam `redator.*` e ficam em `llm_calls` com `purpose = consolidation`. Falha do LLM não falha o
+  job.
+- `mark_verified { id }` (any·write) grava `verified_at` e auditoria e limpa `stale_candidate`, sem
+  revisão, sem `version` e sem evento.
+
 ---
 
 ## 11. Embeddings: local ou remoto
@@ -603,7 +633,7 @@ global e, quando indicado, sobreposição **por canal**.
 | `redator` | `enabled` (true), `provider`, `model`, `api_key`🔒, `base_url`, `instructions`, `rewrite_text` (true), `title_max` (100), `min_similarity` (0.80), `timeout_ms` (30000), `max_attempts` (3), `fallback_models[]` | instructions, rewrite_text |
 | `embedding` | `provider` (`local`; ou `openai_compatible`, `ollama`, `gemini`, `off`), `model` (`multilingual-e5-small`), `base_url`, `api_key`🔒, `dimensions`, `query_prefix`, `document_prefix`, `batch_size` (32), `timeout_ms` (15000) | — |
 | `search` | `vector_weight` (1.0), `text_weight` (1.0), `rrf_k` (60), `default_limit` (10), `hint_threshold` (0.80), `hint_limit` (3) | — |
-| `consolidation` | `enabled` (false), `schedule` (cron, `0 3 * * *`), `tasks[]`, `duplicate_threshold` (0.92), `stale_after_days` (90), `auto_archive_stale` (false) | enabled |
+| `consolidation` | `enabled` (false), `schedule` (cron de 5 campos em UTC, `0 3 * * *`), `tasks[]` (`duplicates`, `importance`, `stale`), `duplicate_threshold` (0.92), `stale_after_days` (90), `auto_archive_stale` (false) | enabled |
 | `webhooks` | `enabled` (true), `timeout_ms` (5000), `max_attempts` (5) | — |
 | `retention` | `usage_days` (90), `llm_calls_days` (90), `audit_days` (null = sempre), `jobs_days` (30) | — |
 | `limits` | `rate_per_minute` por token (600), `max_batch` (100) | — |
@@ -626,7 +656,7 @@ Cada operação existe nas três vias com o mesmo nome base, os mesmos parâmetr
 |---|---|---|
 | **Contexto** | `get_context`, `get_hints` | agent·read |
 | **Memórias** | `list_memories`, `get_memory`, `search_memories`, `memory_history` | agent·read |
-| | `create_memory`, `update_memory`, `archive_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `move_memory`, `revert_memory` | agent·write |
+| | `create_memory`, `update_memory`, `archive_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `move_memory`, `revert_memory`, `mark_verified` | agent·write |
 | | `delete_memory` | agent·delete |
 | **Canais** | `list_channels`, `get_channel` (agent: só os alcançados), `channel_stats` | agent·read |
 | | `create_channel`, `update_channel`, `archive_channel`, `restore_channel` | admin·write |
@@ -829,7 +859,10 @@ TZ=America/Sao_Paulo
 - Campos extras, só identificadores (008 Q-004): `subscription.updated` leva `subscription`, `agent`
   e `target` (e `channel` só com alvo exato); `settings.updated` leva `keys` (`channel: null` e
   `channel_version: null` no global). `move_memory` gera um `memory.updated` por canal envolvido; as
-  revisões do Redator também geram `memory.updated`.
+  revisões do Redator também geram `memory.updated`. Na consolidação (009), a fusão gera
+  `memory.updated` (a mantida) e `memory.archived` (a fundida) e o arquivamento por desuso gera
+  `memory.archived`; a nota de importância, a sinalização de desuso e `mark_verified` não geram
+  evento (não mudam a `channel_version`).
 - Destinatários calculados no enfileiramento, um job `webhook` por app na transação da mutação
   (decisão 0023); `subscription.updated` vai ao app do agente; `settings.updated` global, só aos apps
   admin. Mutações de apps, agentes e tokens não geram eventos.
@@ -912,8 +945,9 @@ TZ=America/Sao_Paulo
   - tamanho da fila de jobs e falhas por tipo;
   - chamadas e custo do Redator;
   - duração dos embeddings;
-  - idade da réplica do Litestream.
-- `get_status` resume tudo isso para a tela do gestor.
+  - idade da réplica do Litestream;
+  - ações do consolidador por tarefa (`engramind_consolidation_actions_total`, 009).
+- `get_status` resume tudo isso para a tela do gestor, inclusive o bloco `consolidation`.
 
 ---
 

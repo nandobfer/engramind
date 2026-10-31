@@ -9,9 +9,9 @@ use zeroize::Zeroize as _;
 
 use super::{
     AgentsCommand, AppsCommand, AuditCommand, ChannelSettingsCommand, ChannelsCommand, Command,
-    ConnectionArgs, DocsCommand, EmbeddingsCommand, JobsCommand, LlmCallsCommand, MemoriesCommand,
-    ProfilesCommand, SecretsCommand, SettingsCommand, SubscriptionsCommand, TokensCommand,
-    UpdateArgs,
+    ConnectionArgs, ConsolidationCommand, DocsCommand, EmbeddingsCommand, JobsCommand,
+    LlmCallsCommand, MemoriesCommand, ProfilesCommand, SecretsCommand, SettingsCommand,
+    SubscriptionsCommand, TokensCommand, UpdateArgs,
     client::{self, ApiRequest, Connection, Outcome, segment},
     output,
     profiles::{self, Profile},
@@ -125,6 +125,7 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             status,
             author,
             since,
+            stale,
             fields,
             page,
         } => ApiRequest::new(Method::GET, "/v1/memories".to_owned())
@@ -132,6 +133,7 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             .query("status", status)
             .query("author", author)
             .query("since", since)
+            .query("stale", stale)
             .query("fields", fields.fields)
             .query("cursor", page.cursor)
             .query("limit", page.limit),
@@ -241,6 +243,11 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             memory,
             idempotency,
         } => ApiRequest::new(Method::POST, memory_path(&memory, "/unpin"))
+            .idempotency(idempotency.idempotency_key),
+        MemoriesCommand::Verify {
+            memory,
+            idempotency,
+        } => ApiRequest::new(Method::POST, memory_path(&memory, "/verify"))
             .idempotency(idempotency.idempotency_key),
         MemoriesCommand::Move {
             memory,
@@ -816,6 +823,26 @@ pub fn request(command: Command) -> ApiRequest {
                 body.insert("limit".to_owned(), json!(limit));
             }
             ApiRequest::new(Method::POST, "/v1/hints".to_owned()).body(Value::Object(body))
+        }
+        Command::Consolidation(ConsolidationCommand::Run {
+            channel,
+            tasks,
+            dry_run,
+            idempotency,
+        }) => {
+            let mut body = Map::new();
+            if let Some(channel) = channel {
+                body.insert("channel".to_owned(), json!(channel));
+            }
+            if let Some(tasks) = list(tasks) {
+                body.insert("tasks".to_owned(), tasks);
+            }
+            if dry_run {
+                body.insert("dry_run".to_owned(), json!(true));
+            }
+            ApiRequest::new(Method::POST, "/v1/consolidation/run".to_owned())
+                .body(Value::Object(body))
+                .idempotency(idempotency.idempotency_key)
         }
         Command::Embeddings(EmbeddingsCommand::Reembed { idempotency }) => {
             ApiRequest::new(Method::POST, "/v1/embeddings/reembed".to_owned())

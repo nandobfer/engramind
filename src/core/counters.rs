@@ -70,9 +70,14 @@ impl Counters {
         let Ok(mut injected) = self.injected.lock() else {
             return Vec::new();
         };
+        let at = super::ids::timestamp(super::ids::now());
         injected
             .drain()
-            .map(|(memory_id, count)| InjectionBump { memory_id, count })
+            .map(|(memory_id, count)| InjectionBump {
+                memory_id,
+                count,
+                at: at.clone(),
+            })
             .collect()
     }
 

@@ -134,6 +134,14 @@ pub fn webhook_delivery(outcome: &'static str) {
     metrics::counter!("engramind_webhook_deliveries_total", "outcome" => outcome).increment(1);
 }
 
+/// Ações do consolidador por tarefa (009 FR-012).
+pub fn consolidation_action(task: &'static str, action: &'static str, count: u64) {
+    if count > 0 {
+        metrics::counter!("engramind_consolidation_actions_total", "task" => task, "action" => action)
+            .increment(count);
+    }
+}
+
 pub fn retention_removed(table: &'static str, removed: u64) {
     metrics::counter!("engramind_retention_removed_total", "table" => table).increment(removed);
 }

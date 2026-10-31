@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod channels;
+pub mod consolidation;
 pub mod context;
 pub mod docs;
 pub mod embeddings;

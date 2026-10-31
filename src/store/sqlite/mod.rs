@@ -2,6 +2,7 @@
 //! WAL, FTS5 e `sqlite-vec`.
 
 mod channels;
+mod consolidation;
 mod context;
 mod identities;
 mod integration;
@@ -25,6 +26,11 @@ use serde::Serialize;
 use self::{readers::Readers, writer::Writer};
 use super::{ChannelSettingsMap, DoctorReport, MigrationStatus, ReadyReport, Store, StoreError};
 use crate::core::{
+    consolidation::{
+        ConsolidationActivity, ConsolidationEnqueue, ConsolidationInput, ConsolidationRun,
+        DeclinedPair,
+        job::{MemoryMerge, StaleOutcome, StaleWrite},
+    },
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
         Channel, ChannelPatch, ChannelStats, ContextSnapshot, EmbedSource, EmbeddingState,
@@ -931,6 +937,87 @@ impl Store for SqliteStore {
         limit: u32,
     ) -> Result<u64, StoreError> {
         self.write(move |transaction| integration::purge_before(transaction, table, &before, limit))
+            .await
+    }
+
+    async fn consolidation_input(
+        &self,
+        channel_id: String,
+    ) -> Result<ConsolidationInput, StoreError> {
+        self.read(move |connection| consolidation::input(connection, &channel_id))
+            .await
+    }
+
+    async fn enqueue_consolidation(
+        &self,
+        request: ConsolidationEnqueue,
+        context: WriteContext,
+    ) -> Result<ConsolidationRun, StoreError> {
+        self.mutate(move |transaction| consolidation::enqueue(transaction, &request, &context))
+            .await
+    }
+
+    async fn merge_memories(
+        &self,
+        merge: MemoryMerge,
+        context: WriteContext,
+    ) -> Result<(), StoreError> {
+        self.mutate(move |transaction| memories::merge_memories(transaction, &merge, &context))
+            .await
+    }
+
+    async fn decline_pair(&self, pair: DeclinedPair) -> Result<(), StoreError> {
+        let at = crate::core::ids::timestamp(crate::core::ids::now());
+        self.write(move |transaction| consolidation::decline_pair(transaction, &pair, &at))
+            .await
+    }
+
+    async fn set_importance_pending(
+        &self,
+        channel_id: String,
+        scores: Vec<(String, Vec<u8>, f64)>,
+    ) -> Result<u64, StoreError> {
+        self.write(move |transaction| {
+            consolidation::set_importance_pending(transaction, &channel_id, &scores)
+        })
+        .await
+    }
+
+    async fn apply_stale(
+        &self,
+        write: StaleWrite,
+        context: WriteContext,
+    ) -> Result<StaleOutcome, StoreError> {
+        self.mutate(move |transaction| memories::apply_stale(transaction, &write, &context))
+            .await
+    }
+
+    async fn finish_consolidation(
+        &self,
+        channel_id: String,
+        summary: serde_json::Value,
+        context: WriteContext,
+    ) -> Result<(), StoreError> {
+        self.mutate(move |transaction| {
+            consolidation::finish(transaction, &channel_id, &summary, &context)
+        })
+        .await
+    }
+
+    async fn consolidation_activity(
+        &self,
+        since: String,
+    ) -> Result<ConsolidationActivity, StoreError> {
+        self.read(move |connection| consolidation::activity(connection, &since))
+            .await
+    }
+
+    async fn mark_verified(
+        &self,
+        target: MemoryTarget,
+        context: WriteContext,
+    ) -> Result<Memory, StoreError> {
+        self.mutate(move |transaction| memories::mark_verified(transaction, &target, &context))
             .await
     }
 }

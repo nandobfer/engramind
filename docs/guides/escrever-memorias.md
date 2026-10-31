@@ -47,22 +47,24 @@ engramind memories revert m_8f2a1c3d --version 1
 | `restore_memory` | `write` | A arquivada volta a `active`. |
 | `pin_memory` / `unpin_memory` | `write` | `permanent` entra primeiro no contexto e o consolidador nunca toca; `unpin` volta a `active`. |
 | `move_memory` | `write` na origem e no destino | Troca de canal; duplicata no destino → `409 MEMORY_DUPLICATE`. |
+| `mark_verified` | `write` | Registra que alguém conferiu a memória: grava `verified_at` e limpa `stale_candidate`, sem nova revisão, sem mudar a `version` e sem mudar o contexto. |
 | `delete_memory` | `delete` | Apaga a memória e o índice de busca; a auditoria e a última revisão guardam a proveniência. |
 
 Repetir um status que já vale não muda nada. Num canal arquivado, só a leitura e `delete_memory` funcionam (o resto dá `409 CHANNEL_ARCHIVED`).
 
 ```bash
 engramind memories pin m_8f2a1c3d
+engramind memories verify m_8f2a1c3d
 engramind memories move m_8f2a1c3d --to eng/projeto-atlas
 engramind memories delete m_8f2a1c3d
 ```
 
-Toda mudança grava a revisão (menos a exclusão), a auditoria (só metadados e o hash do texto, nunca o texto), incrementa a `version` da memória e a do canal, na mesma transação. Mutações aceitam `Idempotency-Key`.
+Toda mudança de status, canal ou conteúdo grava a revisão (menos a exclusão), a auditoria (só metadados e o hash do texto, nunca o texto), incrementa a `version` da memória e a do canal, na mesma transação. Mutações aceitam `Idempotency-Key`.
 
 ## Ler e listar
 
-- `get_memory` traz o texto, o título, a autoria, a `origin`, os contadores (`retrieval_count`, gravado em lote a cada poucos segundos), os estados e a `version`.
-- `list_memories` lista as memórias dos canais que o token alcança, em qualquer modo, da alteração mais recente à mais antiga. Filtros: `channels` (e o cabeçalho `Engramind-Channels`), `categories`, `status` (padrão `active,permanent`), `author` (app ou agente) e `since` (`updated_at`). `fields=title` devolve só `id`, `title`, `channel`, `category` e `status`, para economizar tokens.
+- `get_memory` traz o texto, o título, a autoria, a `origin`, os contadores (`retrieval_count`, gravado em lote a cada poucos segundos), os estados e a `version`. Do consolidador (guia `consolidacao`, token admin) vêm `importance`, `stale_candidate` (sem uso há mais de `consolidation.stale_after_days`; continua no contexto até ser arquivada) e `merged_into` (a memória que recebeu o texto desta numa fusão).
+- `list_memories` lista as memórias dos canais que o token alcança, em qualquer modo, da alteração mais recente à mais antiga. Filtros: `channels` (e o cabeçalho `Engramind-Channels`), `categories`, `status` (padrão `active,permanent`), `author` (app ou agente) `since` (`updated_at`) e `stale` (`true`: só as candidatas por desuso). `fields=title` devolve só `id`, `title`, `channel`, `category` e `status`, para economizar tokens.
 - Uma memória num canal que o token não alcança, ou fora do `Engramind-Channels`, responde `404 MEMORY_NOT_FOUND`, como se não existisse.
 
 ```bash

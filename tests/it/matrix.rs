@@ -213,6 +213,12 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
             let action = name.trim_end_matches("_memory");
             ("POST", format!("/v1/memories/m_ffffffff/{action}"), None)
         }
+        "mark_verified" => ("POST", "/v1/memories/m_ffffffff/verify".into(), None),
+        "run_consolidation" => (
+            "POST",
+            "/v1/consolidation/run".into(),
+            Some(json!({ "channel": "matrix/canal", "dry_run": true })),
+        ),
         "move_memory" => (
             "POST",
             "/v1/memories/m_ffffffff/move".into(),
@@ -295,7 +301,8 @@ fn mcp_arguments(name: &str) -> Value {
             json!({ "channel": "matrix/canal", "settings": { "memory.text_max": 4000 } })
         }
         "get_memory" | "memory_history" | "archive_memory" | "restore_memory" | "pin_memory"
-        | "unpin_memory" | "delete_memory" => json!({ "memory": "m_ffffffff" }),
+        | "unpin_memory" | "delete_memory" | "mark_verified" => json!({ "memory": "m_ffffffff" }),
+        "run_consolidation" => json!({ "channel": "matrix/canal", "dry_run": true }),
         "search_memories" => json!({ "query": "matriz" }),
         "create_memory" => {
             json!({ "channel": "matrix/canal", "text": format!("memoria da matriz {n}") })
@@ -446,7 +453,7 @@ fn cli_arguments(name: &str) -> Vec<String> {
             "4000".into(),
         ],
         "get_memory" | "memory_history" | "archive_memory" | "restore_memory" | "pin_memory"
-        | "unpin_memory" | "delete_memory" => {
+        | "unpin_memory" | "delete_memory" | "mark_verified" => {
             let operation = OPERATIONS
                 .iter()
                 .find(|operation| operation.name == name)
@@ -515,6 +522,13 @@ fn cli_arguments(name: &str) -> Vec<String> {
             "texto da matriz".into(),
         ],
         "retry_job" => vec!["jobs".into(), "retry".into(), "999999".into()],
+        "run_consolidation" => vec![
+            "consolidation".into(),
+            "run".into(),
+            "--channel".into(),
+            "matrix/canal".into(),
+            "--dry-run".into(),
+        ],
         "import_memories" => vec![
             "memories".into(),
             "import".into(),
