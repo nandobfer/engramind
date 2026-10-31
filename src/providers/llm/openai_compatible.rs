@@ -26,9 +26,11 @@ impl OpenAiCompatible {
                 { "role": "system", "content": request.system },
                 { "role": "user", "content": request.user },
             ],
-            "temperature": 0,
             "max_tokens": request.max_output_tokens,
         });
+        if let Some(temperature) = request.temperature {
+            body["temperature"] = json!(temperature);
+        }
         if structured {
             body["response_format"] = json!({
                 "type": "json_schema",

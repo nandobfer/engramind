@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.9.0"
+    "version": "0.10.0"
   },
   "servers": [
     {
@@ -12051,7 +12051,7 @@
             }
           },
           "400": {
-            "description": "`VALIDATION_ERROR`, `SETTING_UNKNOWN`, `SETTING_INVALID` ou `SETTING_IS_SECRET`",
+            "description": "`VALIDATION_ERROR`, `SETTING_UNKNOWN`, `SETTING_INVALID`, `SETTING_IS_SECRET` ou `PROVIDER_NOT_CONFIGURED` (troca de embedding)",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -12151,8 +12151,46 @@
               }
             }
           },
+          "422": {
+            "description": "`PROVIDER_REJECTED` (troca de embedding)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`PROVIDER_FAILED` ou `EMBEDDING_DIMENSION_MISMATCH` (troca de embedding)",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -12190,7 +12228,7 @@
             }
           },
           "504": {
-            "description": "`REQUEST_TIMEOUT`",
+            "description": "`PROVIDER_TIMEOUT` ou `REQUEST_TIMEOUT`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -12379,6 +12417,25 @@
               }
             }
           },
+          "422": {
+            "description": "`PROVIDER_REJECTED`: o provedor recusou a requisição; `details.reason` traz o motivo dele",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "`RATE_LIMITED`",
             "headers": {
@@ -12469,7 +12526,7 @@
           "Embeddings"
         ],
         "summary": "Testa a configuração de embedding com um texto, sem gravar nada",
-        "description": "Vetoriza `text` (como memória) com a configuração atual ou com a proposta em `settings` (chaves `embedding.*`, inclusive `embedding.api_key` em claro), sem salvar nada. Devolve provedor, modelo, `model_id`, a dimensão detectada e a latência. No provedor `local`, a primeira chamada baixa o modelo para `MODELS_PATH`. Exige token admin com `write`.",
+        "description": "Vetoriza `text` (como memória) com a configuração atual ou com a proposta em `settings` (chaves `embedding.*`, inclusive `embedding.api_key` em claro), sem salvar nada. Devolve provedor, modelo, `model_id`, a dimensão detectada e a latência. No provedor `local`, um modelo ainda não carregado dispara o download para `MODELS_PATH` em segundo plano e devolve `EMBEDDING_MODEL_LOADING` (acompanhe `get_status.embedding.local`). Exige token admin com `write`.",
         "operationId": "test_embedding",
         "parameters": [
           {
@@ -12589,7 +12646,7 @@
             }
           },
           "409": {
-            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "description": "`IDEMPOTENCY_KEY_CONFLICT` ou `EMBEDDING_MODEL_LOADING` (modelo local em download ou carregamento)",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -12609,6 +12666,25 @@
           },
           "413": {
             "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`PROVIDER_REJECTED`: o provedor recusou a requisição; `details.reason` traz o motivo dele",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -12856,6 +12932,25 @@
           },
           "413": {
             "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "`PROVIDER_REJECTED`: o provedor recusou a requisição; `details.reason` traz o motivo dele",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -16663,6 +16758,17 @@
             "type": "boolean",
             "description": "`embedding.provider != off`."
           },
+          "local": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/LocalModelStatus",
+                "description": "Download e carregamento do modelo local; `null` fora do provedor `local`."
+              }
+            ]
+          },
           "missing": {
             "type": "array",
             "items": {
@@ -17408,6 +17514,49 @@
             "format": "int64",
             "example": 1,
             "minimum": 0
+          }
+        }
+      },
+      "LocalModelStatus": {
+        "type": "object",
+        "description": "Estado do modelo local de embedding em `get_status.embedding.local`.",
+        "required": [
+          "model",
+          "state"
+        ],
+        "properties": {
+          "elapsed_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Tempo decorrido; em `ready` e `failed`, quanto levou.",
+            "example": 67413,
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Motivo da falha (`failed`); a próxima tentativa começa 30 s depois, na próxima chamada."
+          },
+          "model": {
+            "type": "string",
+            "example": "multilingual-e5-large"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Início do download ou carregamento."
+          },
+          "state": {
+            "type": "string",
+            "description": "`idle` (ainda não pedido), `downloading` (baixando para `MODELS_PATH`), `loading`\n(carregando do cache), `ready` ou `failed`.",
+            "example": "ready"
           }
         }
       },

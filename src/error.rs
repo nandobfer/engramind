@@ -293,7 +293,13 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         code: "PROVIDER_FAILED",
         status: 502,
         exit_code: 8,
-        description: "O provedor do LLM ou de embedding falhou ou devolveu uma resposta inválida; `details.outcome` e `details.reason` trazem o motivo curto.",
+        description: "O provedor do LLM ou de embedding está indisponível (HTTP 5xx, falha de rede ou limite 429) ou devolveu uma resposta inválida; `details.outcome` e `details.reason` trazem o motivo curto.",
+    },
+    ErrorCodeDoc {
+        code: "PROVIDER_REJECTED",
+        status: 422,
+        exit_code: 8,
+        description: "O provedor do LLM ou de embedding recusou a requisição (HTTP 4xx, exceto 408 e 429): chave, modelo ou parâmetro inválidos para ele. `details.reason` traz o status e a mensagem do provedor (até 200 caracteres, sem segredos). Corrija a configuração; repetir não resolve.",
     },
     ErrorCodeDoc {
         code: "PROVIDER_TIMEOUT",
@@ -312,6 +318,12 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         status: 502,
         exit_code: 8,
         description: "O provedor devolveu vetores de outra dimensão (a configurada em `embedding.dimensions` ou a do modelo); `details.expected` e `details.got`.",
+    },
+    ErrorCodeDoc {
+        code: "EMBEDDING_MODEL_LOADING",
+        status: 409,
+        exit_code: 6,
+        description: "O modelo local de embedding ainda está sendo baixado ou carregado (o carregamento já foi disparado); `details` traz `model`, `state`, `started_at` e `elapsed_ms`. Acompanhe `get_status.embedding.local` e repita quando `state = ready`.",
     },
     ErrorCodeDoc {
         code: "REEMBED_IN_PROGRESS",

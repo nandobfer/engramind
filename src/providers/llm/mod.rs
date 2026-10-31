@@ -24,6 +24,9 @@ pub struct LlmRequest {
     /// JSON Schema do objeto esperado.
     pub schema: Value,
     pub max_output_tokens: u32,
+    /// `None` omite o campo do corpo (padrão do provedor; os modelos que recusam
+    /// `temperature` só funcionam assim).
+    pub temperature: Option<f64>,
 }
 
 /// O objeto JSON devolvido e o uso informado pelo provedor.
@@ -36,7 +39,8 @@ pub struct LlmResponse {
     pub cost_usd: Option<f64>,
 }
 
-/// Falhas sem payload do provedor (que pode ecoar o texto enviado).
+/// Falhas sem payload do provedor. `Rejected` leva só o status e a mensagem de erro do
+/// provedor, higienizada e curta (`provider_reason`).
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum LlmError {
     #[error("tempo limite")]
@@ -185,6 +189,8 @@ pub fn http_client() -> reqwest::Client {
 pub(crate) struct HttpFailure {
     pub(crate) status: u16,
     pub(crate) body: String,
+    /// `provider_reason` do corpo, já sem a chave.
+    pub(crate) reason: String,
 }
 
 pub(crate) enum PostError {
@@ -196,18 +202,71 @@ impl From<PostError> for LlmError {
     fn from(error: PostError) -> Self {
         match error {
             PostError::Llm(error) => error,
-            PostError::Http(failure) => classify_status(failure.status),
+            PostError::Http(failure) => classify_status(failure.status, &failure.reason),
         }
     }
 }
 
-pub(crate) fn classify_status(status: u16) -> LlmError {
+pub(crate) fn classify_status(status: u16, reason: &str) -> LlmError {
     match status {
         429 => LlmError::RateLimited,
         408 => LlmError::Timeout,
         500..=599 => LlmError::Unavailable,
-        other => LlmError::Rejected(format!("HTTP {other}")),
+        other if reason.is_empty() => LlmError::Rejected(format!("HTTP {other}")),
+        other => LlmError::Rejected(format!("HTTP {other}: {reason}")),
     }
+}
+
+/// Caracteres máximos do motivo do provedor (o `Rejected` inteiro fica abaixo de 200).
+const MAX_REASON_CHARS: usize = 160;
+
+/// O motivo de uma recusa, como o provedor o descreveu: `error.message` (com `error.type`
+/// ou `error.status`) nos formatos OpenAI, Anthropic e Gemini, ou o corpo em texto. Uma
+/// linha, sem controles, sem a chave da API (se ecoada) e com no máximo
+/// `MAX_REASON_CHARS` caracteres. Corpo HTML ou vazio não tem motivo.
+pub(crate) fn provider_reason(body: &str, api_key: Option<&str>) -> String {
+    let parsed = serde_json::from_str::<Value>(body).ok();
+    let from_json = parsed.as_ref().and_then(|value| {
+        let error = &value["error"];
+        let message = error["message"]
+            .as_str()
+            .or_else(|| error.as_str())
+            .or_else(|| value["message"].as_str())?;
+        let kind = error["type"]
+            .as_str()
+            .or_else(|| error["status"].as_str())
+            .or_else(|| value["type"].as_str().filter(|kind| *kind != "error"));
+        Some(match kind {
+            Some(kind) if !kind.is_empty() => format!("{message} ({kind})"),
+            _ => message.to_owned(),
+        })
+    });
+    let raw = match from_json {
+        Some(text) => text,
+        None if parsed.is_some() || body.trim_start().starts_with('<') => String::new(),
+        None => body.to_owned(),
+    };
+    let mut text = raw
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if let Some(key) = api_key.map(str::trim).filter(|key| key.len() >= 8) {
+        text = text.replace(key, "[REDACTED]");
+    }
+    if text.chars().count() > MAX_REASON_CHARS {
+        text = text.chars().take(MAX_REASON_CHARS - 1).collect::<String>();
+        text.push('…');
+    }
+    text
 }
 
 pub(crate) fn transport(error: &reqwest::Error) -> LlmError {
@@ -215,6 +274,14 @@ pub(crate) fn transport(error: &reqwest::Error) -> LlmError {
         LlmError::Timeout
     } else {
         LlmError::Unavailable
+    }
+}
+
+fn failure(endpoint: &Endpoint, status: u16, text: &str) -> HttpFailure {
+    HttpFailure {
+        status,
+        body: text.chars().take(2000).collect(),
+        reason: provider_reason(text, endpoint.api_key.as_ref().map(|key| key.as_str())),
     }
 }
 
@@ -239,10 +306,7 @@ pub(crate) async fn post_json(
         .await
         .map_err(|error| PostError::Llm(transport(&error)))?;
     if !(200..300).contains(&status) {
-        return Err(PostError::Http(HttpFailure {
-            status,
-            body: text.chars().take(2000).collect(),
-        }));
+        return Err(PostError::Http(failure(endpoint, status, &text)));
     }
     serde_json::from_str(&text).map_err(|_| PostError::Llm(LlmError::InvalidResponse))
 }
@@ -267,10 +331,7 @@ pub(crate) async fn get_json(
         .await
         .map_err(|error| PostError::Llm(transport(&error)))?;
     if !(200..300).contains(&status) {
-        return Err(PostError::Http(HttpFailure {
-            status,
-            body: text.chars().take(2000).collect(),
-        }));
+        return Err(PostError::Http(failure(endpoint, status, &text)));
     }
     serde_json::from_str(&text).map_err(|_| PostError::Llm(LlmError::InvalidResponse))
 }
@@ -315,16 +376,61 @@ mod tests {
 
     #[test]
     fn statuses_map_to_retryable_or_rejected_errors() {
-        assert_eq!(classify_status(429), LlmError::RateLimited);
-        assert_eq!(classify_status(503), LlmError::Unavailable);
-        assert_eq!(classify_status(408), LlmError::Timeout);
+        assert_eq!(classify_status(429, ""), LlmError::RateLimited);
+        assert_eq!(classify_status(503, "x"), LlmError::Unavailable);
+        assert_eq!(classify_status(408, ""), LlmError::Timeout);
         assert_eq!(
-            classify_status(401),
+            classify_status(401, ""),
             LlmError::Rejected("HTTP 401".to_owned())
+        );
+        assert_eq!(
+            classify_status(400, "modelo inexistente"),
+            LlmError::Rejected("HTTP 400: modelo inexistente".to_owned())
         );
         assert!(LlmError::Timeout.tries_fallback());
         assert!(!LlmError::InvalidResponse.tries_fallback());
         assert!(!LlmError::Rejected("HTTP 400".to_owned()).tries_fallback());
+    }
+
+    #[test]
+    fn the_provider_reason_comes_from_each_error_format() {
+        let anthropic = r#"{"type":"error","error":{"type":"invalid_request_error","message":"`temperature` is deprecated for this model."}}"#;
+        assert_eq!(
+            provider_reason(anthropic, None),
+            "`temperature` is deprecated for this model. (invalid_request_error)"
+        );
+        let openai = r#"{"error":{"message":"The model `x` does not exist","type":"invalid_request_error","code":"model_not_found"}}"#;
+        assert_eq!(
+            provider_reason(openai, None),
+            "The model `x` does not exist (invalid_request_error)"
+        );
+        let gemini =
+            r#"{"error":{"code":400,"message":"API key not valid.","status":"INVALID_ARGUMENT"}}"#;
+        assert_eq!(
+            provider_reason(gemini, None),
+            "API key not valid. (INVALID_ARGUMENT)"
+        );
+        assert_eq!(provider_reason("<html><body>Bad</body></html>", None), "");
+        assert_eq!(provider_reason("", None), "");
+        assert_eq!(provider_reason(r#"{"detail":1}"#, None), "");
+        assert_eq!(
+            provider_reason("linha 1\n\tlinha   2\r\n", None),
+            "linha 1 linha 2"
+        );
+    }
+
+    #[test]
+    fn the_provider_reason_hides_the_key_and_is_short() {
+        let key = "sk-test-0123456789abcdef";
+        let body = format!(r#"{{"error":{{"message":"Incorrect API key provided: {key}."}}}}"#);
+        let reason = provider_reason(&body, Some(key));
+        assert_eq!(reason, "Incorrect API key provided: [REDACTED].");
+        let long = "x".repeat(5000);
+        let reason = provider_reason(&long, None);
+        assert_eq!(reason.chars().count(), MAX_REASON_CHARS);
+        assert!(reason.ends_with('…'));
+        let rejected = classify_status(400, &reason).to_string();
+        assert!(rejected.chars().count() <= 200, "{rejected}");
     }
 
     #[test]

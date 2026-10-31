@@ -80,7 +80,7 @@ impl<S: Store> Core<S> {
         metrics::webhook_delivery(match &outcome {
             JobOutcome::Done("delivered") => "delivered",
             JobOutcome::Done(_) | JobOutcome::Superseded => "skipped",
-            JobOutcome::Retry(_) => "retry",
+            JobOutcome::Retry(_) | JobOutcome::Wait(_) => "retry",
             JobOutcome::Fail(_) => "failed",
         });
         outcome

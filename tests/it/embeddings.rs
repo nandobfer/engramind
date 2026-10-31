@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use engramind::providers::embeddings::{EmbedError, HashEmbedder};
+use engramind::providers::embeddings::{EmbedError, HashEmbedder, LocalEmbedder, local::Session};
 use serde_json::{Value, json};
 
 use crate::support::{
@@ -806,6 +806,7 @@ async fn status_shows_the_embedding_block() {
             "total": 0,
             "done": 0,
             "reindex_started_at": null,
+            "local": null,
         })
     );
     set(
@@ -815,4 +816,194 @@ async fn status_shows_the_embedding_block() {
     .await;
     // Sem `base_url`, a troca é recusada e nada muda.
     assert_eq!(status(&context).await["provider"], "local");
+}
+
+/// Carregador do modelo local controlado pelo teste: fica "baixando" até `release` e então
+/// entrega uma sessão falsa (ou a falha roteirizada). Simula o download sem rede nem relógio.
+/// O resultado da carga, liberado pelo teste.
+type Gate = (
+    std::sync::Mutex<Option<Result<(), String>>>,
+    std::sync::Condvar,
+);
+
+#[derive(Clone, Default)]
+struct GatedLoader {
+    gate: Arc<Gate>,
+}
+
+impl GatedLoader {
+    fn release(&self, result: Result<(), String>) {
+        let (lock, condvar) = &*self.gate;
+        *lock.lock().expect("gate") = Some(result);
+        condvar.notify_all();
+    }
+
+    fn loader(&self) -> engramind::providers::embeddings::local::Loader {
+        let gate = self.gate.clone();
+        Arc::new(move |model, _path| {
+            let (lock, condvar) = &*gate;
+            let mut released = lock.lock().expect("gate");
+            while released.is_none() {
+                released = condvar.wait(released).expect("gate");
+            }
+            let dims = model.dims;
+            released
+                .clone()
+                .expect("released")
+                .map(|()| Box::new(FakeSession(dims)) as Box<dyn Session>)
+        })
+    }
+}
+
+struct FakeSession(usize);
+
+impl Session for FakeSession {
+    fn embed(&mut self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        Ok(inputs
+            .iter()
+            .map(|_| (0..self.0).map(|index| (index % 7) as f32 + 0.5).collect())
+            .collect())
+    }
+}
+
+async fn wait_local_state(context: &TestContext, expected: &str) -> Value {
+    for _ in 0..400 {
+        let embedding = status(context).await;
+        if embedding["local"]["state"] == expected {
+            return embedding;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!(
+        "modelo local nao chegou a {expected}: {}",
+        status(context).await
+    );
+}
+
+#[tokio::test]
+async fn the_first_local_use_reports_the_download_instead_of_timing_out() {
+    let context = TestContext::new().await;
+    let token = setup(&context).await;
+    let gate = GatedLoader::default();
+    context
+        .core
+        .set_local_embedder(Arc::new(LocalEmbedder::with_loader(
+            context.dir.path().join("models"),
+            gate.loader(),
+            std::time::Duration::from_millis(50),
+        )));
+    let id = memory(
+        &context,
+        &token,
+        "eng/global",
+        "Use cargo nextest para os testes",
+    )
+    .await;
+    let embedding = status(&context).await;
+    assert_eq!(embedding["local"]["model"], "multilingual-e5-small");
+    assert_eq!(embedding["local"]["state"], "idle", "{embedding}");
+
+    // A primeira chamada dispara o download e responde na hora, com o estado.
+    let test = || {
+        context.call(
+            "POST",
+            "/v1/settings/embedding/test",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "text": "amostra" })),
+        )
+    };
+    let (code, body) = test().await;
+    assert_eq!(code, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "EMBEDDING_MODEL_LOADING");
+    let details = &body["error"]["details"];
+    assert_eq!(details["model"], "multilingual-e5-small");
+    assert_eq!(details["state"], "downloading");
+    assert!(details["started_at"].is_string(), "{body}");
+    assert!(details["elapsed_ms"].is_u64(), "{body}");
+    let embedding = status(&context).await;
+    assert_eq!(embedding["local"]["state"], "downloading", "{embedding}");
+    assert!(embedding["local"]["started_at"].is_string());
+
+    // O job `embed` espera o modelo sem gastar tentativa.
+    run(&context).await;
+    assert_eq!(embedding_state(&context, &id), "pending");
+    let (state, attempts): (String, i64) = context
+        .db()
+        .query_row(
+            "SELECT state, attempts FROM jobs WHERE kind = 'embed'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("job");
+    assert_eq!((state.as_str(), attempts), ("queued", 0));
+
+    gate.release(Ok(()));
+    let embedding = wait_local_state(&context, "ready").await;
+    assert!(embedding["local"]["elapsed_ms"].is_u64(), "{embedding}");
+    let (code, body) = test().await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["dimensions"], 384);
+    context
+        .core
+        .run_embed_jobs(chrono::Utc::now() + chrono::Duration::minutes(1))
+        .await;
+    assert_eq!(embedding_state(&context, &id), "ready");
+}
+
+#[tokio::test]
+async fn a_failed_local_load_is_reported_by_the_call_and_the_status() {
+    let context = TestContext::new().await;
+    let gate = GatedLoader::default();
+    context
+        .core
+        .set_local_embedder(Arc::new(LocalEmbedder::with_loader(
+            context.dir.path().join("models"),
+            gate.loader(),
+            std::time::Duration::from_millis(50),
+        )));
+    let test = || {
+        context.call(
+            "POST",
+            "/v1/settings/embedding/test",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "text": "amostra" })),
+        )
+    };
+    let (code, body) = test().await;
+    assert_eq!(code, StatusCode::CONFLICT, "{body}");
+    gate.release(Err("sem rede".to_owned()));
+    let embedding = wait_local_state(&context, "failed").await;
+    assert_eq!(embedding["local"]["error"], "sem rede", "{embedding}");
+    let (code, body) = test().await;
+    assert_eq!(code, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(body["error"]["code"], "PROVIDER_FAILED");
+    assert_eq!(body["error"]["details"]["outcome"], "load_failed");
+}
+
+#[tokio::test]
+async fn a_remote_rejection_returns_the_provider_reason() {
+    let context = TestContext::new().await;
+    let provider = ScriptedLlm::start().await;
+    provider.push(
+        400,
+        json!({ "error": { "message": "model `x` is not an embedding model", "type": "invalid_request_error" } }),
+    );
+    let (code, body) = context
+        .call(
+            "POST",
+            "/v1/settings/embedding/test",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "text": "amostra", "settings": {
+                "embedding.provider": "openai_compatible",
+                "embedding.base_url": provider.url,
+                "embedding.model": "x",
+            } })),
+        )
+        .await;
+    assert_eq!(code, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert_eq!(body["error"]["code"], "PROVIDER_REJECTED");
+    assert_eq!(
+        body["error"]["details"]["reason"],
+        "recusado pelo provedor (HTTP 400: model `x` is not an embedding model (invalid_request_error))"
+    );
 }

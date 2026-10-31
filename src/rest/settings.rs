@@ -58,14 +58,16 @@ pub async fn get_settings(
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "Configurações depois da mudança", body = SettingsView),
-        (status = 400, description = "`VALIDATION_ERROR`, `SETTING_UNKNOWN`, `SETTING_INVALID` ou `SETTING_IS_SECRET`", body = ErrorResponse),
+        (status = 400, description = "`VALIDATION_ERROR`, `SETTING_UNKNOWN`, `SETTING_INVALID`, `SETTING_IS_SECRET` ou `PROVIDER_NOT_CONFIGURED` (troca de embedding)", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
         (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
         (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
+        (status = 422, description = "`PROVIDER_REJECTED` (troca de embedding)", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
+        (status = 502, description = "`PROVIDER_FAILED` ou `EMBEDDING_DIMENSION_MISMATCH` (troca de embedding)", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
-        (status = 504, description = "`REQUEST_TIMEOUT`", body = ErrorResponse)
+        (status = 504, description = "`PROVIDER_TIMEOUT` ou `REQUEST_TIMEOUT`", body = ErrorResponse)
     )
 )]
 pub async fn update_settings(
@@ -209,6 +211,7 @@ pub async fn set_secret(
         (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
         (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
+        (status = 422, description = "`PROVIDER_REJECTED`: o provedor recusou a requisição; `details.reason` traz o motivo dele", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
         (status = 502, description = "`PROVIDER_FAILED`", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),

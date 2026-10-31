@@ -65,16 +65,18 @@ impl LlmClient for Gemini {
             "{}/v1beta/models/{}:generateContent",
             self.endpoint.base_url, request.model
         );
-        let body = json!({
+        let mut body = json!({
             "systemInstruction": { "parts": [{ "text": request.system }] },
             "contents": [{ "role": "user", "parts": [{ "text": request.user }] }],
             "generationConfig": {
-                "temperature": 0,
                 "maxOutputTokens": request.max_output_tokens,
                 "responseMimeType": "application/json",
                 "responseSchema": response_schema(&request.schema),
             },
         });
+        if let Some(temperature) = request.temperature {
+            body["generationConfig"]["temperature"] = json!(temperature);
+        }
         let key = self
             .endpoint
             .api_key

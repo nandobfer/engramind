@@ -3,6 +3,9 @@
 //! memória ainda tiver o conteúdo e o título lidos e o modelo ainda for o vigente.
 
 use super::{EmbedKind, JOB_KIND, MAX_ATTEMPTS, short};
+
+/// Reagendamento do job enquanto o modelo local carrega.
+const LOADING_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 use crate::{
     core::{
         Core, ids,
@@ -87,6 +90,15 @@ impl<S: Store> Core<S> {
             .await
         {
             Ok(vectors) => vectors,
+            Err(crate::providers::embeddings::EmbedError::Loading { state, .. }) => {
+                tracing::debug!(
+                    event = "embeddings.waiting_model",
+                    state = state.as_str(),
+                    memories = ids.len(),
+                    "modelo local ainda carregando; job reagendado sem consumir tentativa"
+                );
+                return JobOutcome::Wait(LOADING_WAIT);
+            }
             Err(error) => {
                 let definitive = matches!(
                     error,

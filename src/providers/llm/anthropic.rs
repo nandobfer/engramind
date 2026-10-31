@@ -21,10 +21,9 @@ impl Anthropic {
 impl LlmClient for Anthropic {
     async fn complete_json(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
         let url = format!("{}/v1/messages", self.endpoint.base_url);
-        let body = json!({
+        let mut body = json!({
             "model": request.model,
             "max_tokens": request.max_output_tokens,
-            "temperature": 0,
             "system": request.system,
             "messages": [{ "role": "user", "content": request.user }],
             "tools": [{
@@ -34,6 +33,9 @@ impl LlmClient for Anthropic {
             }],
             "tool_choice": { "type": "tool", "name": request.schema_name },
         });
+        if let Some(temperature) = request.temperature {
+            body["temperature"] = json!(temperature);
+        }
         let key = self
             .endpoint
             .api_key

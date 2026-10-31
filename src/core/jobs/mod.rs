@@ -28,6 +28,9 @@ pub enum JobOutcome {
     Superseded,
     /// Falha temporária: volta à fila com backoff.
     Retry(String),
+    /// Ainda não dá para rodar (modelo local carregando): volta à fila depois do intervalo
+    /// sem consumir a tentativa.
+    Wait(std::time::Duration),
     /// Falha definitiva: `failed` e um `ERROR`.
     Fail(String),
 }

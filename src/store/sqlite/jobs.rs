@@ -97,6 +97,12 @@ pub(super) fn finish(
              WHERE id = ?1 AND state = 'running'",
             params![id, error, at],
         )?,
+        JobFinish::Wait { run_after } => transaction.execute(
+            "UPDATE jobs SET state = 'queued', attempts = MAX(attempts - 1, 0), run_after = ?2,
+                 locked_until = NULL
+             WHERE id = ?1 AND state = 'running'",
+            params![id, run_after],
+        )?,
     };
     Ok(changed > 0)
 }

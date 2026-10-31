@@ -2,6 +2,25 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.10.0] - 2026-10-31
+
+Correção dos provedores: temperatura configurável, motivo real da recusa e carga do modelo local fora da requisição (decisão 0027).
+
+### Adicionado
+
+- Configuração `redator.temperature` (0 a 2, padrão vazio), usada pelo Redator e pelo consolidador. Vazio omite o campo `temperature` do corpo nos três adaptadores e o provedor usa o padrão do modelo — os modelos que recusam o campo (família 5.5 da Anthropic) voltam a funcionar.
+- Código de erro `PROVIDER_REJECTED` (422) para recusas 4xx do LLM e dos embeddings remotos, com o status e a mensagem do provedor em `details.reason` e na `message`.
+- Código de erro `EMBEDDING_MODEL_LOADING` (409), com `model`, `state`, `started_at` e `elapsed_ms`, quando o modelo local de embedding ainda está baixando ou carregando.
+- `get_status.embedding.local`: modelo e fase do download/carregamento local (`idle`, `downloading`, `loading`, `ready`, `failed`), com `started_at`, `elapsed_ms` e `error`.
+
+### Alterado
+
+- **Quebra de contrato:** recusas do provedor (HTTP 4xx exceto 408/429) deixam de responder `502 PROVIDER_FAILED` e passam a `422 PROVIDER_REJECTED`, que proxies como o Cloudflare não substituem. `PROVIDER_FAILED` fica para indisponibilidade e resposta inválida.
+- `llm_calls.error` e `details.reason` trazem a mensagem do provedor (uma linha, sem a chave, até 200 caracteres), não só `HTTP 400`. O motivo nunca vai para os logs.
+- O modelo local de embedding é baixado e carregado numa thread própria, disparada na inicialização, depois de `update_settings` e no primeiro uso; nenhuma requisição espera o download (no máximo 5 s). O job `embed` espera o modelo voltando à fila em 15 s sem consumir tentativa; falha de carga é devolvida por 30 s e depois tentada de novo. Eventos `embeddings.loading`, `embeddings.ready` (com `downloaded`) e `embeddings.load_failed`.
+- OpenAPI: `update_settings` documenta os erros da troca de embedding; `test_redator`, `test_embedding` e `list_embedding_models` documentam `422` e `409`.
+- Guias `configuracoes`, `erros` e `operacao`, desenho e `aicontext` atualizados.
+
 ## [0.9.0] - 2026-10-31
 
 Etapa 009 — consolidação.

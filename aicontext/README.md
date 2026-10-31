@@ -4,7 +4,7 @@ Este diretório contém regras operacionais concisas para qualquer trabalho no E
 
 ## Estado atual
 
-Versão **0.9.0**: etapas **001 (Fundação operável)**, **002 (Identidades e as três vias)**, **003 (Canais e assinaturas)**, **004 (Memórias)**, **005 (Contexto)**, **006 (Redator)**, **007 (Embeddings e busca híbrida)**, **008 (Integração)** e **009 (Consolidação)** implementadas. O plano está em [`../specs/`](../specs/README.md); a escala (`vec0` particionado, Postgres) só ganha spec quando uma medição justificar.
+Versão **0.10.0**: etapas **001 (Fundação operável)**, **002 (Identidades e as três vias)**, **003 (Canais e assinaturas)**, **004 (Memórias)**, **005 (Contexto)**, **006 (Redator)**, **007 (Embeddings e busca híbrida)**, **008 (Integração)** e **009 (Consolidação)** implementadas. O plano está em [`../specs/`](../specs/README.md); a escala (`vec0` particionado, Postgres) só ganha spec quando uma medição justificar.
 
 Existe de fato:
 
@@ -63,7 +63,7 @@ Não crie guias de módulo antes do código existir.
 - `aicontext/`: regras normativas, curtas e acionáveis.
 - `docs/design.md`: desenho e decisões tomadas; fonte de verdade do que ainda não foi implementado.
 - `docs/guides/`: guias de uso compilados no binário e servidos por `get_guide`.
-- `docs/decisions/`: decisões arquiteturais posteriores ao desenho (`0001` a `0006` na 001; `0007` a `0009` na 002; `0010` na 003; `0011` e `0012` na 004; `0013` e `0014` na 005; `0015` a `0017` na 006; `0018` a `0021` na 007; `0022` a `0024` na 008; `0025` e `0026` na 009).
+- `docs/decisions/`: decisões arquiteturais posteriores ao desenho (`0001` a `0006` na 001; `0007` a `0009` na 002; `0010` na 003; `0011` e `0012` na 004; `0013` e `0014` na 005; `0015` a `0017` na 006; `0018` a `0021` na 007; `0022` a `0024` na 008; `0025` e `0026` na 009; `0027` na 0.10.0).
 - `specs/NNN-etapa/`: plano de cada etapa entregável (`spec`, `clarify`, `contracts`, `plan`, `tasks`; `implement` e `report` na execução).
 
 ## Regra de atualização

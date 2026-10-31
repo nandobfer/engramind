@@ -18,6 +18,8 @@
 - Texto: só com guarda aprovando (`similarity >= redator.min_similarity`), texto diferente e sem duplicata no canal; revisão `system/redator` (`reason = redact`), `version + 1` e job `embed`, nunca outro `redact`. O título aplicado também reenfileira `embed` (com os embeddings ligados; `Redaction.embed`).
 - Sem configuração ou desligado: `set_title_fallback` e `Done("skipped")`, sem chamada e sem `ERROR`.
 - Toda chamada grava `llm_calls`; `cost_usd` só quando o provedor informa.
+- `redator.temperature` (`Ready.temperature` → `LlmRequest.temperature`) vale para Redator e consolidador; `None` omite o campo do corpo nos três adaptadores. Nunca volte a fixar `temperature` no adaptador.
+- Recusa 4xx (exceto 408/429) vira `LlmError::Rejected("HTTP <status>: <motivo>")`, com o motivo de `provider_reason` (mensagem de erro do provedor, uma linha, sem a chave, ≤ 160 caracteres); vai para `details.reason`, a `message` e `llm_calls.error`, nunca para logs. Nas chamadas explícitas responde `422 PROVIDER_REJECTED`; `PROVIDER_FAILED` (502) é só indisponibilidade ou resposta inválida (decisão 0027).
 - Segredos: só chaves `SettingType::Secret`; `update_settings` as recusa (`SETTING_IS_SECRET`). Nunca registre o valor; tipos que o carregam (`SetSecretBody`, `TestRedatorBody`, as requisições MCP) não derivam `Debug`.
 - Logs: `redator.completed` (`INFO`), `redator.retry` e `redator.fallback` (`WARN`), `redator.skipped`, `redator.guard_*` (`DEBUG`); sempre provedor, modelo, outcome, tentativa e duração.
 

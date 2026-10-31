@@ -152,6 +152,13 @@ async fn execute<S: Store, H: JobHandler<S>>(core: &Core<S>, handler: &H, job: J
         JobOutcome::Fail(error) => JobFinish::Fail {
             error: error.clone(),
         },
+        JobOutcome::Wait(delay) => JobFinish::Wait {
+            run_after: at(now
+                .checked_add_signed(
+                    chrono::Duration::from_std(*delay).unwrap_or(chrono::Duration::MAX),
+                )
+                .unwrap_or(DateTime::<Utc>::MAX_UTC)),
+        },
     };
     match core.store().finish_job(id, finish, at(now)).await {
         Ok(true) => {}
@@ -241,8 +248,10 @@ pub fn spawn<S: Store, H: JobHandler<S>>(
 }
 
 impl<S: Store> Core<S> {
-    /// Sobe os runners da fila (`redact`, `embed`, `webhook` e `consolidate`).
+    /// Sobe os runners da fila (`redact`, `embed`, `webhook` e `consolidate`) e dispara o
+    /// download/carregamento do modelo local de embedding, quando é o provedor.
     pub fn spawn_workers(&self) -> Vec<JoinHandle<()>> {
+        self.prepare_local_embedding();
         vec![
             spawn(self.clone(), Redact, REDACT_CONCURRENCY),
             spawn(self.clone(), Embed, EMBED_CONCURRENCY),
