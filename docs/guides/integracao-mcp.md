@@ -23,6 +23,7 @@ Cada operação do Engramind é uma ferramenta com o mesmo nome base, os mesmos 
 - Chamar uma ferramenta oculta devolve o mesmo `SCOPE_REQUIRED` do REST.
 - Toda ferramenta declara `readOnlyHint`, `destructiveHint` e `idempotentHint`, derivados do catálogo de operações.
 - Mutações aceitam `idempotency_key`, com o mesmo efeito do cabeçalho `Idempotency-Key`.
+- `search_memories` e `get_hints` são leituras (`readOnlyHint`), mesmo sendo `POST` no REST: não aceitam `idempotency_key`. Para o agente lembrar de algo sem gastar contexto, `get_hints { text }` devolve só `{ id, title, channel }` (guia `busca-e-dicas`).
 
 ## Resultados e erros
 

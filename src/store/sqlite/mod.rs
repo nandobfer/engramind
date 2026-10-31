@@ -11,6 +11,7 @@ mod migrations;
 mod readers;
 mod settings;
 mod vec_extension;
+mod vectors;
 mod writer;
 
 use std::{fs, path::Path, time::Duration};
@@ -25,13 +26,15 @@ use super::{ChannelSettingsMap, DoctorReport, MigrationStatus, ReadyReport, Stor
 use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
-        Channel, ChannelPatch, ChannelStats, ContextSnapshot, IdemRow, IdentityCounts,
-        InjectionBump, Job, JobCount, JobFilter, JobFinish, LlmActivity, LlmCall, LlmCallFilter,
-        Lookup, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite,
-        Network, NewAgent, NewApp, NewChannel, NewLlmCall, NewMemory, NewSubscription, NewToken,
-        Redaction, RetrievalBump, SecretView, SettingChange, SettingRow, StatusAction,
-        StoredSecret, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
-        UsageEntry, WriteContext,
+        Channel, ChannelPatch, ChannelStats, ContextSnapshot, EmbedSource, EmbeddingState,
+        EmbeddingSwitch, IdemRow, IdentityCounts, InjectionBump, Job, JobCount, JobFilter,
+        JobFinish, LlmActivity, LlmCall, LlmCallFilter, Lookup, META_EMBEDDING_MODEL, Memory,
+        MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent,
+        NewApp, NewChannel, NewLlmCall, NewMemory, NewSubscription, NewToken, Redaction,
+        ReindexJobs, ReindexPlan, ReindexState, RetrievalBump, SecretView, SettingChange,
+        SettingRow, StatusAction, StoredSecret, Subscription, SubscriptionPatch, TextQuery, Token,
+        TokenFilter, TokenPatch, UsageEntry, VectorBatch, VectorCounts, VectorHit, VectorQuery,
+        WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -645,6 +648,7 @@ impl Store for SqliteStore {
         &self,
         changes: Vec<SettingChange>,
         retained_categories: Option<Vec<String>>,
+        embedding: Option<EmbeddingSwitch>,
         context: WriteContext,
     ) -> Result<Vec<SettingRow>, StoreError> {
         self.mutate(move |transaction| {
@@ -652,6 +656,7 @@ impl Store for SqliteStore {
                 transaction,
                 &changes,
                 retained_categories.as_deref(),
+                embedding.as_ref(),
                 &context,
             )
         })
@@ -806,6 +811,86 @@ impl Store for SqliteStore {
     async fn memory_content_hash(&self, memory_id: String) -> Result<Option<Vec<u8>>, StoreError> {
         self.read(move |connection| memories::content_hash(connection, &memory_id))
             .await
+    }
+
+    async fn embedding_model(&self) -> Result<Option<String>, StoreError> {
+        self.meta(META_EMBEDDING_MODEL)
+            .await
+            .map(|value| value.map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
+    }
+
+    async fn set_embedding_model(&self, model_id: String) -> Result<(), StoreError> {
+        self.set_meta(META_EMBEDDING_MODEL, model_id.as_bytes())
+            .await
+    }
+
+    async fn embed_sources(&self, ids: Vec<String>) -> Result<Vec<EmbedSource>, StoreError> {
+        self.read(move |connection| vectors::embed_sources(connection, &ids))
+            .await
+    }
+
+    async fn save_vectors(&self, batch: VectorBatch) -> Result<u64, StoreError> {
+        self.write(move |transaction| vectors::save_vectors(transaction, &batch))
+            .await
+    }
+
+    async fn mark_embedding(
+        &self,
+        ids: Vec<String>,
+        state: EmbeddingState,
+    ) -> Result<u64, StoreError> {
+        self.write(move |transaction| vectors::mark_embedding(transaction, &ids, state.as_str()))
+            .await
+    }
+
+    async fn search_vectors(&self, query: VectorQuery) -> Result<Vec<VectorHit>, StoreError> {
+        self.read(move |connection| vectors::search_vectors(connection, &query))
+            .await
+    }
+
+    async fn vector_counts(
+        &self,
+        model_id: String,
+        since: Option<String>,
+    ) -> Result<VectorCounts, StoreError> {
+        self.read(move |connection| vectors::vector_counts(connection, &model_id, since.as_deref()))
+            .await
+    }
+
+    async fn reindex_state(&self) -> Result<Option<ReindexState>, StoreError> {
+        self.read(vectors::reindex_state).await
+    }
+
+    async fn reindex_jobs(
+        &self,
+        started_at: String,
+        exclude_job: Option<i64>,
+    ) -> Result<ReindexJobs, StoreError> {
+        self.read(move |connection| vectors::reindex_jobs(connection, &started_at, exclude_job))
+            .await
+    }
+
+    async fn start_reindex(
+        &self,
+        model_id: String,
+        plan: ReindexPlan,
+        context: WriteContext,
+    ) -> Result<ReindexState, StoreError> {
+        self.mutate(move |transaction| {
+            vectors::start_reindex(transaction, &model_id, &plan, &context)
+        })
+        .await
+    }
+
+    async fn finish_reindex(
+        &self,
+        model_id: String,
+        started_at: Option<String>,
+    ) -> Result<bool, StoreError> {
+        self.write(move |transaction| {
+            vectors::finish_reindex(transaction, &model_id, started_at.as_deref())
+        })
+        .await
     }
 }
 

@@ -30,6 +30,8 @@ use crate::{
         channels::{CreateChannelBody, ListChannelsQuery, UpdateChannelBody},
         context::{ContextFormat, ContextOutcome, GetContextQuery},
         docs::{GetGuideQuery, ListOperationsQuery, SearchDocsQuery},
+        embeddings::{ListEmbeddingModelsBody, TestEmbeddingBody},
+        hints::HintsBody,
         identities::{
             CreateAgentBody, CreateAppBody, IssueTokenBody, ListAgentsQuery, ListQuery,
             ListTokensQuery, UpdateBody, UpdateTokenBody,
@@ -265,6 +267,35 @@ pub struct TestRedatorRequest {
     /// Mapa parcial `redator.* → valor` usado só neste teste.
     #[serde(default)]
     pub settings: Option<BTreeMap<String, Value>>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+/// Sem `Debug`: a proposta pode carregar `embedding.api_key` em claro.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TestEmbeddingRequest {
+    /// Texto de exemplo (1 a 2000 caracteres).
+    pub text: String,
+    /// Mapa parcial `embedding.* → valor` usado só neste teste.
+    #[serde(default)]
+    pub settings: Option<BTreeMap<String, Value>>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+/// Sem `Debug`: pode carregar a chave do provedor em claro.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListEmbeddingModelsRequest {
+    /// `local`, `openai_compatible` ou `ollama` (`gemini` e `off` não listam).
+    pub provider: String,
+    /// URL do provedor remoto; vazia usa `embedding.base_url`.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Chave em claro (não é gravada); vazia usa `embedding.api_key`.
+    #[serde(default)]
+    pub api_key: Option<String>,
     #[serde(default)]
     pub idempotency_key: Option<String>,
 }
@@ -1017,6 +1048,24 @@ impl EngramindServer {
     }
 
     #[tool]
+    async fn get_hints(
+        &self,
+        Parameters(body): Parameters<HintsBody>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .get_hints(&principal, body, header.as_deref())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
     async fn memory_history(
         &self,
         Parameters(request): Parameters<MemoryHistoryRequest>,
@@ -1330,6 +1379,66 @@ impl EngramindServer {
                     },
                     request.idempotency_key.as_deref(),
                 )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn test_embedding(
+        &self,
+        Parameters(request): Parameters<TestEmbeddingRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .test_embedding(
+                    &principal,
+                    TestEmbeddingBody {
+                        text: request.text,
+                        settings: request.settings,
+                    },
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn list_embedding_models(
+        &self,
+        Parameters(request): Parameters<ListEmbeddingModelsRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .list_embedding_models(
+                    &principal,
+                    ListEmbeddingModelsBody {
+                        provider: request.provider,
+                        base_url: request.base_url,
+                        api_key: request.api_key,
+                    },
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn reembed_all(
+        &self,
+        Parameters(request): Parameters<Idempotency>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .reembed_all(&principal, request.idempotency_key.as_deref())
                 .await
                 .map(|mutation| mutation.value),
         )

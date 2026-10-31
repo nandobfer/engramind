@@ -9,7 +9,7 @@ use tokio::{sync::Semaphore, task::JoinHandle};
 use super::JobOutcome;
 use crate::{
     core::{
-        Core, ids,
+        Core, embeddings, ids,
         model::{Job, JobFinish},
         redator,
     },
@@ -20,6 +20,9 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 /// Concorrência do `redact` (006 D-001).
 pub const REDACT_CONCURRENCY: usize = 2;
+/// Concorrência do `embed` (007 Q-011); o provedor local serializa as chamadas de qualquer
+/// forma, e o ONNX Runtime já usa vários threads.
+pub const EMBED_CONCURRENCY: usize = 2;
 
 /// Um tipo de job e quem o executa.
 pub trait JobHandler<S: Store>: Send + Sync + 'static {
@@ -41,6 +44,21 @@ impl<S: Store> JobHandler<S> for Redact {
 
     async fn run(&self, core: &Core<S>, job: Job) -> JobOutcome {
         core.run_redact(&job).await
+    }
+}
+
+/// Job `embed`: o vetor de uma memória ou de um lote da reindexação.
+pub struct Embed;
+
+impl<S: Store> JobHandler<S> for Embed {
+    const KIND: &'static str = embeddings::JOB_KIND;
+
+    fn lease(&self, core: &Core<S>) -> Duration {
+        core.embed_lease()
+    }
+
+    async fn run(&self, core: &Core<S>, job: Job) -> JobOutcome {
+        core.run_embed(&job).await
     }
 }
 
@@ -182,9 +200,17 @@ pub fn spawn<S: Store, H: JobHandler<S>>(
 }
 
 impl<S: Store> Core<S> {
-    /// Sobe os runners da fila (006: só `redact`; `embed` chega na 007).
+    /// Sobe os runners da fila (`redact` e `embed`).
     pub fn spawn_workers(&self) -> Vec<JoinHandle<()>> {
-        vec![spawn(self.clone(), Redact, REDACT_CONCURRENCY)]
+        vec![
+            spawn(self.clone(), Redact, REDACT_CONCURRENCY),
+            spawn(self.clone(), Embed, EMBED_CONCURRENCY),
+        ]
+    }
+
+    /// Executa agora os jobs `embed` prontos em `now` (testes e diagnóstico).
+    pub async fn run_embed_jobs(&self, now: DateTime<Utc>) -> usize {
+        drain(self, &Embed, now).await
     }
 
     /// Executa agora os jobs `redact` prontos em `now` (testes e diagnóstico).

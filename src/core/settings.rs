@@ -137,6 +137,32 @@ pub const REDATOR_MIN_SIMILARITY: &str = "redator.min_similarity";
 pub const REDATOR_TIMEOUT_MS: &str = "redator.timeout_ms";
 pub const REDATOR_MAX_ATTEMPTS: &str = "redator.max_attempts";
 pub const REDATOR_FALLBACK_MODELS: &str = "redator.fallback_models";
+pub const EMBEDDING_PROVIDER: &str = "embedding.provider";
+pub const EMBEDDING_MODEL: &str = "embedding.model";
+pub const EMBEDDING_BASE_URL: &str = "embedding.base_url";
+pub const EMBEDDING_API_KEY: &str = "embedding.api_key";
+pub const EMBEDDING_DIMENSIONS: &str = "embedding.dimensions";
+pub const EMBEDDING_QUERY_PREFIX: &str = "embedding.query_prefix";
+pub const EMBEDDING_DOCUMENT_PREFIX: &str = "embedding.document_prefix";
+pub const EMBEDDING_BATCH_SIZE: &str = "embedding.batch_size";
+pub const EMBEDDING_TIMEOUT_MS: &str = "embedding.timeout_ms";
+pub const SEARCH_VECTOR_WEIGHT: &str = "search.vector_weight";
+pub const SEARCH_TEXT_WEIGHT: &str = "search.text_weight";
+pub const SEARCH_RRF_K: &str = "search.rrf_k";
+pub const SEARCH_DEFAULT_LIMIT: &str = "search.default_limit";
+pub const SEARCH_HINT_THRESHOLD: &str = "search.hint_threshold";
+pub const SEARCH_HINT_LIMIT: &str = "search.hint_limit";
+/// Provedores de embedding (`embedding.provider`).
+pub const EMBEDDING_PROVIDERS: &[&str] = &["local", "openai_compatible", "ollama", "gemini", "off"];
+/// Chaves que definem o espaço dos vetores: mudar uma delas valida o provedor e reindexa.
+pub const EMBEDDING_IDENTITY_KEYS: &[&str] = &[
+    EMBEDDING_PROVIDER,
+    EMBEDDING_MODEL,
+    EMBEDDING_BASE_URL,
+    EMBEDDING_DIMENSIONS,
+    EMBEDDING_QUERY_PREFIX,
+    EMBEDDING_DOCUMENT_PREFIX,
+];
 /// Provedores do Redator (`redator.provider`).
 pub const REDATOR_PROVIDERS: &[&str] = &["openai_compatible", "anthropic", "gemini"];
 
@@ -213,7 +239,7 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingType::Number { min: 0.0, max: 1.0 },
         default: "0.85",
         channel_override: false,
-        description: "Similaridade mínima para uma memória aparecer em `similar` na resposta de escrita (Jaccard dos termos até haver embeddings).",
+        description: "Similaridade mínima para uma memória aparecer em `similar` na resposta de escrita (Jaccard dos termos dos candidatos do FTS; o cosseno entra com a consolidação).",
         since: "0.4.0",
     },
     SettingSpec {
@@ -331,7 +357,7 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingType::Number { min: 0.0, max: 1.0 },
         default: "0.8",
         channel_override: false,
-        description: "Guarda de sentido: similaridade de embedding mínima entre o original e o revisado. Sem embeddings (até a 007), o texto revisado nunca é aplicado.",
+        description: "Guarda de sentido: similaridade de cosseno mínima entre os embeddings do original e do revisado. Com `embedding.provider = off` ou o provedor indisponível, o texto revisado nunca é aplicado.",
         since: "0.6.0",
     },
     SettingSpec {
@@ -363,6 +389,135 @@ pub const SETTINGS: &[SettingSpec] = &[
         channel_override: false,
         description: "Modelos tentados em ordem quando o principal falha por indisponibilidade, limite (429) ou tempo limite.",
         since: "0.6.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_PROVIDER,
+        kind: SettingType::Choice(EMBEDDING_PROVIDERS),
+        default: r#""local""#,
+        channel_override: false,
+        description: "Quem gera os vetores: `local` (fastembed no próprio serviço), `openai_compatible` (`POST /embeddings`), `ollama` (`/api/embed`), `gemini` (`batchEmbedContents`) ou `off` (só busca textual). Trocar valida o provedor e reindexa.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_MODEL,
+        kind: SettingType::Text { max: 200 },
+        default: r#""multilingual-e5-small""#,
+        channel_override: false,
+        description: "Modelo de embedding (nunca de chat). No `local`, um dos de `list_embedding_models`. Trocar reindexa.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_BASE_URL,
+        kind: SettingType::Url,
+        default: "null",
+        channel_override: false,
+        description: "URL base do provedor remoto. Obrigatória no `openai_compatible` (por exemplo `https://api.openai.com/v1`) e no `ollama` (por exemplo `http://127.0.0.1:11434`); no `gemini`, vazia usa a URL oficial.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_API_KEY,
+        kind: SettingType::Secret,
+        default: "null",
+        channel_override: false,
+        description: "Chave de API do provedor de embedding, cifrada com `SECRETS_KEY`. Grave com `set_secret`; obrigatória no `gemini`. Trocar a chave não reindexa.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_DIMENSIONS,
+        kind: SettingType::Integer { min: 1, max: 8192 },
+        default: "null",
+        channel_override: false,
+        description: "Dimensão pedida ao provedor (`dimensions` no OpenAI-compatível, `outputDimensionality` no Gemini). Vazia, vale a do modelo. Entra no `model_id` e reindexa.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_QUERY_PREFIX,
+        kind: SettingType::Text { max: 200 },
+        default: "null",
+        channel_override: false,
+        description: "Prefixo das consultas. Vazio, vale o automático: `query: ` na família e5, nada nos outros modelos.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_DOCUMENT_PREFIX,
+        kind: SettingType::Text { max: 200 },
+        default: "null",
+        channel_override: false,
+        description: "Prefixo das memórias. Vazio, vale o automático: `passage: ` na família e5, nada nos outros modelos.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_BATCH_SIZE,
+        kind: SettingType::Integer { min: 1, max: 256 },
+        default: "32",
+        channel_override: false,
+        description: "Memórias por chamada ao provedor nos jobs da reindexação.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: EMBEDDING_TIMEOUT_MS,
+        kind: SettingType::Integer {
+            min: 100,
+            max: 120_000,
+        },
+        default: "15000",
+        channel_override: false,
+        description: "Tempo limite de cada chamada de embedding dos jobs e testes, em milissegundos. A consulta da busca e das dicas espera no máximo 2 s.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: SEARCH_VECTOR_WEIGHT,
+        kind: SettingType::Number {
+            min: 0.0,
+            max: 10.0,
+        },
+        default: "1.0",
+        channel_override: false,
+        description: "Peso do ramo vetorial na fusão RRF de `search_memories`.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: SEARCH_TEXT_WEIGHT,
+        kind: SettingType::Number {
+            min: 0.0,
+            max: 10.0,
+        },
+        default: "1.0",
+        channel_override: false,
+        description: "Peso do ramo textual (FTS5/BM25) na fusão RRF de `search_memories`.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: SEARCH_RRF_K,
+        kind: SettingType::Integer { min: 1, max: 1000 },
+        default: "60",
+        channel_override: false,
+        description: "Constante `k` da fusão RRF: `score = Σ peso / (k + posição)`.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: SEARCH_DEFAULT_LIMIT,
+        kind: SettingType::Integer { min: 1, max: 50 },
+        default: "10",
+        channel_override: false,
+        description: "Resultados de `search_memories` quando `limit` não é informado.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: SEARCH_HINT_THRESHOLD,
+        kind: SettingType::Number { min: 0.0, max: 1.0 },
+        default: "0.8",
+        channel_override: false,
+        description: "Similaridade de cosseno mínima de uma dica (`get_hints`). Modelos e5 comprimem os cossenos: valores perto de 0,88 filtram melhor.",
+        since: "0.7.0",
+    },
+    SettingSpec {
+        key: SEARCH_HINT_LIMIT,
+        kind: SettingType::Integer { min: 1, max: 20 },
+        default: "3",
+        channel_override: false,
+        description: "Dicas devolvidas por `get_hints` quando `limit` não é informado.",
+        since: "0.7.0",
     },
 ];
 
@@ -1002,7 +1157,18 @@ impl<S: Store> Core<S> {
                 value_json,
             });
         }
+        let current = self.settings_snapshot();
+        let proposed: BTreeMap<&'static str, Value> = body
+            .0
+            .iter()
+            .filter_map(|(name, value)| spec(name).map(|spec| (spec.key, value.clone())))
+            .collect();
+        // Troca do espaço dos vetores: o provedor é validado antes da transação (007 FR-008).
+        let switch = self
+            .embedding_switch(&current, &current.with(&proposed))
+            .await?;
         let core = self.clone();
+        let stored_switch = switch.clone();
         let mutation = self
             .mutate(
                 principal,
@@ -1013,7 +1179,7 @@ impl<S: Store> Core<S> {
                 |context| async move {
                     match core
                         .store()
-                        .update_settings(changes, retained.clone(), context)
+                        .update_settings(changes, retained.clone(), stored_switch, context)
                         .await
                     {
                         Err(StoreError::Conflict("CATEGORY_IN_USE")) => {
@@ -1027,6 +1193,11 @@ impl<S: Store> Core<S> {
             )
             .await?;
         self.replace_settings(SettingsSnapshot::from_rows(&mutation.value));
+        if let Some(switch) = &switch
+            && !mutation.replayed
+        {
+            self.embedding_switched(switch).await;
+        }
         let secrets = self.store().list_secrets().await?;
         Ok(Mutation {
             value: view(&mutation.value, &secrets, None)?,

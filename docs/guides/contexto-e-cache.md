@@ -101,8 +101,8 @@ O bloco renderizado fica num cache em memória com até 1024 entradas, pela `ver
 
 ## Contexto e busca
 
-`search_memories` devolve `context_version`, a `version` de `get_context` sem `format` para a mesma seleção. Com `exclude_context: true`, a busca deixa de fora as memórias com texto completo no contexto; as da faixa de títulos continuam buscáveis.
+`search_memories` devolve `context_version`, a `version` de `get_context` sem `format` para a mesma seleção. Com `exclude_context: true`, a busca deixa de fora as memórias com texto completo no contexto; as da faixa de títulos continuam buscáveis. `get_hints` deixa de fora as mesmas memórias (guia `busca-e-dicas`).
 
 ## Uso registrado
 
-Cada `get_context` com conteúdo (não o `304`) soma `injected_count` nas memórias de texto completo e grava uma linha em `usage_log`, com o instante, o app, o agente, o token, os canais, os ids e `rendered_tokens`. Cada busca grava a operação, os canais e os ids encontrados. A gravação é em lote, a cada 5 segundos.
+Cada `get_context` com conteúdo (não o `304`) soma `injected_count` nas memórias de texto completo e grava uma linha em `usage_log`, com o instante, o app, o agente, o token, os canais, os ids e `rendered_tokens`. Cada busca e cada pedido de dicas grava a operação (`search_memories` ou `get_hints`), os canais e os ids encontrados. A gravação é em lote, a cada 5 segundos.

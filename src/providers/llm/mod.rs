@@ -182,12 +182,12 @@ pub fn http_client() -> reqwest::Client {
 
 /// Resposta HTTP que não foi 2xx: status e um trecho do corpo, só para decidir o que fazer
 /// (nunca registrado).
-struct HttpFailure {
-    status: u16,
-    body: String,
+pub(crate) struct HttpFailure {
+    pub(crate) status: u16,
+    pub(crate) body: String,
 }
 
-enum PostError {
+pub(crate) enum PostError {
     Llm(LlmError),
     Http(HttpFailure),
 }
@@ -201,7 +201,7 @@ impl From<PostError> for LlmError {
     }
 }
 
-fn classify_status(status: u16) -> LlmError {
+pub(crate) fn classify_status(status: u16) -> LlmError {
     match status {
         429 => LlmError::RateLimited,
         408 => LlmError::Timeout,
@@ -210,7 +210,7 @@ fn classify_status(status: u16) -> LlmError {
     }
 }
 
-fn transport(error: &reqwest::Error) -> LlmError {
+pub(crate) fn transport(error: &reqwest::Error) -> LlmError {
     if error.is_timeout() {
         LlmError::Timeout
     } else {
@@ -219,13 +219,41 @@ fn transport(error: &reqwest::Error) -> LlmError {
 }
 
 /// `POST` JSON com o tempo limite do destino; devolve o corpo JSON de uma resposta 2xx.
-async fn post_json(
+pub(crate) async fn post_json(
     endpoint: &Endpoint,
     url: &str,
     headers: &[(&str, &str)],
     body: &Value,
 ) -> Result<Value, PostError> {
     let mut request = endpoint.http.post(url).timeout(endpoint.timeout).json(body);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| PostError::Llm(transport(&error)))?;
+    let status = response.status().as_u16();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| PostError::Llm(transport(&error)))?;
+    if !(200..300).contains(&status) {
+        return Err(PostError::Http(HttpFailure {
+            status,
+            body: text.chars().take(2000).collect(),
+        }));
+    }
+    serde_json::from_str(&text).map_err(|_| PostError::Llm(LlmError::InvalidResponse))
+}
+
+/// `GET` com o tempo limite do destino; devolve o corpo JSON de uma resposta 2xx.
+pub(crate) async fn get_json(
+    endpoint: &Endpoint,
+    url: &str,
+    headers: &[(&str, &str)],
+) -> Result<Value, PostError> {
+    let mut request = endpoint.http.get(url).timeout(endpoint.timeout);
     for (name, value) in headers {
         request = request.header(*name, *value);
     }

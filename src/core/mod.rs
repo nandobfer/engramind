@@ -11,6 +11,8 @@ pub mod channels;
 pub mod context;
 pub mod counters;
 pub mod docs;
+pub mod embeddings;
+pub mod hints;
 pub mod idempotency;
 pub mod identities;
 pub mod ids;
@@ -37,15 +39,16 @@ use tokio::sync::Notify;
 
 use crate::{
     auth::token::TokenService,
-    config::{DatabaseSettings, Secret, SecretKey},
+    config::{DatabaseSettings, ModelsSettings, Secret, SecretKey},
     error::ApiError,
+    providers::embeddings::{Embedder, LocalEmbedder},
     store::{Store, StoreError},
 };
 
 use self::{
     access::NetworkCache, context::cache::ContextCache, counters::Counters, docs::Docs,
     model::Actor, operations::OperationSpec, principal::Principal, redator::guard::MeaningGuard,
-    redator::guard::NoGuard, secrets::Vault, settings::SettingsSnapshot, usage::Usage,
+    secrets::Vault, settings::SettingsSnapshot, usage::Usage,
 };
 
 /// Ponto de entrada das operações. Barato de clonar.
@@ -68,7 +71,12 @@ struct Inner<S> {
     http: reqwest::Client,
     /// Acorda os runners da fila depois de um commit que enfileirou jobs.
     jobs: Arc<Notify>,
-    guard: RwLock<Arc<dyn MeaningGuard>>,
+    /// Guarda de sentido trocada pelos testes; sem ela, a dos embeddings vigentes.
+    guard: RwLock<Option<Arc<dyn MeaningGuard>>>,
+    /// Provedor `local` (fastembed) compartilhado pelo processo.
+    local: LocalEmbedder,
+    /// Substituto do provedor `local` nos testes (embeddings por hash).
+    local_override: RwLock<Option<Arc<dyn Embedder>>>,
 }
 
 impl<S: Store> Core<S> {
@@ -78,6 +86,7 @@ impl<S: Store> Core<S> {
         pepper: Secret,
         secrets_key: SecretKey,
         database: DatabaseSettings,
+        models: ModelsSettings,
     ) -> Self {
         Self {
             inner: Arc::new(Inner {
@@ -93,7 +102,9 @@ impl<S: Store> Core<S> {
                 vault: Vault::new(secrets_key),
                 http: crate::providers::llm::http_client(),
                 jobs: Arc::new(Notify::new()),
-                guard: RwLock::new(Arc::new(NoGuard)),
+                guard: RwLock::new(None),
+                local: LocalEmbedder::new(models.path, models.onnx_runtime),
+                local_override: RwLock::new(None),
             }),
         }
     }
@@ -155,20 +166,41 @@ impl<S: Store> Core<S> {
         self.inner.jobs.notify_waiters();
     }
 
-    /// Guarda de sentido do Redator. Até a 007 é `NoGuard` (sem embeddings, nenhum texto
-    /// revisado passa); os testes trocam por uma guarda determinística.
+    /// Troca a guarda de sentido do Redator (testes); tem precedência sobre a dos embeddings.
     pub fn set_meaning_guard(&self, guard: Arc<dyn MeaningGuard>) {
         if let Ok(mut current) = self.inner.guard.write() {
-            *current = guard;
+            *current = Some(guard);
         }
     }
 
-    pub(crate) fn meaning_guard(&self) -> Arc<dyn MeaningGuard> {
+    /// Guarda de sentido: a dos testes, senão a dos embeddings vigentes; sem nenhuma, `None`
+    /// (falha fechada: só o título).
+    pub(crate) async fn meaning_guard(&self) -> Option<Arc<dyn MeaningGuard>> {
+        let fixed = self.inner.guard.read().ok().and_then(|guard| guard.clone());
+        match fixed {
+            Some(guard) => Some(guard),
+            None => self.embedding_guard().await,
+        }
+    }
+
+    /// Substitui o provedor `local` (testes): embeddings determinísticos, sem ONNX Runtime.
+    pub fn set_local_embedder(&self, embedder: Arc<dyn Embedder>) {
+        if let Ok(mut current) = self.inner.local_override.write() {
+            *current = Some(embedder);
+        }
+    }
+
+    pub(crate) fn local_embedder(&self) -> Arc<dyn Embedder> {
         self.inner
-            .guard
+            .local_override
             .read()
-            .map(|guard| guard.clone())
-            .unwrap_or_else(|_| Arc::new(NoGuard))
+            .ok()
+            .and_then(|current| current.clone())
+            .unwrap_or_else(|| Arc::new(self.inner.local.clone()))
+    }
+
+    pub(crate) fn models_path(&self) -> &std::path::Path {
+        self.inner.local.models_path()
     }
 
     pub(crate) fn database(&self) -> &DatabaseSettings {
@@ -231,6 +263,10 @@ pub(crate) fn store_error(error: StoreError, not_found: impl FnOnce() -> ApiErro
             "O canal esta arquivado; restaure-o antes de escrever",
         ),
         StoreError::Conflict("JOB_NOT_RETRYABLE") => jobs::job_not_retryable(),
+        StoreError::Conflict("REEMBED_IN_PROGRESS") => ApiError::new(
+            "REEMBED_IN_PROGRESS",
+            "Ja ha uma reindexacao em andamento; acompanhe em get_status",
+        ),
         StoreError::Conflict("SUBSCRIPTION_EXISTS") => {
             ApiError::new("SUBSCRIPTION_EXISTS", "O agente ja assina esse alvo")
         }

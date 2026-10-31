@@ -269,23 +269,25 @@ fn csv(value: Option<&str>) -> Vec<String> {
         .collect()
 }
 
-/// Jobs de conteúdo (Q-001): título e texto pelo Redator, e o vetor. `title_only` no `revert`
-/// (Q-008), para o Redator não reescrever o texto restaurado.
-fn content_jobs(title_only: bool) -> Vec<NewJob> {
+/// Jobs de conteúdo (Q-001): título e texto pelo Redator, e o vetor (só com os embeddings
+/// ligados, 007 FR-010). `title_only` no `revert` (Q-008), para o Redator não reescrever o
+/// texto restaurado.
+fn content_jobs(title_only: bool, embed: bool) -> Vec<NewJob> {
     let mut extra = Map::new();
     if title_only {
         extra.insert("title_only".to_owned(), Value::Bool(true));
     }
-    vec![
-        NewJob {
-            kind: "redact",
-            extra,
-        },
-        NewJob {
+    let mut jobs = vec![NewJob {
+        kind: "redact",
+        extra,
+    }];
+    if embed {
+        jobs.push(NewJob {
             kind: "embed",
             extra: Map::new(),
-        },
-    ]
+        });
+    }
+    jobs
 }
 
 /// Erros do `Store` numa mutação de memória.
@@ -548,7 +550,7 @@ impl<S: Store> Core<S> {
                         content_hash: hash,
                         origin,
                         dedupe: snapshot.dedupe_exact(),
-                        jobs: content_jobs(false),
+                        jobs: content_jobs(false, core.embeddings_enabled()),
                         similar,
                     };
                     core.store()
@@ -622,7 +624,7 @@ impl<S: Store> Core<S> {
                         category,
                         dedupe: snapshot.dedupe_exact(),
                         reason: "update",
-                        jobs: content_jobs(false),
+                        jobs: content_jobs(false, core.embeddings_enabled()),
                         similar,
                     };
                     let target = MemoryTarget {
@@ -691,7 +693,7 @@ impl<S: Store> Core<S> {
                         category: Some(revision.category),
                         dedupe,
                         reason: "revert",
-                        jobs: content_jobs(true),
+                        jobs: content_jobs(true, core.embeddings_enabled()),
                         similar: Vec::new(),
                     };
                     let target = MemoryTarget {
@@ -985,10 +987,11 @@ mod tests {
 
     #[test]
     fn revert_jobs_only_retitle() {
-        let jobs = content_jobs(true);
+        let jobs = content_jobs(true, true);
         assert_eq!(jobs[0].kind, "redact");
         assert_eq!(jobs[0].extra["title_only"], true);
         assert_eq!(jobs[1].kind, "embed");
-        assert!(content_jobs(false)[0].extra.is_empty());
+        assert!(content_jobs(false, true)[0].extra.is_empty());
+        assert_eq!(content_jobs(false, false).len(), 1);
     }
 }

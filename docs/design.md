@@ -283,7 +283,8 @@ memory_revisions (id, memory_id, version, title, text, category, status,
                   app_id, agent_id, reason, created_at)
 memory_fts    -- FTS5 externa (title, text) com content_rowid = memories.seq (rowid explícito,
               -- estável no VACUUM), tokenizer unicode61 remove_diacritics 2, sincronizada por trigger
-memory_vectors (memory_id PK, model_id, dims, embedding BLOB)  -- formato float32 do sqlite-vec
+memory_vectors (memory_id PK → memories ON DELETE CASCADE, model_id, dims NOT NULL, embedding BLOB,
+                updated_at)  -- formato float32 do sqlite-vec; um vetor por memória (decisão 0018)
 
 settings      (key PK, value_json, updated_by_app, updated_at)
 secrets       (key PK, value_enc, updated_at)          -- api keys do Redator e dos embeddings
@@ -328,9 +329,10 @@ Regras gerais:
    a revisão 1 com o texto original, gera auditoria, sobe a versão do canal e enfileira os jobs
    `redact` e `embed`.
 5. Responde na hora, porque a escrita nunca espera o LLM. A resposta traz `similar`: até três
-   memórias do mesmo canal com similaridade acima de `memory.similar_threshold`, pelo FTS na hora e
-   pelo vetor quando já existir. Com isso o agente pode preferir `update_memory` a uma quase-duplicata.
-   Sem vetor, a nota é o Jaccard dos termos dos 10 melhores candidatos do FTS (decisão 0012).
+   memórias do mesmo canal com similaridade acima de `memory.similar_threshold`, pelo FTS na hora.
+   Com isso o agente pode preferir `update_memory` a uma quase-duplicata. A nota é o Jaccard dos termos
+   dos 10 melhores candidatos do FTS (decisão 0012); o texto novo ainda não tem vetor e a escrita não
+   espera o provedor, então o cosseno entre memórias fica para a consolidação (009, decisão 0021).
 
 Duplicatas e canais arquivados (decisão 0011): na edição, no `revert` e no destino do `move`, um
 texto igual a outra memória do canal dá `409 MEMORY_DUPLICATE`; um canal arquivado não recebe
@@ -363,16 +365,19 @@ Aplicação (decisão 0016):
 - O texto revisado também precisa ser diferente do original e não repetir outra memória do canal.
 - Um job está superado quando a memória foi excluída ou existe um `redact` mais novo para ela; na
   aplicação, o `content_hash` precisa ser o lido no início do job. Superado termina sem efeito.
-- Até os embeddings (007), a guarda de sentido não tem como medir e falha fechada: só o título.
+- A guarda de sentido vetoriza original e revisado como documento e compara o cosseno (decisão 0021).
+  Com `embedding.provider = off` ou o provedor indisponível, ela falha fechada: só o título.
 
 Toda chamada fica registrada em `llm_calls`, com tokens, custo (só quando o provedor informa, como o
 `usage.cost` do OpenRouter) e duração.
 
 ### Embeddings
 
-- O job `embed` gera o vetor de `title + "\n" + text` e grava `memory_vectors` com o `model_id`.
-- Trocar o modelo enfileira `reembed_all`, com progresso em `get_status`. Enquanto isso, a busca
-  usa só os vetores do modelo atual e o FTS.
+- O job `embed` gera o vetor de `title + "\n" + text` e grava `memory_vectors` com o `model_id`, só se o
+  conteúdo, o título e o modelo vigente ainda forem os lidos (decisão 0018). O título aplicado pelo
+  Redator também reenfileira o `embed`.
+- Trocar o modelo enfileira a reindexação, com progresso em `get_status`. Enquanto isso, a busca
+  usa só os vetores do modelo atual e o FTS (decisão 0020).
 
 ### Edição e concorrência
 
@@ -493,8 +498,9 @@ Parâmetros: `{ query, channels?, categories?, limit?, include_archived?, exclud
 2. **Textual**: FTS5 com BM25 sobre título e texto (sem acentos, `unicode61 remove_diacritics 2`).
    A consulta vira termos entre aspas unidos por `OR`, com o título pesando o dobro (decisão 0012).
 3. **Fusão RRF**: `score = Σ peso / (rrf_k + posição)`, com pesos configuráveis. Sem embeddings
-   (desligados ou ainda pendentes), a busca usa só o FTS. A resposta é
-   `{ results: [{ rank, score, memory }] }`.
+   (desligados, sem configuração, com falha ou acima de 2 s na consulta), a busca usa só o FTS. A
+   resposta é `{ mode, results: [{ rank, score, memory }] }`, com `mode` `hybrid` ou `text`
+   (decisão 0021).
 4. `exclude_ids` tira o que já está no contexto. A resposta traz o `version` do contexto, e o
    consumidor pode passar `exclude_context: true` para o serviço excluir sozinho.
 5. Incrementa `retrieval_count` e `last_retrieved_at` (em lote).
@@ -547,8 +553,8 @@ rodar em dois lugares:
 | Qualidade em pt-BR | Boa com um modelo **multilíngue** (modelos só em inglês, como o `all-MiniLM-L6-v2` do Magic Context, são ruins em português) | Muito boa |
 
 - **Inicialização:** o serviço nasce com `embedding.provider = "local"` e o modelo
-  `multilingual-e5-small` quantizado. As memórias não saem do serviço, não há custo, e a qualidade
-  basta para frases curtas.
+  `multilingual-e5-small` (fp32 no fastembed). As memórias não saem do serviço, não há custo, e a
+  qualidade basta para frases curtas.
 - **Troca pela configuração** (REST, MCP ou CLI, token `admin`), a qualquer momento:
 
   | `embedding.provider` | Campos usados | Exemplos |
@@ -572,8 +578,9 @@ rodar em dois lugares:
 - `test_embedding` valida a configuração proposta antes de salvar: chama o provedor, devolve a
   dimensão detectada e a latência, e recusa salvar se falhar.
 - Cada modelo tem uma dimensão fixa. Salvar outro provedor ou modelo enfileira `reembed_all`
-  (reindexação de todas as memórias, com progresso em `get_status`). Até terminar, a busca usa os
-  vetores do modelo anterior ainda válidos e o FTS, sem misturar dimensões.
+  (reindexação de todas as memórias, com progresso em `get_status`). Até terminar, a busca usa só os
+  vetores do modelo vigente — o ramo vetorial cobre as memórias já reprocessadas e o FTS cobre o resto —,
+  sem misturar dimensões (decisão 0020).
 - Com o provedor local, o modelo é baixado no primeiro uso para `MODELS_PATH` (volume `/data`), e um
   modelo local que não estiver em uso é removido do disco depois da reindexação.
 - Com `off`, a busca textual e o contexto continuam funcionando normalmente.
@@ -750,8 +757,10 @@ citado nela precisa existir em `engramind help --json` (§15).
 - `runtime`: `debian:bookworm-slim` com `ca-certificates`, `curl`, o binário, o Litestream e o
   entrypoint, e o link `eng -> engramind`. Roda com usuário de sistema sem privilégios, `EXPOSE ${APP_PORT}` e
   `HEALTHCHECK` em `/health/live`.
-- A partir da 0.7.0 (embeddings), o runtime inclui a biblioteca do ONNX Runtime, porque o provedor
-  local de embeddings é o padrão. O modelo não entra na imagem: é baixado no primeiro uso para `/data/models`.
+- A partir da 0.7.0 (embeddings), o runtime inclui a biblioteca do ONNX Runtime (`onnxruntime-linux-x64`
+  1.31.1, versão e SHA-256 fixos em build args, ~29 MB), com `ORT_DYLIB_PATH` apontando para ela, porque o
+  provedor local de embeddings é o padrão (decisão 0019). O modelo não entra na imagem: é baixado no
+  primeiro uso para `/data/models` (o `multilingual-e5-small` do fastembed é fp32, ~470 MB, ~1 GB de RAM).
 - O desenvolvimento acontece fora do Docker (`cargo run` / `cargo nextest run`). O contêiner é sempre o
   artefato de produção.
 

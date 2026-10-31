@@ -1,6 +1,6 @@
 [package]
 name = "engramind"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.98"
 description = "Rede de memórias para agentes de IA"
@@ -23,6 +23,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 dirs = "7"
 dotenvy = "0.15"
+fastembed = { version = "7.5", default-features = false, features = ["ort-load-dynamic", "hf-hub-rustls-tls"] }
 hmac = "0.12"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

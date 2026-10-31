@@ -103,13 +103,21 @@ pub struct DatabaseSettings {
     pub litestream_enabled: bool,
 }
 
+/// Infraestrutura do provedor local de embeddings: cache dos modelos e a biblioteca do ONNX
+/// Runtime (`ORT_DYLIB_PATH`, lida também pelo `ort`).
+#[derive(Clone, Debug, Default)]
+pub struct ModelsSettings {
+    pub path: PathBuf,
+    pub onnx_runtime: Option<PathBuf>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub environment: Environment,
     pub host: IpAddr,
     pub port: u16,
     pub database: DatabaseSettings,
-    pub models_path: PathBuf,
+    pub models: ModelsSettings,
     pub bootstrap_admin_token: Option<Secret>,
     pub token_pepper: Secret,
     pub secrets_key: SecretKey,
@@ -194,9 +202,20 @@ impl Settings {
             value: port,
         })?;
         let database = DatabaseSettings::from_lookup(lookup)?;
-        let models_path = PathBuf::from(
-            optional(lookup, "MODELS_PATH").unwrap_or_else(|| "./data/models".to_owned()),
-        );
+        let models = ModelsSettings {
+            path: PathBuf::from(
+                optional(lookup, "MODELS_PATH").unwrap_or_else(|| "./data/models".to_owned()),
+            ),
+            onnx_runtime: optional(lookup, "ORT_DYLIB_PATH").map(PathBuf::from),
+        };
+        if let Some(path) = &models.onnx_runtime
+            && !path.is_file()
+        {
+            return Err(ConfigError::Invalid {
+                name: "ORT_DYLIB_PATH",
+                value: "arquivo inexistente".to_owned(),
+            });
+        }
         let bootstrap_admin_token = optional(lookup, "BOOTSTRAP_ADMIN_TOKEN").map(Secret::new);
         let token_pepper = Secret::new(required(lookup, "TOKEN_PEPPER")?);
         let secrets_key = parse_secrets_key(&required(lookup, "SECRETS_KEY")?)?;
@@ -231,7 +250,7 @@ impl Settings {
             host,
             port,
             database,
-            models_path,
+            models,
             bootstrap_admin_token,
             token_pepper,
             secrets_key,

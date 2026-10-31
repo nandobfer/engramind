@@ -52,9 +52,12 @@ Todo erro usa o envelope único:
 | `SECRET_UNKNOWN` | 400 | 2 | Chave de segredo fora do catálogo; `details.valid` traz as aceitas. |
 | `JOB_NOT_FOUND` | 404 | 5 | Job inexistente. |
 | `JOB_NOT_RETRYABLE` | 409 | 6 | Só jobs com `state = failed` voltam para a fila. |
-| `PROVIDER_NOT_CONFIGURED` | 400 | 2 | Redator sem provedor, modelo, URL ou chave; `details.missing` traz as chaves que faltam. |
-| `PROVIDER_FAILED` | 502 | 8 | O provedor do LLM falhou ou devolveu uma resposta inválida; `details.outcome` e `details.reason` trazem o motivo curto. |
-| `PROVIDER_TIMEOUT` | 504 | 8 | O provedor do LLM não respondeu dentro de `redator.timeout_ms`. |
+| `PROVIDER_NOT_CONFIGURED` | 400 | 2 | Redator ou embeddings desligados ou sem provedor, modelo, URL ou chave; `details.missing` traz as chaves que faltam. |
+| `PROVIDER_FAILED` | 502 | 8 | O provedor do LLM ou de embedding falhou ou devolveu uma resposta inválida; `details.outcome` e `details.reason` trazem o motivo curto. |
+| `PROVIDER_TIMEOUT` | 504 | 8 | O provedor do LLM ou de embedding não respondeu dentro de `redator.timeout_ms` ou `embedding.timeout_ms`. |
+| `PROVIDER_LISTING_UNSUPPORTED` | 400 | 2 | O provedor (`gemini` ou `off`) não oferece listagem de modelos de embedding. |
+| `EMBEDDING_DIMENSION_MISMATCH` | 502 | 8 | O provedor devolveu vetores de outra dimensão (a configurada em `embedding.dimensions` ou a do modelo); `details.expected` e `details.got`. |
+| `REEMBED_IN_PROGRESS` | 409 | 6 | Já há uma reindexação com jobs na fila; acompanhe em `get_status.embedding`. |
 | `PAYLOAD_TOO_LARGE` | 413 | 1 | Corpo acima de MAX_BODY_BYTES. |
 | `MCP_BAD_REQUEST` | 400 | 1 | Cabeçalhos ou mensagem MCP inválidos. |
 | `MCP_HOST_FORBIDDEN` | 403 | 1 | Cabeçalho `Host` fora de MCP_ALLOWED_HOSTS. |
@@ -80,8 +83,11 @@ Todo erro usa o envelope único:
 - `409 IDEMPOTENCY_KEY_CONFLICT`: a chave já foi usada com outro corpo; gere uma chave nova para a nova intenção.
 - `409 LAST_ADMIN_TOKEN`: emita outro token `admin` com `write` antes de revogar, desativar ou excluir o último.
 - `400 SETTING_IS_SECRET`: grave a chave com `set_secret`, nunca por `update_settings`.
-- `400 PROVIDER_NOT_CONFIGURED`: defina as chaves de `details.missing` (`update_settings` e `set_secret`) ou proponha-as em `settings` no `test_redator`.
+- `400 PROVIDER_NOT_CONFIGURED`: defina as chaves de `details.missing` (`update_settings` e `set_secret`) ou proponha-as em `settings` no `test_redator` e no `test_embedding`.
 - `409 JOB_NOT_RETRYABLE`: só jobs `failed` voltam para a fila; os outros já estão nela ou terminaram.
-- `502 PROVIDER_FAILED` e `504 PROVIDER_TIMEOUT`: o provedor do LLM falhou; confira modelo, URL e chave, ou acrescente `redator.fallback_models`.
+- `502 PROVIDER_FAILED` e `504 PROVIDER_TIMEOUT`: o provedor do LLM ou de embedding falhou; confira modelo, URL e chave, ou acrescente `redator.fallback_models`. Numa troca de embedding, nada foi gravado.
+- `502 EMBEDDING_DIMENSION_MISMATCH`: ajuste ou apague `embedding.dimensions` (ou troque de modelo) e teste com `test_embedding`.
+- `409 REEMBED_IN_PROGRESS`: espere a reindexação atual terminar (`get_status.embedding.state`).
+- `400 PROVIDER_LISTING_UNSUPPORTED`: escolha o modelo pela documentação do provedor e valide com `test_embedding`.
 - `429 RATE_LIMITED`: espere os segundos de `Retry-After`.
 - `503` e `504`: falhas transitórias; repita com backoff, usando `Idempotency-Key` nas mutações.

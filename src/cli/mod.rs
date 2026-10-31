@@ -130,13 +130,25 @@ pub enum Command {
     /// Memórias dos canais alcançados (`--channels` restringe).
     #[command(subcommand)]
     Memories(MemoriesCommand),
+    /// Dicas baratas (`#id · título · canal`) para um texto, pela busca vetorial com limiar alto.
+    Hints {
+        /// Texto do turno; as palavras são unidas por espaço.
+        #[arg(required = true, num_args = 1..)]
+        text: Vec<String>,
+        /// De 1 a 20 (padrão `search.hint_limit`).
+        #[arg(long)]
+        limit: Option<u32>,
+    },
     /// Configurações (token admin).
     #[command(subcommand)]
     Settings(SettingsCommand),
     /// Segredos de configuração (token admin).
     #[command(subcommand)]
     Secrets(SecretsCommand),
-    /// Mostra versão, banco, backup, contagens, fila e Redator (token admin).
+    /// Embeddings: reindexação (token admin).
+    #[command(subcommand)]
+    Embeddings(EmbeddingsCommand),
+    /// Mostra versão, banco, backup, contagens, fila, Redator e embeddings (token admin).
     Status,
     /// Fila de jobs (token admin).
     #[command(subcommand)]
@@ -436,7 +448,7 @@ pub enum MemoriesCommand {
         /// Id da memória (`m_…`).
         memory: String,
     },
-    /// Busca memórias por texto (acentos e caixa são ignorados).
+    /// Busca memórias por sentido e por texto (acentos e caixa são ignorados).
     Search {
         /// Consulta; as palavras são unidas por espaço.
         #[arg(required = true, num_args = 1..)]
@@ -444,7 +456,7 @@ pub enum MemoriesCommand {
         /// Categorias separadas por vírgula.
         #[arg(long)]
         categories: Option<String>,
-        /// De 1 a 50 (padrão 10).
+        /// De 1 a 50 (padrão `search.default_limit`).
         #[arg(long)]
         limit: Option<u32>,
         /// Inclui as memórias arquivadas.
@@ -648,6 +660,42 @@ pub enum SettingsCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
+    /// Testa a configuração de embedding com um texto, sem gravar nada.
+    TestEmbedding {
+        /// Texto de exemplo; `-` lê da entrada padrão.
+        #[arg(long)]
+        text: String,
+        /// Configuração proposta, só para o teste, como objeto JSON de chaves `embedding.*`.
+        #[arg(long, value_name = "JSON")]
+        settings: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Lista os modelos de embedding de um provedor (`local`, `ollama`, `openai_compatible`).
+    EmbeddingModels {
+        #[arg(long)]
+        provider: String,
+        /// URL do provedor remoto; vazia usa `embedding.base_url`.
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Lê a chave do provedor da entrada padrão (vazia usa `embedding.api_key`).
+        #[arg(long)]
+        api_key_stdin: bool,
+        /// Chave lida da entrada padrão.
+        #[arg(skip)]
+        api_key: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EmbeddingsCommand {
+    /// Revetoriza todas as memórias com o modelo vigente (progresso em `engramind status`).
+    Reembed {
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -801,10 +849,14 @@ async fn serve() -> anyhow::Result<()> {
         settings.token_pepper.clone(),
         settings.secrets_key.clone(),
         settings.database.clone(),
+        settings.models.clone(),
     );
     core.reload_settings()
         .await
         .context("falha ao carregar as configuracoes")?;
+    core.sync_embeddings()
+        .await
+        .context("falha ao sincronizar o modelo de embedding")?;
     match core
         .bootstrap(settings.bootstrap_admin_token.as_ref())
         .await

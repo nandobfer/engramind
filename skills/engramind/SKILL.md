@@ -39,6 +39,12 @@ engramind memories get m_8f2a1c3d --json
 
 `--exclude-context` deixa de fora o que você já leu com texto completo no contexto.
 
+A busca é por sentido e por palavras: "rodar todos os testes" encontra "suíte completa". O campo `mode` diz se o ramo por sentido rodou (`hybrid`) ou se só o texto foi usado (`text`). Para uma lembrança rápida, só com ids e títulos:
+
+```bash
+engramind hints como rodo os testes --json
+```
+
 A busca ignora acentos e caixa. Para ver só os títulos de um canal:
 
 ```bash

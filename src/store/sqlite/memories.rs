@@ -27,12 +27,12 @@ use crate::{
     store::StoreError,
 };
 
-const MEMORY_COLUMNS: &str = "m.id, c.slug, m.channel_id, m.category, m.title, m.title_state, \
+pub(super) const MEMORY_COLUMNS: &str = "m.id, c.slug, m.channel_id, m.category, m.title, m.title_state, \
      m.text, m.status, m.importance, m.version, m.embedding_state, m.author_app_id, a.slug, \
      m.author_agent_id, ga.slug || '/' || g.slug, m.origin_source, m.origin_label, \
      m.retrieval_count, m.injected_count, m.last_retrieved_at, m.verified_at, m.created_at, \
      m.updated_at, m.archived_at";
-const MEMORY_JOINS: &str = "JOIN channels c ON c.id = m.channel_id \
+pub(super) const MEMORY_JOINS: &str = "JOIN channels c ON c.id = m.channel_id \
      LEFT JOIN apps a ON a.id = m.author_app_id \
      LEFT JOIN agents g ON g.id = m.author_agent_id \
      LEFT JOIN apps ga ON ga.id = g.app_id";
@@ -49,7 +49,7 @@ fn status_at(row: &Row<'_>, index: usize) -> rusqlite::Result<MemoryStatus> {
     MemoryStatus::parse(&value).ok_or_else(|| invalid(index, format!("status: {value}")))
 }
 
-fn memory_from_row(row: &Row<'_>) -> rusqlite::Result<Memory> {
+pub(super) fn memory_from_row(row: &Row<'_>) -> rusqlite::Result<Memory> {
     let title_state: String = row.get(5)?;
     let embedding_state: String = row.get(10)?;
     let origin_source: Option<String> = row.get(15)?;
@@ -113,11 +113,11 @@ const REVISION_SELECT: &str = "SELECT r.version, r.title, r.text, r.category, r.
      LEFT JOIN agents g ON g.id = r.agent_id \
      LEFT JOIN apps ga ON ga.id = g.app_id";
 
-fn placeholders(count: usize) -> String {
+pub(super) fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
 }
 
-fn texts<'a>(values: impl IntoIterator<Item = &'a str>) -> Vec<SqlValue> {
+pub(super) fn texts<'a>(values: impl IntoIterator<Item = &'a str>) -> Vec<SqlValue> {
     values
         .into_iter()
         .map(|value| SqlValue::Text(value.to_owned()))
@@ -490,6 +490,15 @@ fn revision(
     Ok(())
 }
 
+/// `pending` quando a escrita enfileira o `embed`; `off` com os embeddings desligados.
+fn embedding_state(jobs: &[NewJob]) -> &'static str {
+    if jobs.iter().any(|job| job.kind == "embed") {
+        "pending"
+    } else {
+        "off"
+    }
+}
+
 fn enqueue(
     transaction: &Transaction,
     jobs: &[NewJob],
@@ -587,7 +596,7 @@ pub(super) fn create_memory(
                  (id, channel_id, category, title, text, status, content_hash, version,
                   title_state, embedding_state, author_app_id, author_agent_id, origin_source,
                   origin_label, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 'pending', 'pending', ?8, ?9, ?10, ?11,
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 'pending', ?13, ?8, ?9, ?10, ?11,
                      ?12, ?12)",
             params![
                 id,
@@ -601,7 +610,8 @@ pub(super) fn create_memory(
                 context.actor.agent_id,
                 origin_source,
                 origin_label,
-                context.at
+                context.at,
+                embedding_state(&new.jobs)
             ],
         )
         .map_err(sql_error)?;
@@ -675,9 +685,15 @@ pub(super) fn update_memory(
         transaction
             .execute(
                 "UPDATE memories SET title = ?1, text = ?2, content_hash = ?3,
-                     title_state = 'pending', embedding_state = 'pending', importance = NULL
+                     title_state = 'pending', embedding_state = ?5, importance = NULL
                  WHERE id = ?4",
-                params![content.title, content.text, content.content_hash, before.id],
+                params![
+                    content.title,
+                    content.text,
+                    content.content_hash,
+                    before.id,
+                    embedding_state(&patch.jobs)
+                ],
             )
             .map_err(sql_error)?;
     }
@@ -899,19 +915,30 @@ pub(super) fn apply_redaction(
             params![redaction.title, redaction.memory_id],
         )
         .map_err(sql_error)?;
+    let state = if redaction.embed { "pending" } else { "off" };
     if let Some((text, hash)) = &redaction.text {
         transaction
             .execute(
-                "UPDATE memories SET text = ?1, content_hash = ?2, embedding_state = 'pending',
+                "UPDATE memories SET text = ?1, content_hash = ?2, embedding_state = ?5,
                      importance = NULL, version = version + 1, updated_at = ?3
                  WHERE id = ?4",
-                params![text, hash, context.at, redaction.memory_id],
+                params![text, hash, context.at, redaction.memory_id, state],
+            )
+            .map_err(sql_error)?;
+    } else if redaction.embed {
+        // O vetor é de `título + texto`: o título novo também revetoriza.
+        transaction
+            .execute(
+                "UPDATE memories SET embedding_state = 'pending' WHERE id = ?1",
+                params![redaction.memory_id],
             )
             .map_err(sql_error)?;
     }
     let after = load(transaction, &redaction.memory_id)?;
     if redaction.text.is_some() {
         revision(transaction, &after, "redact", context)?;
+    }
+    if redaction.embed {
         enqueue(
             transaction,
             &[NewJob {

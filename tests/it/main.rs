@@ -6,6 +6,7 @@ mod cli;
 mod context;
 mod contract;
 mod docs;
+mod embeddings;
 mod health;
 mod identities;
 mod logging;

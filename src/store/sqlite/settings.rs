@@ -8,7 +8,9 @@ use super::{
 };
 use crate::{
     core::{
-        model::{AuditEvent, AuditFilter, SettingChange, SettingRow, WriteContext},
+        model::{
+            AuditEvent, AuditFilter, EmbeddingSwitch, SettingChange, SettingRow, WriteContext,
+        },
         pagination::{Cursor, Page, PageRequest},
     },
     store::StoreError,
@@ -40,6 +42,7 @@ pub(super) fn update_settings(
     transaction: &Transaction,
     changes: &[SettingChange],
     retained_categories: Option<&[String]>,
+    embedding: Option<&EmbeddingSwitch>,
     context: &WriteContext,
 ) -> Result<Vec<SettingRow>, StoreError> {
     if let Some(retained) = retained_categories
@@ -76,6 +79,9 @@ pub(super) fn update_settings(
                 after: parse(change.value_json.clone())?,
             },
         )?;
+    }
+    if let Some(embedding) = embedding {
+        super::vectors::switch(transaction, embedding, &context.at).map_err(sql_error)?;
     }
     let rows = get_settings(transaction).map_err(sql_error)?;
     journal::remember(transaction, context, &rows)?;

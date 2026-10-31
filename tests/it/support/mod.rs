@@ -1,6 +1,6 @@
 pub mod llm;
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     Router,
@@ -10,9 +10,10 @@ use axum::{
 };
 use engramind::{
     HttpSettings, build_app,
-    config::{AllowedHosts, DatabaseSettings, Secret, SecretKey},
+    config::{AllowedHosts, DatabaseSettings, ModelsSettings, Secret, SecretKey},
     core::Core,
     mcp::McpSettings,
+    providers::embeddings::HashEmbedder,
     store::SqliteStore,
 };
 use http_body_util::BodyExt as _;
@@ -40,6 +41,7 @@ impl TestContext {
         let context = Self::unmigrated();
         context.store.migrate().await.expect("migrate");
         context.core.reload_settings().await.expect("settings");
+        context.core.sync_embeddings().await.expect("embeddings");
         context
             .core
             .bootstrap(Some(&Secret::new(ADMIN_TOKEN.to_owned())))
@@ -61,7 +63,13 @@ impl TestContext {
                 read_pool_size: 2,
                 litestream_enabled: false,
             },
+            ModelsSettings {
+                path: dir.path().join("models"),
+                onnx_runtime: None,
+            },
         );
+        // O provedor local padrão vira embeddings por hash: sem ONNX Runtime nem download.
+        core.set_local_embedder(Arc::new(HashEmbedder::new()));
         let app = build_app(
             core.clone(),
             HttpSettings {

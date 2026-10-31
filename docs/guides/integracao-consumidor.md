@@ -1,6 +1,6 @@
 # Integração de um sistema consumidor
 
-Um sistema consumidor coloca as memórias do Engramind no prompt dos seus agentes. Esta é a primeira versão do guia: cobre o contexto, a busca e as ferramentas. Dicas por turno (`get_hints`), webhooks e importação chegam em versões seguintes.
+Um sistema consumidor coloca as memórias do Engramind no prompt dos seus agentes. Este guia cobre o contexto, as dicas por turno, a busca e as ferramentas. Webhooks e importação chegam em versões seguintes.
 
 ## Preparação (gestor, token `admin`)
 
@@ -23,12 +23,14 @@ curl -s -H "Authorization: Bearer $TOKEN" -H "If-None-Match: \"$VERSION\"" \
 
 O bloco é determinístico: a mesma rede, as mesmas memórias e as mesmas configurações dão o mesmo texto e a mesma `version`, em qualquer réplica do seu sistema e depois de reinícios do Engramind. Ordem, faixas e formatos estão no guia `contexto-e-cache`.
 
+4. Opcional: antes do turno, chame `get_hints { text }` com a mensagem do usuário e acrescente as dicas (`#id · título · canal`) **junto da mensagem do turno**, nunca na parte estável. São baratas (sem LLM), só trazem o que passa do limiar `search.hint_threshold` e nunca repetem o que já está no contexto; o agente busca o texto completo com `get_memory` se quiser. Sem embeddings, a lista vem vazia (guia `busca-e-dicas`).
+
 ## Ferramentas do agente
 
 - **MCP**: registre `POST /mcp` com o token do agente e o cabeçalho `Engramind-Channels` do projeto. `tools/list` já mostra só o que o token pode usar; repasse ao agente só as ferramentas que a sua política permite (por exemplo, `search_memories` e `get_memory` para leitura, `create_memory` para quem grava). O resource `engramind://context` é o mesmo bloco, e o prompt `memory-writing` é um texto curto para anexar ao agente que grava.
 - **CLI**: a alternativa é a skill `engramind`, com a CLI configurada por `ENGRAMIND_URL`, `ENGRAMIND_TOKEN` e `ENGRAMIND_CHANNELS`.
 
-Na busca, passe `exclude_context: true` para não repetir o que o agente já tem no prompt. Se `context_version` da resposta for diferente da `version` em uso, reconstrua o prompt no próximo turno.
+A busca é por sentido e por texto (`mode: hybrid`), com queda silenciosa para só texto (`mode: text`) quando os embeddings estão indisponíveis. Na busca, passe `exclude_context: true` para não repetir o que o agente já tem no prompt. Se `context_version` da resposta for diferente da `version` em uso, reconstrua o prompt no próximo turno.
 
 ## Erros
 

@@ -2,7 +2,7 @@
 
 ## Princípios
 
-- Toda chamada externa roda em worker sobre a fila `jobs`; a requisição do agente nunca espera o provedor (exceto `test_redator`, `test_embedding` e `list_embedding_models`, que são explícitos).
+- Toda chamada externa roda em worker sobre a fila `jobs`; a requisição do agente nunca espera o provedor. Exceções explícitas: `test_redator`, `test_embedding`, `list_embedding_models`, a validação de uma troca de embedding em `update_settings` (antes da transação) e o vetor da consulta em `search_memories`/`get_hints`, com prazo de 2 s e queda para o FTS.
 - Toda chamada tem timeout da configuração (`*.timeout_ms`) e retentativa limitada com backoff (`*.max_attempts`).
 - Provedor, modelo, URL e chave vêm das **configurações** (§12), nunca de variáveis de ambiente nem de constantes. Chaves são segredos cifrados.
 - Falha de provedor degrada, não quebra: a memória continua salva e buscável por texto.
@@ -23,7 +23,7 @@
 - Provedores: `local` (`fastembed`, padrão `multilingual-e5-small`), `openai_compatible`, `ollama`, `gemini` e `off`.
 - Só modelos de embedding; nunca modelos de chat.
 - Aplique `query_prefix`/`document_prefix` conforme o modelo.
-- Trocar provedor ou modelo enfileira `reembed_all`; até terminar, a busca usa só vetores do modelo vigente e o FTS.
+- Trocar provedor, modelo, URL, dimensão ou prefixo valida o provedor e reindexa na mesma transação; até terminar, a busca usa só vetores do modelo vigente e o FTS (decisão 0020; detalhes em `aicontext/embeddings.md`).
 - Modelos locais são baixados para `MODELS_PATH`; nunca entram na imagem.
 - `off` mantém busca textual e contexto funcionando.
 

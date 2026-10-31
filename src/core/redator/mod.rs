@@ -492,6 +492,7 @@ impl<S: Store> Core<S> {
                 let hash = memory_text::content_hash(&text);
                 (text, hash)
             }),
+            embed: self.embeddings_enabled(),
         };
         let context = WriteContext {
             actor: Actor {
@@ -551,7 +552,10 @@ impl<S: Store> Core<S> {
             Ok(None) => {}
             Ok(Some(_)) | Err(_) => return None,
         }
-        let similarity = self.meaning_guard().similarity(original, &revised).await;
+        let similarity = match self.meaning_guard().await {
+            Some(guard) => guard.similarity(original, &revised).await,
+            None => None,
+        };
         match similarity {
             Some(similarity) if similarity >= config.min_similarity => Some(revised),
             Some(similarity) => {

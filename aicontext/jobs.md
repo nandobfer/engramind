@@ -3,13 +3,13 @@
 ## Onde vive
 
 - `src/core/jobs/mod.rs`: `JobOutcome`, `list_jobs`, `retry_job`, `list_llm_calls`.
-- `src/core/jobs/runner.rs`: trait `JobHandler` (`KIND`, `lease`, `run`), `spawn` (runner em segundo plano), `drain` e `Core::spawn_workers` / `Core::run_redact_jobs(now)`.
+- `src/core/jobs/runner.rs`: trait `JobHandler` (`KIND`, `lease`, `run`), `spawn` (runner em segundo plano), `drain` e `Core::spawn_workers` / `Core::run_redact_jobs(now)` / `Core::run_embed_jobs(now)`. Runners: `Redact` e `Embed` (007, `aicontext/embeddings.md`), 2 em paralelo cada.
 - `src/store/sqlite/jobs.rs`: captura, fim, superados, lista, retry, contagens, `secrets` e `llm_calls`.
 - Adaptadores: `src/rest/jobs.rs` (tag `Jobs`, admin), ferramentas MCP de mesmo nome, `engramind jobs list|retry` e `engramind llm-calls list`.
 
 ## Regras
 
-- Jobs nascem na mesma transação da mutação (`Store`), com payload só de ids e versões (`memory_id`, `version`, `title_only`). Depois do commit, chame `Core::jobs_enqueued()` para acordar os runners.
+- Jobs nascem na mesma transação da mutação (`Store`), com payload só de ids e versões (`memory_id`, `version`, `title_only`; os lotes da reindexação levam `memory_ids` e `reindex`). Depois do commit, chame `Core::jobs_enqueued()` para acordar os runners.
 - Captura só por `Store::claim_job(kind, now, lease_until)`: `queued` pronto ou `running` com lease vencido, mais antigo primeiro, soma a tentativa. Nunca capture com `SELECT` + `UPDATE` separados.
 - `finish_job` só vale para `running`; `false` significa que outro executor retomou o job (log `jobs.lease_lost`).
 - Handler devolve `Done(outcome)`, `Superseded`, `Retry(erro)` ou `Fail(erro)`. Quem decide `Fail` é o handler (sabe `max_attempts`); o `ERROR jobs.failed` é do runner, uma vez. `Retry` usa `redator::backoff(attempts)`.

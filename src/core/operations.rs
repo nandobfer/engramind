@@ -44,6 +44,8 @@ pub const TAG_CHANNELS: &str = "Channels";
 pub const TAG_NETWORK: &str = "Network";
 pub const TAG_CONTEXT: &str = "Context";
 pub const TAG_MEMORIES: &str = "Memories";
+pub const TAG_SEARCH: &str = "Search";
+pub const TAG_EMBEDDINGS: &str = "Embeddings";
 pub const TAG_SETTINGS: &str = "Settings";
 pub const TAG_STATUS: &str = "Status";
 pub const TAG_JOBS: &str = "Jobs";
@@ -439,11 +441,22 @@ pub const OPERATIONS: &[OperationSpec] = &[
         method: "POST",
         ..read(
             "search_memories",
-            TAG_MEMORIES,
-            "Busca memórias por texto",
+            TAG_SEARCH,
+            "Busca memórias por sentido e por texto",
             RequiredKind::Any,
             "/v1/memories/search",
             &["memories", "search"],
+        )
+    },
+    OperationSpec {
+        method: "POST",
+        ..read(
+            "get_hints",
+            TAG_SEARCH,
+            "Dicas baratas (id, título e canal) para um texto, sem LLM",
+            RequiredKind::Any,
+            "/v1/hints",
+            &["hints"],
         )
     },
     read(
@@ -613,6 +626,39 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/settings/redator/test",
         &["settings", "test-redator"],
     ),
+    mutation(
+        "test_embedding",
+        TAG_EMBEDDINGS,
+        "Testa a configuração de embedding com um texto, sem gravar nada",
+        Scope::Write,
+        false,
+        false,
+        "POST",
+        "/v1/settings/embedding/test",
+        &["settings", "test-embedding"],
+    ),
+    mutation(
+        "list_embedding_models",
+        TAG_EMBEDDINGS,
+        "Lista os modelos de embedding de um provedor",
+        Scope::Write,
+        false,
+        false,
+        "POST",
+        "/v1/settings/embedding/models",
+        &["settings", "embedding-models"],
+    ),
+    mutation(
+        "reembed_all",
+        TAG_EMBEDDINGS,
+        "Revetoriza todas as memórias com o modelo vigente",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/embeddings/reembed",
+        &["embeddings", "reembed"],
+    ),
     read(
         "list_jobs",
         TAG_JOBS,
@@ -748,10 +794,11 @@ mod tests {
     #[test]
     fn hints_are_consistent_with_the_method_and_scope() {
         for operation in OPERATIONS {
-            // `search_memories` é leitura por POST (o corpo leva filtros).
+            // `search_memories` e `get_hints` são leituras por POST (o corpo leva o texto).
             assert_eq!(
                 operation.read_only,
-                operation.method == "GET" || operation.name == "search_memories",
+                operation.method == "GET"
+                    || matches!(operation.name, "search_memories" | "get_hints"),
                 "{}",
                 operation.name
             );
