@@ -1,17 +1,23 @@
 //! Provedor `local`: `fastembed` sobre o ONNX Runtime carregado dinamicamente
-//! (`ORT_DYLIB_PATH`). O modelo é baixado no primeiro uso para `MODELS_PATH` (cache do
-//! Hugging Face, `models--<org>--<nome>`) e fica carregado no processo; trocar de modelo
-//! troca a instância. `TextEmbedding::embed` exige `&mut self`: as chamadas são serializadas.
+//! (`ORT_DYLIB_PATH`). O modelo é baixado para `MODELS_PATH` (cache do Hugging Face,
+//! `models--<org>--<nome>`) numa thread própria — na inicialização (`prepare`) ou no primeiro
+//! uso — e fica carregado no processo; trocar de modelo troca a instância. Enquanto carrega,
+//! as chamadas recebem `EmbedError::Loading`. `TextEmbedding::embed` exige `&mut self`: as
+//! chamadas são serializadas.
 
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::Instant,
+    sync::{
+        Arc, Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant, SystemTime},
 };
 
 use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
+use tokio::sync::Notify;
 
-use super::{EmbedError, EmbedFuture, Embedder, EmbeddingModelEntry};
+use super::{EmbedError, EmbedFuture, Embedder, EmbeddingModelEntry, LoadInfo, LoadState};
 
 /// Threads do ONNX Runtime por chamada.
 const INTRA_THREADS: usize = 2;
@@ -147,25 +153,119 @@ pub fn remove_unused(
     Ok(removed)
 }
 
-struct Loaded {
-    model: EmbeddingModel,
-    embedding: TextEmbedding,
+/// Uma sessão carregada: o `TextEmbedding` em produção, uma falsa nos testes.
+pub trait Session: Send {
+    fn embed(&mut self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String>;
 }
 
-/// Instância compartilhada pelo processo.
+impl Session for TextEmbedding {
+    fn embed(&mut self, inputs: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        TextEmbedding::embed(self, inputs, None).map_err(|error| error.to_string())
+    }
+}
+
+/// Baixa (se preciso) e carrega um modelo de `MODELS_PATH`. Bloqueante: roda numa thread
+/// própria, fora da requisição.
+pub type Loader = Arc<dyn Fn(&LocalModel, &Path) -> Result<Box<dyn Session>, String> + Send + Sync>;
+
+fn fastembed_loader() -> Loader {
+    Arc::new(|model: &LocalModel, path: &Path| {
+        let options = TextInitOptions::new(model.model.clone())
+            .with_cache_dir(path.to_path_buf())
+            .with_show_download_progress(false)
+            .with_intra_threads(INTRA_THREADS);
+        TextEmbedding::try_new(options)
+            .map(|embedding| Box::new(embedding) as Box<dyn Session>)
+            .map_err(|error| error.to_string())
+    })
+}
+
+/// Quanto uma chamada espera um carregamento em andamento antes de devolver
+/// `EmbedError::Loading`.
+const LOAD_GRACE: Duration = Duration::from_secs(5);
+/// Depois de uma falha de carregamento, a próxima tentativa só começa após este intervalo;
+/// até lá as chamadas recebem a falha.
+const RETRY_FAILED_AFTER: Duration = Duration::from_secs(30);
+
+type SharedSession = Arc<Mutex<Box<dyn Session>>>;
+
+enum Slot {
+    Idle,
+    Loading {
+        id: u64,
+        model: String,
+        downloading: bool,
+        started: Instant,
+        started_wall: SystemTime,
+    },
+    Ready {
+        model: String,
+        session: SharedSession,
+        started_wall: SystemTime,
+        duration: Duration,
+    },
+    Failed {
+        model: String,
+        error: String,
+        at: Instant,
+        started_wall: SystemTime,
+        duration: Duration,
+    },
+}
+
+struct Shared {
+    slot: Mutex<Slot>,
+    changed: Notify,
+    next_id: AtomicU64,
+}
+
+/// Instância compartilhada pelo processo. O modelo é baixado e carregado numa thread
+/// própria, uma vez por modelo; quem chama espera no máximo `LOAD_GRACE` e depois recebe
+/// `EmbedError::Loading` (o carregamento continua).
 #[derive(Clone)]
 pub struct LocalEmbedder {
     models_path: PathBuf,
     onnx_runtime: Option<PathBuf>,
-    loaded: Arc<Mutex<Option<Loaded>>>,
+    require_runtime: bool,
+    loader: Loader,
+    grace: Duration,
+    shared: Arc<Shared>,
 }
 
 impl LocalEmbedder {
     pub fn new(models_path: PathBuf, onnx_runtime: Option<PathBuf>) -> Self {
+        Self::build(
+            models_path,
+            onnx_runtime,
+            true,
+            fastembed_loader(),
+            LOAD_GRACE,
+        )
+    }
+
+    /// Com outro carregador e outra espera, sem exigir o ONNX Runtime (testes).
+    pub fn with_loader(models_path: PathBuf, loader: Loader, grace: Duration) -> Self {
+        Self::build(models_path, None, false, loader, grace)
+    }
+
+    fn build(
+        models_path: PathBuf,
+        onnx_runtime: Option<PathBuf>,
+        require_runtime: bool,
+        loader: Loader,
+        grace: Duration,
+    ) -> Self {
         Self {
             models_path,
             onnx_runtime,
-            loaded: Arc::new(Mutex::new(None)),
+            require_runtime,
+            loader,
+            grace,
+            shared: Arc::new(Shared {
+                slot: Mutex::new(Slot::Idle),
+                changed: Notify::new(),
+                next_id: AtomicU64::new(1),
+            }),
         }
     }
 
@@ -173,57 +273,171 @@ impl LocalEmbedder {
         &self.models_path
     }
 
-    fn run(&self, name: &str, inputs: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
-        // Sem a biblioteca, o `ort` entra em pânico ao carregar: confere antes.
-        match &self.onnx_runtime {
-            Some(path) if path.is_file() => {}
-            Some(_) => {
-                return Err(EmbedError::Runtime(
-                    "ORT_DYLIB_PATH nao encontrado".to_owned(),
-                ));
-            }
-            None => return Err(EmbedError::Runtime("ORT_DYLIB_PATH ausente".to_owned())),
+    /// Sem a biblioteca, o `ort` entra em pânico ao carregar: confere antes.
+    fn check_runtime(&self) -> Result<(), EmbedError> {
+        if !self.require_runtime {
+            return Ok(());
         }
-        let model = find(name).ok_or_else(|| EmbedError::UnknownModel(name.to_owned()))?;
-        let mut guard = self
-            .loaded
+        match &self.onnx_runtime {
+            Some(path) if path.is_file() => Ok(()),
+            Some(_) => Err(EmbedError::Runtime(
+                "ORT_DYLIB_PATH nao encontrado".to_owned(),
+            )),
+            None => Err(EmbedError::Runtime("ORT_DYLIB_PATH ausente".to_owned())),
+        }
+    }
+
+    fn slot(&self) -> Result<MutexGuard<'_, Slot>, EmbedError> {
+        self.shared
+            .slot
             .lock()
-            .map_err(|_| EmbedError::Runtime("instancia local envenenada".to_owned()))?;
-        if guard
-            .as_ref()
-            .is_none_or(|loaded| loaded.model != model.model)
-        {
-            *guard = None;
-            let started = Instant::now();
-            let options = TextInitOptions::new(model.model.clone())
-                .with_cache_dir(self.models_path.clone())
-                .with_show_download_progress(false)
-                .with_intra_threads(INTRA_THREADS);
-            let embedding = TextEmbedding::try_new(options).map_err(|error| {
+            .map_err(|_| EmbedError::Runtime("instancia local envenenada".to_owned()))
+    }
+
+    /// A sessão do modelo, se pronta; senão dispara o carregamento (se ainda não houver um
+    /// em andamento) e devolve `Loading` ou a falha recente.
+    fn ensure(&self, model: &LocalModel) -> Result<SharedSession, EmbedError> {
+        let mut slot = self.slot()?;
+        match &*slot {
+            Slot::Ready {
+                model: loaded,
+                session,
+                ..
+            } if *loaded == model.id => return Ok(session.clone()),
+            Slot::Loading {
+                model: loading,
+                downloading,
+                started,
+                ..
+            } if *loading == model.id => {
+                return Err(loading_error(&model.id, *downloading, *started));
+            }
+            Slot::Failed {
+                model: failed,
+                error,
+                at,
+                ..
+            } if *failed == model.id && at.elapsed() < RETRY_FAILED_AFTER => {
+                return Err(EmbedError::LoadFailed(error.clone()));
+            }
+            _ => {}
+        }
+        let downloading = !self.models_path.join(model.cache_dir()).exists();
+        let started = Instant::now();
+        let id = self.shared.next_id.fetch_add(1, Ordering::Relaxed);
+        *slot = Slot::Loading {
+            id,
+            model: model.id.clone(),
+            downloading,
+            started,
+            started_wall: SystemTime::now(),
+        };
+        drop(slot);
+        tracing::info!(
+            event = "embeddings.loading",
+            model = %model.id,
+            downloading,
+            "carregando o modelo local de embedding em segundo plano"
+        );
+        let this = self.clone();
+        let loading = model.clone();
+        std::thread::spawn(move || this.load(id, &loading, downloading, started));
+        Err(loading_error(&model.id, downloading, started))
+    }
+
+    /// Thread do carregamento: grava `Ready` ou `Failed` se ainda for o carregamento vigente.
+    fn load(&self, id: u64, model: &LocalModel, downloading: bool, started: Instant) {
+        let result = (self.loader)(model, &self.models_path);
+        let duration = started.elapsed();
+        let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+        let Ok(mut slot) = self.shared.slot.lock() else {
+            return;
+        };
+        let started_wall = match &*slot {
+            Slot::Loading {
+                id: current,
+                started_wall,
+                ..
+            } if *current == id => *started_wall,
+            _ => return,
+        };
+        *slot = match result {
+            Ok(session) => {
+                tracing::info!(
+                    event = "embeddings.ready",
+                    model = %model.id,
+                    downloaded = downloading,
+                    duration_ms,
+                    "modelo local de embedding carregado"
+                );
+                Slot::Ready {
+                    model: model.id.clone(),
+                    session: Arc::new(Mutex::new(session)),
+                    started_wall,
+                    duration,
+                }
+            }
+            Err(error) => {
                 tracing::warn!(
                     event = "embeddings.load_failed",
                     model = %model.id,
+                    duration_ms,
                     error = %error,
                     "falha ao carregar o modelo local de embedding"
                 );
-                EmbedError::Unavailable
-            })?;
-            tracing::info!(
-                event = "embeddings.ready",
-                model = %model.id,
-                duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                "modelo local de embedding carregado"
-            );
-            *guard = Some(Loaded {
-                model: model.model.clone(),
-                embedding,
-            });
-        }
-        let loaded = guard.as_mut().ok_or(EmbedError::Unavailable)?;
-        loaded
-            .embedding
-            .embed(&inputs, None)
-            .map_err(|_| EmbedError::InvalidResponse)
+                Slot::Failed {
+                    model: model.id.clone(),
+                    error: error.chars().take(MAX_LOAD_ERROR_CHARS).collect(),
+                    at: Instant::now(),
+                    started_wall,
+                    duration,
+                }
+            }
+        };
+        drop(slot);
+        self.shared.changed.notify_waiters();
+    }
+
+    async fn run(&self, name: &str, inputs: Vec<String>) -> Result<Vec<Vec<f32>>, EmbedError> {
+        self.check_runtime()?;
+        let model = find(name).ok_or_else(|| EmbedError::UnknownModel(name.to_owned()))?;
+        let deadline = tokio::time::Instant::now() + self.grace;
+        let session = loop {
+            // Registra o interesse antes de olhar o estado, para não perder o aviso.
+            let notified = self.shared.changed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            match self.ensure(&model) {
+                Ok(session) => break session,
+                Err(EmbedError::Loading { .. }) if tokio::time::Instant::now() < deadline => {
+                    let _ = tokio::time::timeout_at(deadline, notified).await;
+                }
+                Err(error) => return Err(error),
+            }
+        };
+        tokio::task::spawn_blocking(move || {
+            session
+                .lock()
+                .map_err(|_| EmbedError::Runtime("instancia local envenenada".to_owned()))?
+                .embed(&inputs)
+                .map_err(|_| EmbedError::InvalidResponse)
+        })
+        .await
+        .map_err(|_| EmbedError::Runtime("falha no ONNX Runtime".to_owned()))?
+    }
+}
+
+const MAX_LOAD_ERROR_CHARS: usize = 160;
+
+fn loading_error(model: &str, downloading: bool, started: Instant) -> EmbedError {
+    EmbedError::Loading {
+        model: model.to_owned(),
+        state: if downloading {
+            LoadState::Downloading
+        } else {
+            LoadState::Loading
+        },
+        elapsed_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     }
 }
 
@@ -232,11 +446,79 @@ impl Embedder for LocalEmbedder {
         let this = self.clone();
         let model = model.to_owned();
         let inputs = inputs.to_vec();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || this.run(&model, inputs))
-                .await
-                .map_err(|_| EmbedError::Runtime("falha no ONNX Runtime".to_owned()))?
+        Box::pin(async move { this.run(&model, inputs).await })
+    }
+
+    fn load_info(&self, name: &str) -> Option<LoadInfo> {
+        let error = |error: String| LoadInfo {
+            state: LoadState::Failed,
+            started: None,
+            elapsed: None,
+            error: Some(error),
+        };
+        if let Err(EmbedError::Runtime(reason)) = self.check_runtime() {
+            return Some(error(format!("ONNX Runtime indisponivel ({reason})")));
+        }
+        let Some(model) = find(name) else {
+            return Some(error(format!("modelo local desconhecido: {name}")));
+        };
+        let slot = self.shared.slot.lock().ok()?;
+        Some(match &*slot {
+            Slot::Loading {
+                model: loading,
+                downloading,
+                started,
+                started_wall,
+                ..
+            } if *loading == model.id => LoadInfo {
+                state: if *downloading {
+                    LoadState::Downloading
+                } else {
+                    LoadState::Loading
+                },
+                started: Some(*started_wall),
+                elapsed: Some(started.elapsed()),
+                error: None,
+            },
+            Slot::Ready {
+                model: loaded,
+                started_wall,
+                duration,
+                ..
+            } if *loaded == model.id => LoadInfo {
+                state: LoadState::Ready,
+                started: Some(*started_wall),
+                elapsed: Some(*duration),
+                error: None,
+            },
+            Slot::Failed {
+                model: failed,
+                error,
+                started_wall,
+                duration,
+                ..
+            } if *failed == model.id => LoadInfo {
+                state: LoadState::Failed,
+                started: Some(*started_wall),
+                elapsed: Some(*duration),
+                error: Some(error.clone()),
+            },
+            _ => LoadInfo {
+                state: LoadState::Idle,
+                started: None,
+                elapsed: None,
+                error: None,
+            },
         })
+    }
+
+    fn prepare(&self, name: &str) {
+        if self.check_runtime().is_err() {
+            return;
+        }
+        if let Some(model) = find(name) {
+            let _ = self.ensure(&model);
+        }
     }
 }
 

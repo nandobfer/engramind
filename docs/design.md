@@ -379,7 +379,10 @@ Aplicação (decisão 0016):
   Com `embedding.provider = off` ou o provedor indisponível, ela falha fechada: só o título.
 
 Toda chamada fica registrada em `llm_calls`, com tokens, custo (só quando o provedor informa, como o
-`usage.cost` do OpenRouter) e duração.
+`usage.cost` do OpenRouter) e duração. Uma recusa do provedor (HTTP 4xx) guarda em `error` o status e a
+mensagem dele, higienizada (uma linha, sem a chave, até 200 caracteres), e as chamadas explícitas
+respondem `422 PROVIDER_REJECTED` — 4xx para que proxies não troquem o envelope (decisão 0027).
+`redator.temperature` vazio omite o campo do corpo (padrão do provedor).
 
 ### Embeddings
 
@@ -614,7 +617,9 @@ rodar em dois lugares:
   (reindexação de todas as memórias, com progresso em `get_status`). Até terminar, a busca usa só os
   vetores do modelo vigente — o ramo vetorial cobre as memórias já reprocessadas e o FTS cobre o resto —,
   sem misturar dimensões (decisão 0020).
-- Com o provedor local, o modelo é baixado no primeiro uso para `MODELS_PATH` (volume `/data`), e um
+- Com o provedor local, o modelo é baixado para `MODELS_PATH` (volume `/data`) numa thread própria,
+  disparada na inicialização, na troca de modelo ou no primeiro uso; nenhuma requisição espera o
+  download (`409 EMBEDDING_MODEL_LOADING`, estado em `get_status.embedding.local`, decisão 0027). Um
   modelo local que não estiver em uso é removido do disco depois da reindexação.
 - Com `off`, a busca textual e o contexto continuam funcionando normalmente.
 
@@ -630,7 +635,7 @@ global e, quando indicado, sobreposição **por canal**.
 | `context` | `budget_tokens` (4000), `titles_budget_tokens` (800), `default_format` (`tagged`), `token_estimator` (`o200k`), `overflow_line` (true) | budget, titles_budget |
 | `categories` | lista `{ key, label, priority }` (as 5 do Magic Context) | — |
 | `memory` | `text_min` (3), `text_max` (4000), `dedupe_exact` (true), `similar_threshold` (0.85) | text_max |
-| `redator` | `enabled` (true), `provider`, `model`, `api_key`🔒, `base_url`, `instructions`, `rewrite_text` (true), `title_max` (100), `min_similarity` (0.80), `timeout_ms` (30000), `max_attempts` (3), `fallback_models[]` | instructions, rewrite_text |
+| `redator` | `enabled` (true), `provider`, `model`, `api_key`🔒, `base_url`, `instructions`, `rewrite_text` (true), `title_max` (100), `min_similarity` (0.80), `timeout_ms` (30000), `max_attempts` (3), `fallback_models[]`, `temperature` (vazio = omitido) | instructions, rewrite_text |
 | `embedding` | `provider` (`local`; ou `openai_compatible`, `ollama`, `gemini`, `off`), `model` (`multilingual-e5-small`), `base_url`, `api_key`🔒, `dimensions`, `query_prefix`, `document_prefix`, `batch_size` (32), `timeout_ms` (15000) | — |
 | `search` | `vector_weight` (1.0), `text_weight` (1.0), `rrf_k` (60), `default_limit` (10), `hint_threshold` (0.80), `hint_limit` (3) | — |
 | `consolidation` | `enabled` (false), `schedule` (cron de 5 campos em UTC, `0 3 * * *`), `tasks[]` (`duplicates`, `importance`, `stale`), `duplicate_threshold` (0.92), `stale_after_days` (90), `auto_archive_stale` (false) | enabled |
@@ -792,8 +797,8 @@ citado nela precisa existir em `engramind help --json` (§15).
   `HEALTHCHECK` em `/health/live`.
 - A partir da 0.7.0 (embeddings), o runtime inclui a biblioteca do ONNX Runtime (`onnxruntime-linux-x64`
   1.31.1, versão e SHA-256 fixos em build args, ~29 MB), com `ORT_DYLIB_PATH` apontando para ela, porque o
-  provedor local de embeddings é o padrão (decisão 0019). O modelo não entra na imagem: é baixado no
-  primeiro uso para `/data/models` (o `multilingual-e5-small` do fastembed é fp32, ~470 MB, ~1 GB de RAM).
+  provedor local de embeddings é o padrão (decisão 0019). O modelo não entra na imagem: é baixado em
+  segundo plano (na inicialização ou no primeiro uso) para `/data/models` (o `multilingual-e5-small` do fastembed é fp32, ~470 MB, ~1 GB de RAM).
 - O desenvolvimento acontece fora do Docker (`cargo run` / `cargo nextest run`). O contêiner é sempre o
   artefato de produção.
 

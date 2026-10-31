@@ -917,6 +917,10 @@ pub enum JobFinish {
     Fail {
         error: String,
     },
+    /// Volta para `queued` em `run_after` e devolve a tentativa.
+    Wait {
+        run_after: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

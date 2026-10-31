@@ -154,6 +154,7 @@ pub const REDATOR_MIN_SIMILARITY: &str = "redator.min_similarity";
 pub const REDATOR_TIMEOUT_MS: &str = "redator.timeout_ms";
 pub const REDATOR_MAX_ATTEMPTS: &str = "redator.max_attempts";
 pub const REDATOR_FALLBACK_MODELS: &str = "redator.fallback_models";
+pub const REDATOR_TEMPERATURE: &str = "redator.temperature";
 pub const EMBEDDING_PROVIDER: &str = "embedding.provider";
 pub const EMBEDDING_MODEL: &str = "embedding.model";
 pub const EMBEDDING_BASE_URL: &str = "embedding.base_url";
@@ -421,6 +422,14 @@ pub const SETTINGS: &[SettingSpec] = &[
         channel_override: false,
         description: "Modelos tentados em ordem quando o principal falha por indisponibilidade, limite (429) ou tempo limite.",
         since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_TEMPERATURE,
+        kind: SettingType::Number { min: 0.0, max: 2.0 },
+        default: "null",
+        channel_override: false,
+        description: "Temperatura enviada ao LLM (Redator e consolidação). Vazio (`null`) omite o campo e usa o padrão do provedor — necessário nos modelos que recusam `temperature`.",
+        since: "0.10.0",
     },
     SettingSpec {
         key: EMBEDDING_PROVIDER,
@@ -1016,6 +1025,11 @@ impl SettingsSnapshot {
         self.integer(key)
     }
 
+    /// Número efetivo que aceita vazio (`null`).
+    pub fn optional_number(&self, key: &str) -> Option<f64> {
+        self.value(key).as_f64()
+    }
+
     /// Inteiro efetivo que aceita vazio (`null`).
     pub fn optional_whole(&self, key: &str) -> Option<i64> {
         self.value(key).as_i64()
@@ -1378,6 +1392,7 @@ impl<S: Store> Core<S> {
             && !mutation.replayed
         {
             self.embedding_switched(switch).await;
+            self.prepare_local_embedding();
         }
         let secrets = self.store().list_secrets().await?;
         Ok(Mutation {

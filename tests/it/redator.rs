@@ -841,9 +841,13 @@ async fn test_redator_uses_the_proposal_without_saving_it() {
             Some(body(proposal.clone())),
         )
         .await;
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert_eq!(failed["error"]["code"], "PROVIDER_FAILED");
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(failed["error"]["code"], "PROVIDER_REJECTED");
     assert_eq!(failed["error"]["details"]["outcome"], "rejected");
+    assert_eq!(
+        failed["error"]["details"]["reason"],
+        "recusado pelo provedor (HTTP 401: chave invalida)"
+    );
     assert!(!failed.to_string().contains(API_KEY));
 
     let mut slow = proposal.clone();
@@ -964,4 +968,182 @@ async fn mcp_and_cli_set_the_secret_without_echoing_it() {
         })
         .expect("secret");
     assert_eq!(opened, 2 + 12 + "sk-pela-entrada-padrao".len() as i64 + 16);
+}
+
+/// Corpo enviado ao provedor em `test_redator` com a proposta e a temperatura informada.
+async fn sent_body(
+    context: &TestContext,
+    llm: &ScriptedLlm,
+    provider: &str,
+    reply: Value,
+    temperature: Value,
+) -> Value {
+    llm.push(200, reply);
+    let base_url = if provider == "openai_compatible" {
+        format!("{}/v1", llm.url)
+    } else {
+        llm.url.clone()
+    };
+    let (status, body) = context
+        .call(
+            "POST",
+            "/v1/settings/redator/test",
+            Some(ADMIN_TOKEN),
+            Some(
+                json!({ "text": "Use cargo nextest localmente", "settings": {
+                "redator.provider": provider,
+                "redator.model": "claude-haiku-5-5",
+                "redator.base_url": base_url,
+                "redator.api_key": API_KEY,
+                "redator.temperature": temperature,
+            } }),
+            ),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{provider}: {body}");
+    llm.received().pop().expect("request").body
+}
+
+#[tokio::test]
+async fn temperature_is_sent_only_when_configured() {
+    let (context, llm) = setup().await;
+    let output = json!({ "title": "Teste", "text": "Use cargo nextest localmente" });
+    for (provider, reply) in [
+        ("openai_compatible", openai(output.clone())),
+        ("anthropic", anthropic(output.clone())),
+        ("gemini", gemini(output.clone())),
+    ] {
+        let body = sent_body(&context, &llm, provider, reply.clone(), Value::Null).await;
+        assert!(body.get("temperature").is_none(), "{provider}: {body}");
+        assert!(
+            body["generationConfig"].get("temperature").is_none(),
+            "{provider}: {body}"
+        );
+        assert!(
+            !body.to_string().contains("temperature"),
+            "{provider}: {body}"
+        );
+
+        let body = sent_body(&context, &llm, provider, reply, json!(0.3)).await;
+        let sent = if provider == "gemini" {
+            &body["generationConfig"]["temperature"]
+        } else {
+            &body["temperature"]
+        };
+        assert_eq!(sent, &json!(0.3), "{provider}: {body}");
+    }
+
+    // A chave gravada vale para o job `redact`; `null` volta a omitir o campo.
+    configure(&context, &llm, json!({ "redator.temperature": 1.5 })).await;
+    llm.push(200, openai(json!({ "title": "Testes", "text": TEXT })));
+    create(&context, TEXT).await;
+    run(&context).await;
+    assert_eq!(
+        llm.received().pop().expect("redact").body["temperature"],
+        json!(1.5)
+    );
+}
+
+#[tokio::test]
+async fn temperature_out_of_range_is_refused_and_nothing_is_saved() {
+    let context = TestContext::new().await;
+    for value in [json!(2.5), json!(-0.1), json!("0.3")] {
+        let (status, body) = context
+            .call(
+                "PUT",
+                "/v1/settings",
+                Some(ADMIN_TOKEN),
+                Some(json!({ "redator.model": "m", "redator.temperature": value })),
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert_eq!(body["error"]["code"], "SETTING_INVALID");
+        assert_eq!(body["error"]["details"]["key"], "redator.temperature");
+    }
+    let (_, settings) = context
+        .call(
+            "GET",
+            "/v1/settings?key=redator.model",
+            Some(ADMIN_TOKEN),
+            None,
+        )
+        .await;
+    assert_eq!(settings["settings"][0]["value"], Value::Null);
+    put_settings(&context, json!({ "redator.temperature": 0.3 })).await;
+    put_settings(&context, json!({ "redator.temperature": null })).await;
+}
+
+#[tokio::test]
+async fn a_provider_rejection_keeps_its_reason_without_the_key() {
+    let (context, llm) = setup().await;
+    let reason = "`temperature` is deprecated for this model.";
+    llm.push(
+        400,
+        json!({ "type": "error", "error": { "type": "invalid_request_error", "message": reason } }),
+    );
+    let (status, failed) = context
+        .call(
+            "POST",
+            "/v1/settings/redator/test",
+            Some(ADMIN_TOKEN),
+            Some(
+                json!({ "text": "Use cargo nextest localmente", "settings": {
+                "redator.provider": "anthropic",
+                "redator.model": "claude-haiku-5-5",
+                "redator.base_url": llm.url,
+                "redator.api_key": API_KEY,
+                "redator.temperature": 0,
+            } }),
+            ),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{failed}");
+    let expected = format!("recusado pelo provedor (HTTP 400: {reason} (invalid_request_error))");
+    assert_eq!(failed["error"]["code"], "PROVIDER_REJECTED");
+    assert_eq!(failed["error"]["details"]["outcome"], "rejected");
+    assert_eq!(failed["error"]["details"]["reason"], expected);
+    assert!(
+        failed["error"]["message"]
+            .as_str()
+            .expect("message")
+            .contains(reason)
+    );
+    let calls = llm_calls(&context, "?purpose=test").await;
+    assert_eq!(calls[0]["outcome"], "rejected");
+    assert_eq!(calls[0]["error"], expected);
+
+    // Uma chave ecoada pelo provedor some; o motivo fica curto.
+    llm.push(
+        401,
+        json!({ "error": { "message": format!("Incorrect API key provided: {API_KEY}. {}", "x".repeat(400)) } }),
+    );
+    let (status, failed) = context
+        .call(
+            "POST",
+            "/v1/settings/redator/test",
+            Some(ADMIN_TOKEN),
+            Some(
+                json!({ "text": "Use cargo nextest localmente", "settings": {
+                "redator.provider": "anthropic",
+                "redator.model": "claude-haiku-5-5",
+                "redator.base_url": llm.url,
+                "redator.api_key": API_KEY,
+            } }),
+            ),
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{failed}");
+    assert!(!failed.to_string().contains(API_KEY), "{failed}");
+    let reason = failed["error"]["details"]["reason"]
+        .as_str()
+        .expect("reason");
+    assert!(reason.contains("[REDACTED]"), "{reason}");
+    assert!(reason.chars().count() <= 200, "{reason}");
+    let calls = llm_calls(&context, "?purpose=test").await;
+    assert!(calls.iter().all(|call| !call.to_string().contains(API_KEY)));
+    assert!(calls.iter().all(|call| {
+        call["error"]
+            .as_str()
+            .is_none_or(|error| error.chars().count() <= 200)
+    }));
 }

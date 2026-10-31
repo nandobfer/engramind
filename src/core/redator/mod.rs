@@ -28,8 +28,8 @@ use super::{
     settings::{
         self, REDATOR_API_KEY, REDATOR_BASE_URL, REDATOR_ENABLED, REDATOR_FALLBACK_MODELS,
         REDATOR_INSTRUCTIONS, REDATOR_MAX_ATTEMPTS, REDATOR_MIN_SIMILARITY, REDATOR_MODEL,
-        REDATOR_PROVIDER, REDATOR_REWRITE_TEXT, REDATOR_TIMEOUT_MS, REDATOR_TITLE_MAX,
-        SettingsSnapshot,
+        REDATOR_PROVIDER, REDATOR_REWRITE_TEXT, REDATOR_TEMPERATURE, REDATOR_TIMEOUT_MS,
+        REDATOR_TITLE_MAX, SettingsSnapshot,
     },
 };
 use crate::{
@@ -62,6 +62,8 @@ pub struct RedatorConfig {
     pub timeout: Duration,
     pub max_attempts: i64,
     pub fallback_models: Vec<String>,
+    /// `None` omite o campo na chamada (padrão do provedor).
+    pub temperature: Option<f64>,
     pub text_min: usize,
     pub text_max: usize,
 }
@@ -70,6 +72,7 @@ pub struct RedatorConfig {
 pub struct Ready {
     pub provider: Provider,
     pub models: Vec<String>,
+    pub temperature: Option<f64>,
     pub client: AnyClient,
 }
 
@@ -108,6 +111,7 @@ impl RedatorConfig {
             ),
             max_attempts: snapshot.whole(REDATOR_MAX_ATTEMPTS).max(1),
             fallback_models: snapshot.text_list(REDATOR_FALLBACK_MODELS),
+            temperature: snapshot.optional_number(REDATOR_TEMPERATURE),
             text_min: snapshot.text_min(),
             text_max: snapshot.text_max(overrides),
         }
@@ -151,6 +155,7 @@ impl RedatorConfig {
         Some(Ready {
             provider,
             models,
+            temperature: self.temperature,
             client: AnyClient::new(
                 provider,
                 Endpoint::new(http.clone(), &base_url, self.api_key.clone(), self.timeout),
@@ -349,6 +354,7 @@ impl<S: Store> Core<S> {
                 schema_name: prompt.schema_name,
                 schema: prompt.schema.clone(),
                 max_output_tokens: MAX_OUTPUT_TOKENS,
+                temperature: ready.temperature,
             };
             let at = ids::timestamp(ids::now());
             let began = Instant::now();
@@ -691,6 +697,11 @@ fn provider_error(failure: &Failure) -> ApiError {
             "O provedor do Redator nao respondeu dentro de redator.timeout_ms",
         )
         .with_details(json!({ "outcome": "timeout" })),
+        Failure::Llm(error @ LlmError::Rejected(_)) => ApiError::new(
+            "PROVIDER_REJECTED",
+            format!("O provedor do Redator recusou a requisicao: {error}"),
+        )
+        .with_details(json!({ "outcome": error.outcome(), "reason": short(&error.to_string()) })),
         Failure::Llm(error) => ApiError::new(
             "PROVIDER_FAILED",
             format!("O provedor do Redator falhou: {error}"),

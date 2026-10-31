@@ -27,6 +27,48 @@ pub type EmbedFuture<'a> =
 /// Gera um vetor por texto, na mesma ordem. Os textos já chegam com o prefixo do modelo.
 pub trait Embedder: Send + Sync {
     fn embed<'a>(&'a self, model: &'a str, inputs: &'a [String]) -> EmbedFuture<'a>;
+
+    /// Estado do download/carregamento do modelo; só o `local` informa.
+    fn load_info(&self, _model: &str) -> Option<LoadInfo> {
+        None
+    }
+
+    /// Dispara o download/carregamento em segundo plano; só o `local` precisa.
+    fn prepare(&self, _model: &str) {}
+}
+
+/// Fase do modelo local.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadState {
+    /// Nunca pedido (ou outro modelo carregado).
+    Idle,
+    /// Baixando para `MODELS_PATH` (ainda não estava no cache).
+    Downloading,
+    /// Carregando do cache.
+    Loading,
+    Ready,
+    Failed,
+}
+
+impl LoadState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Downloading => "downloading",
+            Self::Loading => "loading",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// Estado do modelo local: início, tempo decorrido (ou a duração, quando terminou) e a falha.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadInfo {
+    pub state: LoadState,
+    pub started: Option<std::time::SystemTime>,
+    pub elapsed: Option<std::time::Duration>,
+    pub error: Option<String>,
 }
 
 /// Falhas sem payload do provedor (que pode ecoar o texto enviado).
@@ -48,6 +90,15 @@ pub enum EmbedError {
     UnknownModel(String),
     #[error("dimensao divergente: esperada {expected}, recebida {got}")]
     Dimension { expected: usize, got: usize },
+    /// O modelo local ainda está sendo baixado ou carregado (em segundo plano).
+    #[error("modelo local {model} em {} ha {elapsed_ms} ms", state.as_str())]
+    Loading {
+        model: String,
+        state: LoadState,
+        elapsed_ms: u64,
+    },
+    #[error("falha ao carregar o modelo local ({0})")]
+    LoadFailed(String),
 }
 
 impl EmbedError {
@@ -62,6 +113,8 @@ impl EmbedError {
             Self::InvalidResponse => "invalid_response",
             Self::UnknownModel(_) => "unknown_model",
             Self::Dimension { .. } => "dimension_mismatch",
+            Self::Loading { .. } => "loading",
+            Self::LoadFailed(_) => "load_failed",
         }
     }
 }

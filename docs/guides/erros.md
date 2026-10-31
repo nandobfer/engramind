@@ -55,10 +55,12 @@ Todo erro usa o envelope único:
 | `JOB_NOT_FOUND` | 404 | 5 | Job inexistente. |
 | `JOB_NOT_RETRYABLE` | 409 | 6 | Só jobs com `state = failed` voltam para a fila. |
 | `PROVIDER_NOT_CONFIGURED` | 400 | 2 | Redator ou embeddings desligados ou sem provedor, modelo, URL ou chave; `details.missing` traz as chaves que faltam. |
-| `PROVIDER_FAILED` | 502 | 8 | O provedor do LLM ou de embedding falhou ou devolveu uma resposta inválida; `details.outcome` e `details.reason` trazem o motivo curto. |
+| `PROVIDER_REJECTED` | 422 | 8 | O provedor do LLM ou de embedding recusou a requisição (HTTP 4xx, exceto 408 e 429): chave, modelo ou parâmetro inválidos para ele. `details.reason` traz o status e a mensagem do provedor (até 200 caracteres, sem segredos). Corrija a configuração; repetir não resolve. |
+| `PROVIDER_FAILED` | 502 | 8 | O provedor do LLM ou de embedding está indisponível (HTTP 5xx, falha de rede ou limite 429) ou devolveu uma resposta inválida; `details.outcome` e `details.reason` trazem o motivo curto. |
 | `PROVIDER_TIMEOUT` | 504 | 8 | O provedor do LLM ou de embedding não respondeu dentro de `redator.timeout_ms` ou `embedding.timeout_ms`. |
 | `PROVIDER_LISTING_UNSUPPORTED` | 400 | 2 | O provedor (`gemini` ou `off`) não oferece listagem de modelos de embedding. |
 | `EMBEDDING_DIMENSION_MISMATCH` | 502 | 8 | O provedor devolveu vetores de outra dimensão (a configurada em `embedding.dimensions` ou a do modelo); `details.expected` e `details.got`. |
+| `EMBEDDING_MODEL_LOADING` | 409 | 6 | O modelo local de embedding ainda está sendo baixado ou carregado (o carregamento já foi disparado); `details` traz `model`, `state`, `started_at` e `elapsed_ms`. Acompanhe `get_status.embedding.local` e repita quando `state = ready`. |
 | `REEMBED_IN_PROGRESS` | 409 | 6 | Já há uma reindexação com jobs na fila; acompanhe em `get_status.embedding`. |
 | `CONSOLIDATION_DISABLED` | 409 | 6 | O canal está com `consolidation.enabled = false`; ligue a configuração no canal ou use `dry_run` para só pré-visualizar. |
 | `PAYLOAD_TOO_LARGE` | 413 | 1 | Corpo acima de MAX_BODY_BYTES. |
@@ -88,7 +90,9 @@ Todo erro usa o envelope único:
 - `400 SETTING_IS_SECRET`: grave a chave com `set_secret`, nunca por `update_settings`.
 - `400 PROVIDER_NOT_CONFIGURED`: defina as chaves de `details.missing` (`update_settings` e `set_secret`) ou proponha-as em `settings` no `test_redator` e no `test_embedding`.
 - `409 JOB_NOT_RETRYABLE`: só jobs `failed` voltam para a fila; os outros já estão nela ou terminaram.
-- `502 PROVIDER_FAILED` e `504 PROVIDER_TIMEOUT`: o provedor do LLM ou de embedding falhou; confira modelo, URL e chave, ou acrescente `redator.fallback_models`. Numa troca de embedding, nada foi gravado.
+- `422 PROVIDER_REJECTED`: o provedor recusou a requisição e `details.reason` diz por quê (por exemplo `HTTP 400: \`temperature\` is deprecated for this model.`); corrija modelo, chave ou parâmetro (`redator.temperature` vazio omite o campo) e teste de novo. O status é 4xx de propósito: proxies como o Cloudflare trocam o corpo das respostas 5xx pela própria página, e o envelope se perderia.
+- `502 PROVIDER_FAILED` e `504 PROVIDER_TIMEOUT`: o provedor do LLM ou de embedding está indisponível ou não respondeu; confira a URL, tente de novo ou acrescente `redator.fallback_models`. Numa troca de embedding, nada foi gravado. Atrás de um proxy que substitui corpos 5xx, consulte `llm_calls` para ver o `outcome` e o `error`.
+- `409 EMBEDDING_MODEL_LOADING`: o download do modelo local já está em andamento; acompanhe `get_status.embedding.local` e repita quando `state = ready` (com `state = failed`, `error` traz o motivo e a próxima chamada, 30 s depois, tenta de novo).
 - `502 EMBEDDING_DIMENSION_MISMATCH`: ajuste ou apague `embedding.dimensions` (ou troque de modelo) e teste com `test_embedding`.
 - `409 REEMBED_IN_PROGRESS`: espere a reindexação atual terminar (`get_status.embedding.state`).
 - `409 CONSOLIDATION_DISABLED`: ligue `consolidation.enabled` no canal (`update_channel_settings`) ou rode com `dry_run` para só ver o plano.

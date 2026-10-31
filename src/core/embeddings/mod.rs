@@ -28,8 +28,8 @@ use super::{
 use crate::{
     error::ApiError,
     providers::embeddings::{
-        EmbedError, Embedder, EmbeddingModelEntry, EmbeddingProvider, Endpoint, Gemini, Ollama,
-        OpenAiCompatible, list_remote_models, local,
+        EmbedError, Embedder, EmbeddingModelEntry, EmbeddingProvider, Endpoint, Gemini, LoadState,
+        Ollama, OpenAiCompatible, list_remote_models, local,
     },
     store::{Store, StoreError},
 };
@@ -189,6 +189,23 @@ pub struct EmbeddingRuntime {
 }
 
 impl EmbeddingRuntime {
+    /// Tempo esgotado enquanto o modelo local ainda carrega é `Loading`, não `Timeout`.
+    fn timeout_error(&self) -> EmbedError {
+        match self.embedder.load_info(&self.model) {
+            Some(info) if matches!(info.state, LoadState::Downloading | LoadState::Loading) => {
+                EmbedError::Loading {
+                    model: self.model.clone(),
+                    state: info.state,
+                    elapsed_ms: info
+                        .elapsed
+                        .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX))
+                        .unwrap_or_default(),
+                }
+            }
+            _ => EmbedError::Timeout,
+        }
+    }
+
     /// Vetores na ordem dos textos, com o prefixo do tipo, dentro de `timeout`; confere
     /// quantidade, dimensão e valores.
     pub async fn embed(
@@ -205,7 +222,7 @@ impl EmbeddingRuntime {
         let started = std::time::Instant::now();
         let result = tokio::time::timeout(timeout, self.embedder.embed(&self.model, &inputs))
             .await
-            .map_err(|_| EmbedError::Timeout)
+            .map_err(|_| self.timeout_error())
             .and_then(|result| result);
         crate::metrics::embedding(
             self.provider.as_str(),
@@ -322,6 +339,35 @@ pub(crate) fn provider_error(error: &EmbedError) -> ApiError {
         )
         .with_details(json!({ "expected": expected, "got": got })),
         EmbedError::UnknownModel(model) => unknown_local_model(model),
+        EmbedError::Loading {
+            model,
+            state,
+            elapsed_ms,
+        } => {
+            let started_at = ids::now()
+                .checked_sub_signed(chrono::Duration::milliseconds(
+                    i64::try_from(*elapsed_ms).unwrap_or(i64::MAX),
+                ))
+                .map(ids::timestamp);
+            ApiError::new(
+                "EMBEDDING_MODEL_LOADING",
+                format!(
+                    "O modelo local de embedding {model} ainda esta em {}; acompanhe get_status.embedding.local e repita quando state = ready",
+                    state.as_str()
+                ),
+            )
+            .with_details(json!({
+                "model": model,
+                "state": state.as_str(),
+                "started_at": started_at,
+                "elapsed_ms": elapsed_ms,
+            }))
+        }
+        EmbedError::Rejected(_) => ApiError::new(
+            "PROVIDER_REJECTED",
+            format!("O provedor de embedding recusou a requisicao: {error}"),
+        )
+        .with_details(json!({ "outcome": error.outcome(), "reason": short(&error.to_string()) })),
         other => ApiError::new(
             "PROVIDER_FAILED",
             format!("O provedor de embedding falhou: {other}"),
@@ -473,6 +519,26 @@ pub struct EmbeddingStatus {
     pub done: u64,
     /// Início da reindexação em andamento.
     pub reindex_started_at: Option<String>,
+    /// Download e carregamento do modelo local; `null` fora do provedor `local`.
+    pub local: Option<LocalModelStatus>,
+}
+
+/// Estado do modelo local de embedding em `get_status.embedding.local`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LocalModelStatus {
+    #[schema(example = "multilingual-e5-large")]
+    pub model: String,
+    /// `idle` (ainda não pedido), `downloading` (baixando para `MODELS_PATH`), `loading`
+    /// (carregando do cache), `ready` ou `failed`.
+    #[schema(example = "ready")]
+    pub state: String,
+    /// Início do download ou carregamento.
+    pub started_at: Option<String>,
+    /// Tempo decorrido; em `ready` e `failed`, quanto levou.
+    #[schema(example = 67413)]
+    pub elapsed_ms: Option<u64>,
+    /// Motivo da falha (`failed`); a próxima tentativa começa 30 s depois, na próxima chamada.
+    pub error: Option<String>,
 }
 
 // ---------- Core ----------
@@ -928,6 +994,18 @@ impl<S: Store> Core<S> {
     }
 
     /// Bloco `embedding` de `get_status`.
+    /// Com `embedding.provider = local`, baixa e carrega o modelo vigente em segundo plano,
+    /// para que a primeira chamada não espere o download.
+    pub fn prepare_local_embedding(&self) {
+        let snapshot = self.settings_snapshot();
+        if snapshot.optional_text(EMBEDDING_PROVIDER).as_deref() != Some("local") {
+            return;
+        }
+        if let Some(model) = snapshot.optional_text(EMBEDDING_MODEL) {
+            self.local_embedder().prepare(&model);
+        }
+    }
+
     pub(crate) async fn embedding_status(&self) -> Result<EmbeddingStatus, ApiError> {
         let config = self.embedding_config(&self.settings_snapshot()).await?;
         let missing = config.missing();
@@ -944,7 +1022,24 @@ impl<S: Store> Core<S> {
             total: 0,
             done: 0,
             reindex_started_at: None,
+            local: None,
         };
+        if config.provider == Some(EmbeddingProvider::Local)
+            && let Some(model) = status.model.clone()
+            && let Some(info) = self.local_embedder().load_info(&model)
+        {
+            status.local = Some(LocalModelStatus {
+                model,
+                state: info.state.as_str().to_owned(),
+                started_at: info
+                    .started
+                    .map(|started| ids::timestamp(chrono::DateTime::<chrono::Utc>::from(started))),
+                elapsed_ms: info
+                    .elapsed
+                    .map(|elapsed| u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)),
+                error: info.error,
+            });
+        }
         if !config.enabled() {
             status.missing.clear();
             return Ok(status);
