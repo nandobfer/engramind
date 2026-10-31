@@ -5,6 +5,7 @@ pub mod channels;
 pub mod context;
 pub mod docs;
 pub mod identities;
+pub mod jobs;
 pub mod memories;
 pub mod settings;
 pub mod status;

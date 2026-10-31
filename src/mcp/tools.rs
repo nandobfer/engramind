@@ -34,13 +34,17 @@ use crate::{
             CreateAgentBody, CreateAppBody, IssueTokenBody, ListAgentsQuery, ListQuery,
             ListTokensQuery, UpdateBody, UpdateTokenBody,
         },
+        jobs::{ListJobsQuery, ListLlmCallsQuery},
         memories::{
             CreateMemoryBody, HistoryQuery, ListMemoriesQuery, MoveMemoryBody, RevertMemoryBody,
             UpdateMemoryBody,
         },
+        model::double_option,
         operations::{self, OPERATIONS},
         principal::Principal,
+        redator::TestRedatorBody,
         search::SearchMemoriesBody,
+        secrets::SetSecretBody,
         settings::{GetSettingsQuery, UpdateChannelSettingsBody, UpdateSettingsBody},
         subscriptions::{ListSubscriptionsQuery, SubscribeBody, UpdateSubscriptionBody},
     },
@@ -234,6 +238,42 @@ pub struct SubscriptionMutationRequest {
 pub struct UpdateSettingsRequest {
     /// Mapa parcial `chave → valor`; `null` volta ao padrão.
     pub settings: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+/// Sem `Debug`: carrega o segredo em claro.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetSecretRequest {
+    /// Chave do segredo, por exemplo `redator.api_key`.
+    pub key: String,
+    /// Valor do segredo (até 4096 caracteres); `null` apaga.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schemars(with = "Option<String>")]
+    pub value: Option<Option<String>>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+/// Sem `Debug`: a proposta pode carregar `redator.api_key` em claro.
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TestRedatorRequest {
+    /// Texto de exemplo, com os limites de `memory.text_min`/`text_max`.
+    pub text: String,
+    /// Mapa parcial `redator.* → valor` usado só neste teste.
+    #[serde(default)]
+    pub settings: Option<BTreeMap<String, Value>>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RetryJobRequest {
+    /// Id numérico do job.
+    pub job: String,
     #[serde(default)]
     pub idempotency_key: Option<String>,
 }
@@ -1249,6 +1289,85 @@ impl EngramindServer {
                 .await
                 .map(|mutation| mutation.value),
         )
+    }
+
+    #[tool]
+    async fn set_secret(
+        &self,
+        Parameters(request): Parameters<SetSecretRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .set_secret(
+                    &principal,
+                    &request.key,
+                    SetSecretBody {
+                        value: request.value,
+                    },
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn test_redator(
+        &self,
+        Parameters(request): Parameters<TestRedatorRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .test_redator(
+                    &principal,
+                    TestRedatorBody {
+                        text: request.text,
+                        settings: request.settings,
+                    },
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn list_jobs(
+        &self,
+        Parameters(query): Parameters<ListJobsQuery>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(self.core.list_jobs(&principal, query).await)
+    }
+
+    #[tool]
+    async fn retry_job(
+        &self,
+        Parameters(request): Parameters<RetryJobRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .retry_job(&principal, &request.job, request.idempotency_key.as_deref())
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn list_llm_calls(
+        &self,
+        Parameters(query): Parameters<ListLlmCallsQuery>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(self.core.list_llm_calls(&principal, query).await)
     }
 
     #[tool]

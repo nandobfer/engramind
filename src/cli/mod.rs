@@ -133,8 +133,17 @@ pub enum Command {
     /// Configurações (token admin).
     #[command(subcommand)]
     Settings(SettingsCommand),
-    /// Mostra versão, banco, backup e contagens (token admin).
+    /// Segredos de configuração (token admin).
+    #[command(subcommand)]
+    Secrets(SecretsCommand),
+    /// Mostra versão, banco, backup, contagens, fila e Redator (token admin).
     Status,
+    /// Fila de jobs (token admin).
+    #[command(subcommand)]
+    Jobs(JobsCommand),
+    /// Chamadas ao LLM (token admin).
+    #[command(subcommand, name = "llm-calls")]
+    LlmCalls(LlmCallsCommand),
     /// Auditoria (token admin).
     #[command(subcommand)]
     Audit(AuditCommand),
@@ -628,6 +637,71 @@ pub enum SettingsCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
+    /// Testa o Redator com um texto, sem gravar a memória.
+    TestRedator {
+        /// Texto de exemplo; `-` lê da entrada padrão.
+        #[arg(long)]
+        text: String,
+        /// Configuração proposta, só para o teste, como objeto JSON de chaves `redator.*`.
+        #[arg(long, value_name = "JSON")]
+        settings: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SecretsCommand {
+    /// Grava um segredo lido da entrada padrão (nunca de argumento); `--delete` apaga.
+    Set {
+        /// Chave do segredo, por exemplo `redator.api_key`.
+        key: String,
+        /// Apaga o segredo em vez de gravar.
+        #[arg(long)]
+        delete: bool,
+        /// Valor lido da entrada padrão.
+        #[arg(skip)]
+        value: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum JobsCommand {
+    /// Lista os jobs da fila, do mais recente ao mais antigo.
+    List {
+        /// `queued`, `running`, `done` ou `failed`.
+        #[arg(long)]
+        state: Option<String>,
+        /// Tipo do job, por exemplo `redact`.
+        #[arg(long)]
+        kind: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Recoloca na fila um job que falhou.
+    Retry {
+        /// Id numérico do job.
+        job: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum LlmCallsCommand {
+    /// Lista as chamadas ao LLM, da mais recente à mais antiga.
+    List {
+        /// Só a partir deste instante (RFC 3339).
+        #[arg(long)]
+        since: Option<String>,
+        /// `redact` ou `test`.
+        #[arg(long)]
+        purpose: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -725,6 +799,7 @@ async fn serve() -> anyhow::Result<()> {
     let core = Core::new(
         store,
         settings.token_pepper.clone(),
+        settings.secrets_key.clone(),
         settings.database.clone(),
     );
     core.reload_settings()
@@ -751,6 +826,8 @@ async fn serve() -> anyhow::Result<()> {
         BootstrapOutcome::NotConfigured => {}
     }
     let background = core::background::spawn(core.clone());
+    // Os runners da fila processam também o backlog enfileirado antes desta versão.
+    let workers = core.spawn_workers();
     // Carrega a tabela BPE do estimador fora do caminho da primeira requisição (decisão 0014).
     let estimator = core::context::estimator::Tiktoken::from_setting(
         &core.settings_snapshot().token_estimator(),
@@ -778,6 +855,9 @@ async fn serve() -> anyhow::Result<()> {
         .await
         .context("servidor HTTP falhou")?;
     background.abort();
+    for worker in workers {
+        worker.abort();
+    }
     if let Err(error) = core.flush_usage().await {
         tracing::warn!(event = "tokens.touch_failed", error = %error, "falha ao gravar last_used_at");
     }

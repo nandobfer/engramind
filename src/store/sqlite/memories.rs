@@ -19,7 +19,8 @@ use crate::{
         model::{
             Author, ChannelStats, EmbeddingState, Memory, MemoryCounts, MemoryFilter, MemoryPatch,
             MemoryRevision, MemoryStatus, MemoryTarget, MemoryWrite, NewJob, NewMemory, Origin,
-            PendingCounts, RetrievalBump, StatusAction, TextQuery, TitleState, WriteContext,
+            PendingCounts, Redaction, RetrievalBump, StatusAction, TextQuery, TitleState,
+            WriteContext,
         },
         pagination::{Cursor, Page, PageRequest},
     },
@@ -862,4 +863,87 @@ pub(super) fn bump_retrievals(
         statement.execute(params![bump.memory_id, bump.count, bump.at])?;
     }
     Ok(())
+}
+
+// ---------- Redator (006) ----------
+
+/// `content_hash` atual da memória.
+pub(super) fn content_hash(connection: &Connection, id: &str) -> rusqlite::Result<Option<Vec<u8>>> {
+    connection
+        .query_row(
+            "SELECT content_hash FROM memories WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )
+        .optional()
+}
+
+/// Título (e texto) do Redator. O título não cria revisão nem muda `memories.version`
+/// (decisão 0016): só `title_state = ready`, `channels.version + 1` e a auditoria. O texto
+/// revisado é uma revisão `system/redator` com `version + 1` e um job `embed`.
+pub(super) fn apply_redaction(
+    transaction: &Transaction,
+    redaction: &Redaction,
+    context: &WriteContext,
+) -> Result<Memory, StoreError> {
+    let current = content_hash(transaction, &redaction.memory_id)
+        .map_err(sql_error)?
+        .ok_or(StoreError::NotFound)?;
+    if current != redaction.expected_hash {
+        return Err(StoreError::Conflict("MEMORY_CHANGED"));
+    }
+    let audit_before = audited(transaction, &redaction.memory_id)?;
+    transaction
+        .execute(
+            "UPDATE memories SET title = ?1, title_state = 'ready' WHERE id = ?2",
+            params![redaction.title, redaction.memory_id],
+        )
+        .map_err(sql_error)?;
+    if let Some((text, hash)) = &redaction.text {
+        transaction
+            .execute(
+                "UPDATE memories SET text = ?1, content_hash = ?2, embedding_state = 'pending',
+                     importance = NULL, version = version + 1, updated_at = ?3
+                 WHERE id = ?4",
+                params![text, hash, context.at, redaction.memory_id],
+            )
+            .map_err(sql_error)?;
+    }
+    let after = load(transaction, &redaction.memory_id)?;
+    if redaction.text.is_some() {
+        revision(transaction, &after, "redact", context)?;
+        enqueue(
+            transaction,
+            &[NewJob {
+                kind: "embed",
+                extra: serde_json::Map::new(),
+            }],
+            &after,
+            context,
+        )?;
+    }
+    bump_channel(transaction, &after.channel_id)?;
+    audit(
+        transaction,
+        context,
+        "memory.redact",
+        &after.id,
+        Some(audit_before),
+        Some(audited(transaction, &after.id)?),
+    )?;
+    Ok(after)
+}
+
+/// `title_state = fallback` só para o conteúdo esperado com título ainda provisório.
+pub(super) fn set_title_fallback(
+    transaction: &Transaction,
+    memory_id: &str,
+    expected_hash: &[u8],
+) -> rusqlite::Result<bool> {
+    let changed = transaction.execute(
+        "UPDATE memories SET title_state = 'fallback'
+         WHERE id = ?1 AND content_hash = ?2 AND title_state = 'pending'",
+        params![memory_id, expected_hash],
+    )?;
+    Ok(changed > 0)
 }

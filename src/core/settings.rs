@@ -12,7 +12,7 @@ use utoipa::{IntoParams, ToSchema};
 use super::{
     Core,
     idempotency::Mutation,
-    model::{Channel, SettingChange, SettingRow},
+    model::{Channel, SecretView, SettingChange, SettingRow},
     principal::Principal,
 };
 use crate::{
@@ -35,6 +35,19 @@ pub enum SettingType {
     Categories,
     /// Um dos textos da lista.
     Choice(&'static [&'static str]),
+    /// Texto de 1 a `max` caracteres.
+    Text {
+        max: usize,
+    },
+    /// URL `http://` ou `https://`.
+    Url,
+    /// Lista de até `max_items` textos de 1 a `max_len` caracteres.
+    TextList {
+        max_items: usize,
+        max_len: usize,
+    },
+    /// Só gravado por `set_secret` (cifrado); a leitura mostra `{ configured, updated_at }`.
+    Secret,
 }
 
 impl SettingType {
@@ -45,6 +58,10 @@ impl SettingType {
             Self::Boolean => "boolean",
             Self::Categories => "categories",
             Self::Choice(_) => "enum",
+            Self::Text { .. } => "text",
+            Self::Url => "url",
+            Self::TextList { .. } => "list",
+            Self::Secret => "secret",
         }
     }
 
@@ -60,6 +77,12 @@ impl SettingType {
                 .map(|choice| format!("`{choice}`"))
                 .collect::<Vec<_>>()
                 .join(", "),
+            Self::Text { max } => format!("1 a {max} caracteres"),
+            Self::Url => "`http://` ou `https://`".to_owned(),
+            Self::TextList { max_items, max_len } => {
+                format!("até {max_items} itens de 1 a {max_len} caracteres")
+            }
+            Self::Secret => "só gravado (`set_secret`)".to_owned(),
         }
     }
 
@@ -70,8 +93,10 @@ impl SettingType {
                 serde_json::Number::from_f64(min),
                 serde_json::Number::from_f64(max),
             ),
-            Self::Boolean | Self::Choice(_) => (None, None),
+            Self::Boolean | Self::Choice(_) | Self::Url | Self::Secret => (None, None),
             Self::Categories => (Some(1.into()), Some((MAX_CATEGORIES as u64).into())),
+            Self::Text { max } => (Some(1.into()), Some((max as u64).into())),
+            Self::TextList { max_items, .. } => (Some(0.into()), Some((max_items as u64).into())),
         }
     }
 }
@@ -100,6 +125,20 @@ pub const TITLES_BUDGET_TOKENS: &str = "context.titles_budget_tokens";
 pub const DEFAULT_FORMAT: &str = "context.default_format";
 pub const TOKEN_ESTIMATOR: &str = "context.token_estimator";
 pub const OVERFLOW_LINE: &str = "context.overflow_line";
+pub const REDATOR_ENABLED: &str = "redator.enabled";
+pub const REDATOR_PROVIDER: &str = "redator.provider";
+pub const REDATOR_MODEL: &str = "redator.model";
+pub const REDATOR_API_KEY: &str = "redator.api_key";
+pub const REDATOR_BASE_URL: &str = "redator.base_url";
+pub const REDATOR_INSTRUCTIONS: &str = "redator.instructions";
+pub const REDATOR_REWRITE_TEXT: &str = "redator.rewrite_text";
+pub const REDATOR_TITLE_MAX: &str = "redator.title_max";
+pub const REDATOR_MIN_SIMILARITY: &str = "redator.min_similarity";
+pub const REDATOR_TIMEOUT_MS: &str = "redator.timeout_ms";
+pub const REDATOR_MAX_ATTEMPTS: &str = "redator.max_attempts";
+pub const REDATOR_FALLBACK_MODELS: &str = "redator.fallback_models";
+/// Provedores do Redator (`redator.provider`).
+pub const REDATOR_PROVIDERS: &[&str] = &["openai_compatible", "anthropic", "gemini"];
 
 /// Chaves que mudam o bloco do contexto (entram no hash da `version`, 005 Q-008).
 pub const CONTEXT_RENDER_KEYS: &[&str] = &[
@@ -223,6 +262,108 @@ pub const SETTINGS: &[SettingSpec] = &[
         description: "Mostra a linha de excedente (`<overflow count=\"N\">`) quando sobram memórias fora das duas faixas.",
         since: "0.5.0",
     },
+    SettingSpec {
+        key: REDATOR_ENABLED,
+        kind: SettingType::Boolean,
+        default: "true",
+        channel_override: false,
+        description: "Liga o Redator. Desligado (ou sem provedor, modelo e chave), toda memória nova recebe `title_state = fallback`, sem chamar o LLM.",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_PROVIDER,
+        kind: SettingType::Choice(REDATOR_PROVIDERS),
+        default: "null",
+        channel_override: false,
+        description: "Provedor do LLM: OpenAI-compatível (`/chat/completions`), Anthropic (`/v1/messages`) ou Gemini (`generateContent`).",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_MODEL,
+        kind: SettingType::Text { max: 200 },
+        default: "null",
+        channel_override: false,
+        description: "Modelo principal do Redator.",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_API_KEY,
+        kind: SettingType::Secret,
+        default: "null",
+        channel_override: false,
+        description: "Chave de API do provedor, cifrada com `SECRETS_KEY`. Grave com `set_secret`; opcional só no `openai_compatible` (servidores locais).",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_BASE_URL,
+        kind: SettingType::Url,
+        default: "null",
+        channel_override: false,
+        description: "URL base do provedor. Obrigatória no `openai_compatible` (por exemplo `https://api.openai.com/v1`); no `anthropic` e no `gemini`, vazia usa a URL oficial.",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_INSTRUCTIONS,
+        kind: SettingType::Text { max: 4000 },
+        default: "null",
+        channel_override: true,
+        description: "Instruções acrescentadas ao prompt do sistema do Redator (o canal substitui a global).",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_REWRITE_TEXT,
+        kind: SettingType::Boolean,
+        default: "true",
+        channel_override: true,
+        description: "O Redator também revisa o texto (nova revisão `system/redator`); `false` gera só o título.",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_TITLE_MAX,
+        kind: SettingType::Integer { min: 20, max: 300 },
+        default: "100",
+        channel_override: false,
+        description: "Caracteres máximos do título gerado; título maior invalida a resposta.",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_MIN_SIMILARITY,
+        kind: SettingType::Number { min: 0.0, max: 1.0 },
+        default: "0.8",
+        channel_override: false,
+        description: "Guarda de sentido: similaridade de embedding mínima entre o original e o revisado. Sem embeddings (até a 007), o texto revisado nunca é aplicado.",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_TIMEOUT_MS,
+        kind: SettingType::Integer {
+            min: 1000,
+            max: 300_000,
+        },
+        default: "30000",
+        channel_override: false,
+        description: "Tempo limite de cada chamada ao LLM, em milissegundos.",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_MAX_ATTEMPTS,
+        kind: SettingType::Integer { min: 1, max: 10 },
+        default: "3",
+        channel_override: false,
+        description: "Tentativas do job `redact` (backoff de 2 s × 2ⁿ, teto de 10 min); esgotadas, `title_state = fallback`.",
+        since: "0.6.0",
+    },
+    SettingSpec {
+        key: REDATOR_FALLBACK_MODELS,
+        kind: SettingType::TextList {
+            max_items: 5,
+            max_len: 200,
+        },
+        default: "[]",
+        channel_override: false,
+        description: "Modelos tentados em ordem quando o principal falha por indisponibilidade, limite (429) ou tempo limite.",
+        since: "0.6.0",
+    },
 ];
 
 pub fn spec(key: &str) -> Option<&'static SettingSpec> {
@@ -318,6 +459,9 @@ pub fn validate(spec: &SettingSpec, value: &Value) -> Result<(), ApiError> {
     let invalid = |message: String, details: Value| {
         Err(ApiError::new("SETTING_INVALID", message).with_details(details))
     };
+    if value.is_null() && spec.default == "null" {
+        return Ok(());
+    }
     match spec.kind {
         SettingType::Integer { min, max } => match value.as_i64() {
             Some(number) if (min..=max).contains(&number) => Ok(()),
@@ -354,7 +498,62 @@ pub fn validate(spec: &SettingSpec, value: &Value) -> Result<(), ApiError> {
                 json!({ "key": spec.key, "type": "enum", "choices": choices }),
             ),
         },
+        SettingType::Text { max } => match value.as_str() {
+            Some(text) if (1..=max).contains(&text.trim().chars().count()) => Ok(()),
+            _ => invalid(
+                format!("{} deve ser um texto de 1 a {max} caracteres", spec.key),
+                json!({ "key": spec.key, "type": "text", "max": max }),
+            ),
+        },
+        SettingType::Url => match value.as_str() {
+            Some(url) if valid_url(url) => Ok(()),
+            _ => invalid(
+                format!("{} deve ser uma URL http:// ou https://", spec.key),
+                json!({ "key": spec.key, "type": "url" }),
+            ),
+        },
+        SettingType::TextList { max_items, max_len } => match value.as_array() {
+            Some(items)
+                if items.len() <= max_items
+                    && items.iter().all(|item| {
+                        item.as_str().is_some_and(|text| {
+                            (1..=max_len).contains(&text.trim().chars().count())
+                        })
+                    }) =>
+            {
+                Ok(())
+            }
+            _ => invalid(
+                format!(
+                    "{} deve ser uma lista de ate {max_items} textos de 1 a {max_len} caracteres",
+                    spec.key
+                ),
+                json!({ "key": spec.key, "type": "list", "max_items": max_items, "max_len": max_len }),
+            ),
+        },
+        SettingType::Secret => Err(setting_is_secret(spec.key)),
     }
+}
+
+fn valid_url(url: &str) -> bool {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    rest.is_some_and(|rest| {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+        !host.is_empty()
+            && url.len() <= 2000
+            && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+    })
+}
+
+/// Segredos não passam por `update_settings` (`400 SETTING_IS_SECRET`).
+pub fn setting_is_secret(key: &str) -> ApiError {
+    ApiError::new(
+        "SETTING_IS_SECRET",
+        format!("{key} e um segredo: grave com set_secret"),
+    )
+    .with_details(json!({ "key": key, "operation": "set_secret" }))
 }
 
 /// Valores efetivos em memória (padrões sobrepostos pelos persistidos).
@@ -475,6 +674,69 @@ impl SettingsSnapshot {
         self.text(TOKEN_ESTIMATOR)
     }
 
+    /// Booleano efetivo (padrão do catálogo quando ausente).
+    pub fn boolean(&self, key: &str) -> bool {
+        self.value(key).as_bool().unwrap_or_default()
+    }
+
+    pub fn number(&self, key: &str) -> f64 {
+        self.value(key).as_f64().unwrap_or_default()
+    }
+
+    pub fn whole(&self, key: &str) -> i64 {
+        self.integer(key)
+    }
+
+    /// Texto efetivo sem espaços nas pontas; `None` quando vazio ou nulo.
+    pub fn optional_text(&self, key: &str) -> Option<String> {
+        self.value(key)
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(str::to_owned)
+    }
+
+    pub fn text_list(&self, key: &str) -> Vec<String> {
+        self.value(key)
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|item| !item.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Valor no canal: a sobreposição válida, senão o global.
+    pub fn in_channel(&self, key: &str, overrides: Option<&BTreeMap<String, Value>>) -> Value {
+        overrides
+            .and_then(|overrides| overrides.get(key))
+            .filter(|value| spec(key).is_some_and(|spec| validate(spec, value).is_ok()))
+            .cloned()
+            .unwrap_or_else(|| self.value(key))
+    }
+
+    /// Cópia com os valores propostos (já validados), sem gravar nada (`test_redator`).
+    pub fn with(&self, proposed: &BTreeMap<&'static str, Value>) -> Self {
+        let mut values = self.values.clone();
+        for (key, value) in proposed {
+            match spec(key) {
+                Some(spec) if value.is_null() => {
+                    values.insert(spec.key, default_value(spec));
+                }
+                Some(spec) => {
+                    values.insert(spec.key, value.clone());
+                }
+                None => {}
+            }
+        }
+        Self { values }
+    }
+
     pub fn overflow_line(&self) -> bool {
         self.values
             .get(OVERFLOW_LINE)
@@ -581,9 +843,15 @@ pub struct SettingView {
     /// Se aceita sobreposição por canal (a partir da 003).
     pub channel_override: bool,
     pub description: String,
-    /// `null` quando vale o padrão.
+    /// `null` quando vale o padrão (no segredo, a última gravação).
     pub updated_at: Option<String>,
     pub updated_by_app: Option<String>,
+    /// Chave de segredo: `value` e `default` são sempre `null`; grave com `set_secret`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub secret: bool,
+    /// Só nos segredos: se há valor gravado.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configured: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -604,7 +872,11 @@ pub struct GetSettingsQuery {
 #[schema(example = json!({ "limits.rate_per_minute": 1200 }))]
 pub struct UpdateSettingsBody(pub BTreeMap<String, Value>);
 
-pub fn view(rows: &[SettingRow], key: Option<&str>) -> Result<SettingsView, ApiError> {
+pub fn view(
+    rows: &[SettingRow],
+    secrets: &[SecretView],
+    key: Option<&str>,
+) -> Result<SettingsView, ApiError> {
     if let Some(key) = key
         && spec(key).is_none()
     {
@@ -614,6 +886,24 @@ pub fn view(rows: &[SettingRow], key: Option<&str>) -> Result<SettingsView, ApiE
         .iter()
         .filter(|spec| key.is_none_or(|key| key == spec.key))
         .map(|spec| {
+            if spec.kind == SettingType::Secret {
+                let stored = secrets.iter().find(|secret| secret.key == spec.key);
+                return SettingView {
+                    key: spec.key.to_owned(),
+                    value: Value::Null,
+                    default: Value::Null,
+                    kind: spec.kind.name().to_owned(),
+                    min: None,
+                    max: None,
+                    choices: None,
+                    channel_override: false,
+                    description: spec.description.to_owned(),
+                    updated_at: stored.and_then(|secret| secret.updated_at.clone()),
+                    updated_by_app: None,
+                    secret: true,
+                    configured: Some(stored.is_some_and(|secret| secret.configured)),
+                };
+            }
             let row = rows.iter().find(|row| row.key == spec.key);
             let default = default_value(spec);
             let value = row
@@ -637,6 +927,8 @@ pub fn view(rows: &[SettingRow], key: Option<&str>) -> Result<SettingsView, ApiE
                 description: spec.description.to_owned(),
                 updated_at: row.map(|row| row.updated_at.clone()),
                 updated_by_app: row.and_then(|row| row.updated_by_app.clone()),
+                secret: false,
+                configured: None,
             }
         })
         .collect();
@@ -668,7 +960,8 @@ impl<S: Store> Core<S> {
     ) -> Result<SettingsView, ApiError> {
         self.authorize(principal, "get_settings")?;
         let rows = self.store().get_settings().await?;
-        view(&rows, query.key.as_deref().map(str::trim))
+        let secrets = self.store().list_secrets().await?;
+        view(&rows, &secrets, query.key.as_deref().map(str::trim))
     }
 
     pub async fn update_settings(
@@ -685,6 +978,9 @@ impl<S: Store> Core<S> {
         let mut retained = None;
         for (name, value) in &body.0 {
             let spec = spec(name).ok_or_else(|| unknown(name))?;
+            if spec.kind == SettingType::Secret {
+                return Err(setting_is_secret(spec.key));
+            }
             let value_json = if value.is_null() {
                 None
             } else {
@@ -731,8 +1027,9 @@ impl<S: Store> Core<S> {
             )
             .await?;
         self.replace_settings(SettingsSnapshot::from_rows(&mutation.value));
+        let secrets = self.store().list_secrets().await?;
         Ok(Mutation {
-            value: view(&mutation.value, None)?,
+            value: view(&mutation.value, &secrets, None)?,
             replayed: mutation.replayed,
         })
     }
@@ -911,7 +1208,13 @@ mod tests {
         assert_eq!(error.code, "SETTING_UNKNOWN");
         assert_eq!(
             error.details.expect("details")["valid"],
-            json!([TEXT_MAX, BUDGET_TOKENS, TITLES_BUDGET_TOKENS])
+            json!([
+                TEXT_MAX,
+                BUDGET_TOKENS,
+                TITLES_BUDGET_TOKENS,
+                REDATOR_INSTRUCTIONS,
+                REDATOR_REWRITE_TEXT
+            ])
         );
     }
 
@@ -941,7 +1244,7 @@ mod tests {
             json!(["tagged", "markdown", "json"])
         );
         assert_eq!(format.kind.range(), "`tagged`, `markdown`, `json`");
-        let view = view(&[], Some(DEFAULT_FORMAT)).expect("view");
+        let view = view(&[], &[], Some(DEFAULT_FORMAT)).expect("view");
         assert_eq!(view.settings[0].kind, "enum");
         assert_eq!(
             view.settings[0].choices.as_deref(),
@@ -956,13 +1259,81 @@ mod tests {
     }
 
     #[test]
+    fn redator_settings_validate_text_urls_lists_and_secrets() {
+        let model = spec(REDATOR_MODEL).expect("model");
+        assert!(validate(model, &json!("gpt-4o-mini")).is_ok());
+        assert!(validate(model, &Value::Null).is_ok());
+        assert!(validate(model, &json!("")).is_err());
+        assert!(validate(model, &json!("x".repeat(201))).is_err());
+        let url = spec(REDATOR_BASE_URL).expect("url");
+        assert!(validate(url, &json!("https://api.openai.com/v1")).is_ok());
+        assert!(validate(url, &json!("http://127.0.0.1:11434/v1")).is_ok());
+        for invalid in [
+            json!("ftp://x"),
+            json!("https://"),
+            json!("https://a b"),
+            json!(1),
+        ] {
+            assert!(validate(url, &invalid).is_err(), "{invalid}");
+        }
+        let fallback = spec(REDATOR_FALLBACK_MODELS).expect("fallback");
+        assert!(validate(fallback, &json!([])).is_ok());
+        assert!(validate(fallback, &json!(["a", "b"])).is_ok());
+        assert!(validate(fallback, &json!(["a", ""])).is_err());
+        assert!(validate(fallback, &json!(vec!["a"; 6])).is_err());
+        let provider = spec(REDATOR_PROVIDER).expect("provider");
+        assert!(validate(provider, &json!("gemini")).is_ok());
+        assert!(validate(provider, &json!("ollama")).is_err());
+        let secret = spec(REDATOR_API_KEY).expect("secret");
+        assert_eq!(
+            validate(secret, &json!("sk")).expect_err("secret").code,
+            "SETTING_IS_SECRET"
+        );
+        let snapshot = SettingsSnapshot::default();
+        assert!(snapshot.boolean(REDATOR_ENABLED));
+        assert_eq!(snapshot.optional_text(REDATOR_MODEL), None);
+        assert_eq!(snapshot.whole(REDATOR_TITLE_MAX), 100);
+        assert!(snapshot.text_list(REDATOR_FALLBACK_MODELS).is_empty());
+        let overrides = BTreeMap::from([(REDATOR_REWRITE_TEXT.to_owned(), json!(false))]);
+        assert_eq!(
+            snapshot.in_channel(REDATOR_REWRITE_TEXT, Some(&overrides)),
+            json!(false)
+        );
+        let proposed = BTreeMap::from([(REDATOR_MODEL, json!("m"))]);
+        assert_eq!(
+            snapshot
+                .with(&proposed)
+                .optional_text(REDATOR_MODEL)
+                .as_deref(),
+            Some("m")
+        );
+    }
+
+    #[test]
+    fn secrets_are_listed_without_value() {
+        let secrets = [SecretView {
+            key: REDATOR_API_KEY.to_owned(),
+            configured: true,
+            updated_at: Some("2026-10-31T12:00:00.000Z".to_owned()),
+        }];
+        let view = view(&[], &secrets, Some(REDATOR_API_KEY)).expect("view");
+        let secret = &view.settings[0];
+        assert!(secret.secret);
+        assert_eq!(secret.configured, Some(true));
+        assert_eq!(secret.value, Value::Null);
+        assert_eq!(secret.kind, "secret");
+        let empty = super::view(&[], &[], Some(REDATOR_API_KEY)).expect("view");
+        assert_eq!(empty.settings[0].configured, Some(false));
+    }
+
+    #[test]
     fn view_filters_by_key_and_rejects_unknown_keys() {
-        let view_all = view(&[], None).expect("all");
+        let view_all = view(&[], &[], None).expect("all");
         assert_eq!(view_all.settings.len(), SETTINGS.len());
-        let one = view(&[], Some(MAX_BATCH)).expect("one");
+        let one = view(&[], &[], Some(MAX_BATCH)).expect("one");
         assert_eq!(one.settings.len(), 1);
         assert_eq!(
-            view(&[], Some("limits.x")).expect_err("unknown").code,
+            view(&[], &[], Some("limits.x")).expect_err("unknown").code,
             "SETTING_UNKNOWN"
         );
     }

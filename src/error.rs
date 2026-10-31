@@ -248,6 +248,48 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         description: "Valor fora do tipo ou do intervalo da configuração; `details` traz a regra.",
     },
     ErrorCodeDoc {
+        code: "SETTING_IS_SECRET",
+        status: 400,
+        exit_code: 2,
+        description: "A chave é um segredo e não passa por `update_settings`; grave com `set_secret`.",
+    },
+    ErrorCodeDoc {
+        code: "SECRET_UNKNOWN",
+        status: 400,
+        exit_code: 2,
+        description: "Chave de segredo fora do catálogo; `details.valid` traz as aceitas.",
+    },
+    ErrorCodeDoc {
+        code: "JOB_NOT_FOUND",
+        status: 404,
+        exit_code: 5,
+        description: "Job inexistente.",
+    },
+    ErrorCodeDoc {
+        code: "JOB_NOT_RETRYABLE",
+        status: 409,
+        exit_code: 6,
+        description: "Só jobs com `state = failed` voltam para a fila.",
+    },
+    ErrorCodeDoc {
+        code: "PROVIDER_NOT_CONFIGURED",
+        status: 400,
+        exit_code: 2,
+        description: "Redator sem provedor, modelo, URL ou chave; `details.missing` traz as chaves que faltam.",
+    },
+    ErrorCodeDoc {
+        code: "PROVIDER_FAILED",
+        status: 502,
+        exit_code: 8,
+        description: "O provedor do LLM falhou ou devolveu uma resposta inválida; `details.outcome` e `details.reason` trazem o motivo curto.",
+    },
+    ErrorCodeDoc {
+        code: "PROVIDER_TIMEOUT",
+        status: 504,
+        exit_code: 8,
+        description: "O provedor do LLM não respondeu dentro de `redator.timeout_ms`.",
+    },
+    ErrorCodeDoc {
         code: "PAYLOAD_TOO_LARGE",
         status: 413,
         exit_code: 1,

@@ -77,6 +77,11 @@ async fn callers(context: &TestContext) -> Vec<Caller> {
     callers
 }
 
+/// Erro esperado de quem pode chamar: `test_redator` sem Redator configurado.
+fn expected_error(name: &str) -> Option<&'static str> {
+    (name == "test_redator").then_some("PROVIDER_NOT_CONFIGURED")
+}
+
 /// REST: método, URI e corpo de cada operação, contra alvos que existem ou que dão 404.
 fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
     let n = unique();
@@ -196,6 +201,19 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
             Some(json!({ "version": 1 })),
         ),
         "delete_memory" => ("DELETE", "/v1/memories/m_ffffffff".into(), None),
+        "set_secret" => (
+            "PUT",
+            "/v1/secrets/redator.api_key".into(),
+            Some(json!({ "value": null })),
+        ),
+        "test_redator" => (
+            "POST",
+            "/v1/settings/redator/test".into(),
+            Some(json!({ "text": "texto da matriz" })),
+        ),
+        "list_jobs" => ("GET", "/v1/jobs".into(), None),
+        "retry_job" => ("POST", "/v1/jobs/999999/retry".into(), None),
+        "list_llm_calls" => ("GET", "/v1/llm-calls".into(), None),
         "get_status" => ("GET", "/v1/status".into(), None),
         "get_audit" => ("GET", "/v1/audit".into(), None),
         "get_overview" => ("GET", "/v1/docs/overview".into(), None),
@@ -235,6 +253,9 @@ fn mcp_arguments(name: &str) -> Value {
         "update_subscription" => json!({ "subscription": "sub_ffffffff", "mode": "search" }),
         "unsubscribe" => json!({ "subscription": "sub_ffffffff" }),
         "update_settings" => json!({ "settings": { "limits.max_batch": 100 } }),
+        "set_secret" => json!({ "key": "redator.api_key", "value": null }),
+        "test_redator" => json!({ "text": "texto da matriz" }),
+        "retry_job" => json!({ "job": "999999" }),
         "channel_stats" | "get_channel_settings" => json!({ "channel": "matrix/canal" }),
         "update_channel_settings" => {
             json!({ "channel": "matrix/canal", "settings": { "memory.text_max": 4000 } })
@@ -420,6 +441,19 @@ fn cli_arguments(name: &str) -> Vec<String> {
             "--version".into(),
             "1".into(),
         ],
+        "set_secret" => vec![
+            "secrets".into(),
+            "set".into(),
+            "redator.api_key".into(),
+            "--delete".into(),
+        ],
+        "test_redator" => vec![
+            "settings".into(),
+            "test-redator".into(),
+            "--text".into(),
+            "texto da matriz".into(),
+        ],
+        "retry_job" => vec!["jobs".into(), "retry".into(), "999999".into()],
         "get_guide" => vec!["docs".into(), "guide".into(), "overview".into()],
         "search_docs" => vec!["docs".into(), "search".into(), "token".into()],
         "get_operation" => vec!["docs".into(), "operation".into(), "whoami".into()],
@@ -451,7 +485,9 @@ async fn rest_enforces_kind_and_scope_for_every_operation() {
             if caller.allowed(operation) {
                 assert_ne!(status, StatusCode::FORBIDDEN, "{label}: {response}");
                 assert!(
-                    status.is_success() || status == StatusCode::NOT_FOUND,
+                    status.is_success()
+                        || status == StatusCode::NOT_FOUND
+                        || response["error"]["code"].as_str() == expected_error(operation.name),
                     "{label}: {status} {response}"
                 );
             } else {
@@ -480,7 +516,8 @@ async fn mcp_enforces_kind_and_scope_for_every_operation() {
             if caller.allowed(operation) {
                 assert!(
                     result["isError"] == false
-                        || code.is_some_and(|code| code.ends_with("_NOT_FOUND")),
+                        || code.is_some_and(|code| code.ends_with("_NOT_FOUND"))
+                        || (code.is_some() && code == expected_error(operation.name)),
                     "{label}: {response}"
                 );
             } else {
@@ -531,7 +568,14 @@ async fn cli_enforces_kind_and_scope_for_every_operation() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let label = format!("{} {}", caller.label(), operation.name);
             if caller.allowed(operation) {
-                assert!(code == 0 || code == 5, "{label}: saida {code}: {stdout}");
+                let expected = expected_error(operation.name).is_some_and(|expected| {
+                    serde_json::from_str::<Value>(&stdout)
+                        .is_ok_and(|envelope| envelope["error"]["code"] == expected)
+                });
+                assert!(
+                    code == 0 || code == 5 || expected,
+                    "{label}: saida {code}: {stdout}"
+                );
             } else {
                 assert_eq!(code, 4, "{label}: {stdout}");
                 let envelope: Value = serde_json::from_str(&stdout).expect("envelope JSON");

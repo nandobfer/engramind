@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.5.0"
+    "version": "0.6.0"
   },
   "servers": [
     {
@@ -6452,6 +6452,643 @@
         ]
       }
     },
+    "/v1/jobs": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Lista os jobs da fila, do mais recente ao mais antigo",
+        "description": "Jobs `redact` (Redator) e `embed` (a partir da 007), com estado, tentativas, próxima execução, último erro e resultado. Filtra por `state` e `kind`. O payload só tem ids e versões. Exige token admin com `read`.",
+        "operationId": "list_jobs",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "description": "`queued`, `running`, `done` ou `failed`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Tipo do job, por exemplo `redact`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de jobs",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/jobs/{job}/retry": {
+      "post": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Recoloca na fila um job que falhou",
+        "description": "Só jobs com `state = failed`: voltam para `queued` com as tentativas zeradas e execução imediata. Outro estado dá `409 JOB_NOT_RETRYABLE`. Gera auditoria `job.retry`. Exige token admin com `write`.",
+        "operationId": "retry_job",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "path",
+            "description": "Id numérico do job",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job de volta à fila",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`JOB_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`JOB_NOT_RETRYABLE` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/llm-calls": {
+      "get": {
+        "tags": [
+          "Jobs"
+        ],
+        "summary": "Lista as chamadas ao LLM, da mais recente à mais antiga",
+        "description": "Uma linha por chamada (job `redact` ou `test_redator`): finalidade, provedor, modelo, tokens, custo quando o provedor informa, duração, resultado e erro curto. Nunca o texto, o prompt ou a chave. Filtra por `since` e `purpose`. Exige token admin com `read`.",
+        "operationId": "list_llm_calls",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Só as chamadas a partir deste instante (RFC 3339).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "purpose",
+            "in": "query",
+            "description": "`redact` ou `test`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Página de chamadas",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmCallList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/memories": {
       "get": {
         "tags": [
@@ -9623,13 +10260,250 @@
         ]
       }
     },
+    "/v1/secrets/{key}": {
+      "put": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Grava ou apaga um segredo de configuração",
+        "description": "Cifra o valor com AES-256-GCM (`SECRETS_KEY`) e devolve só `{ key, configured, updated_at }`; o valor nunca volta em resposta, log ou auditoria. `value: null` apaga. Chaves válidas: as configurações do tipo `secret` (`redator.api_key`). Exige token admin com `write`.",
+        "operationId": "set_secret",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Chave do segredo, por exemplo `redator.api_key`",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetSecretBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Estado do segredo",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecretView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR` ou `SECRET_UNKNOWN`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/settings": {
       "get": {
         "tags": [
           "Settings"
         ],
         "summary": "Lê as configurações com valores padrão",
-        "description": "Cada chave vem com o valor efetivo, o padrão, o tipo, o intervalo e se aceita sobreposição por canal. `key` limita a uma chave. Exige token admin com `read`.",
+        "description": "Cada chave vem com o valor efetivo, o padrão, o tipo, o intervalo e se aceita sobreposição por canal; os segredos vêm só com `secret: true`, `configured` e `updated_at`. `key` limita a uma chave. Exige token admin com `read`.",
         "operationId": "get_settings",
         "parameters": [
           {
@@ -9805,7 +10679,7 @@
           "Settings"
         ],
         "summary": "Altera uma ou mais configurações",
-        "description": "Recebe um mapa parcial `chave → valor`; `null` volta ao padrão. Tudo ou nada: uma chave inválida recusa o pedido inteiro. Cada mudança gera auditoria. Exige token admin com `write`.",
+        "description": "Recebe um mapa parcial `chave → valor`; `null` volta ao padrão. Tudo ou nada: uma chave inválida recusa o pedido inteiro. Segredos dão `SETTING_IS_SECRET` (use `set_secret`). Cada mudança gera auditoria. Exige token admin com `write`.",
         "operationId": "update_settings",
         "parameters": [
           {
@@ -9862,7 +10736,7 @@
             }
           },
           "400": {
-            "description": "`VALIDATION_ERROR`, `SETTING_UNKNOWN` ou `SETTING_INVALID`",
+            "description": "`VALIDATION_ERROR`, `SETTING_UNKNOWN`, `SETTING_INVALID` ou `SETTING_IS_SECRET`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -10002,6 +10876,253 @@
           },
           "504": {
             "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/redator/test": {
+      "post": {
+        "tags": [
+          "Settings"
+        ],
+        "summary": "Testa o Redator com um texto, sem gravar a memória",
+        "description": "Chama o LLM com a configuração atual ou com a proposta em `settings` (chaves `redator.*`, inclusive `redator.api_key` em claro), sem salvar nada além da linha de `llm_calls` (`purpose = test`). Devolve o título, o texto revisado, o modelo que respondeu e a latência. A guarda de sentido não é aplicada. Exige token admin com `write`.",
+        "operationId": "test_redator",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestRedatorBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Resultado do Redator",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestRedatorResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`, `SETTING_UNKNOWN`, `SETTING_INVALID` ou `PROVIDER_NOT_CONFIGURED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`PROVIDER_FAILED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`PROVIDER_TIMEOUT` ou `REQUEST_TIMEOUT`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -13326,6 +14447,132 @@
           }
         }
       },
+      "Job": {
+        "type": "object",
+        "description": "Um job da fila `jobs`. O payload só tem ids e versões, nunca texto.",
+        "required": [
+          "id",
+          "kind",
+          "payload",
+          "state",
+          "attempts",
+          "run_after",
+          "created_at"
+        ],
+        "properties": {
+          "attempts": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tentativas iniciadas (cada captura conta uma).",
+            "example": 1
+          },
+          "created_at": {
+            "type": "string",
+            "example": "2026-10-30T12:00:00.000Z"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 42
+          },
+          "kind": {
+            "type": "string",
+            "description": "`redact` (006) ou `embed` (processado a partir da 007).",
+            "example": "redact"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Motivo curto da última falha (sem texto de memória nem segredo)."
+          },
+          "locked_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Fim do lease de quem está executando; vencido, o job volta a ser capturável."
+          },
+          "outcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Em `done`: `applied`, `title_only`, `superseded` ou `skipped`."
+          },
+          "payload": {
+            "type": "object"
+          },
+          "run_after": {
+            "type": "string",
+            "example": "2026-10-30T12:00:00.000Z"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          }
+        }
+      },
+      "JobCount": {
+        "type": "object",
+        "description": "Jobs por tipo e estado (`get_status`).",
+        "required": [
+          "kind",
+          "state",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "example": 3,
+            "minimum": 0
+          },
+          "kind": {
+            "type": "string",
+            "example": "redact"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          }
+        }
+      },
+      "JobList": {
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Job"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "JobState": {
+        "type": "string",
+        "description": "Estado de um job da fila.",
+        "enum": [
+          "queued",
+          "running",
+          "done",
+          "failed"
+        ]
+      },
       "LiveResponse": {
         "type": "object",
         "required": [
@@ -13335,6 +14582,120 @@
           "status": {
             "type": "string",
             "example": "ok"
+          }
+        }
+      },
+      "LlmActivity": {
+        "type": "object",
+        "description": "Últimos resultados do Redator (`get_status`).",
+        "properties": {
+          "last_failure_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_success_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "LlmCall": {
+        "type": "object",
+        "description": "Linha de `llm_calls`.",
+        "required": [
+          "id",
+          "at",
+          "purpose",
+          "provider",
+          "model",
+          "duration_ms",
+          "outcome"
+        ],
+        "properties": {
+          "at": {
+            "type": "string",
+            "example": "2026-10-30T12:00:00.000Z"
+          },
+          "cost_usd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Só quando o provedor informa o custo (por exemplo `usage.cost`)."
+          },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "example": 820
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Motivo curto da falha."
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 7
+          },
+          "input_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "model": {
+            "type": "string",
+            "example": "gpt-4o-mini"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`success`, `timeout`, `rate_limited`, `unavailable`, `rejected` ou `invalid_response`.",
+            "example": "success"
+          },
+          "output_tokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "provider": {
+            "type": "string",
+            "example": "openai_compatible"
+          },
+          "purpose": {
+            "type": "string",
+            "description": "`redact` ou `test`.",
+            "example": "redact"
+          }
+        }
+      },
+      "LlmCallList": {
+        "type": "object",
+        "required": [
+          "calls"
+        ],
+        "properties": {
+          "calls": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LlmCall"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -13678,7 +15039,7 @@
           },
           "reason": {
             "type": "string",
-            "description": "`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move` ou `revert`.",
+            "description": "`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert` ou `redact`\n(texto revisado pelo Redator, autor `system/redator`).",
             "example": "create"
           },
           "status": {
@@ -13853,6 +15214,36 @@
           }
         }
       },
+      "QueueStatus": {
+        "type": "object",
+        "description": "Jobs por tipo e estado.",
+        "required": [
+          "pending",
+          "failed",
+          "by_kind"
+        ],
+        "properties": {
+          "by_kind": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobCount"
+            }
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "example": 0,
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs `queued` ou `running` de todos os tipos.",
+            "example": 3,
+            "minimum": 0
+          }
+        }
+      },
       "ReadyResponse": {
         "type": "object",
         "required": [
@@ -13871,6 +15262,53 @@
           "status": {
             "type": "string",
             "example": "ready"
+          }
+        }
+      },
+      "RedatorStatus": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "configured",
+          "missing",
+          "activity"
+        ],
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/LlmActivity",
+            "description": "Últimos resultados das chamadas do job `redact`."
+          },
+          "configured": {
+            "type": "boolean",
+            "description": "Provedor, modelo, URL e chave presentes."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`redator.enabled`."
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Chaves que faltam para o Redator chamar o LLM.",
+            "example": [
+              "redator.model"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "gpt-4o-mini"
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "openai_compatible"
           }
         }
       },
@@ -14028,6 +15466,45 @@
           }
         }
       },
+      "SecretView": {
+        "type": "object",
+        "description": "Segredo visto de fora: nunca o valor.",
+        "required": [
+          "key",
+          "configured"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string",
+            "example": "redator.api_key"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Última gravação; `null` quando não configurado."
+          }
+        }
+      },
+      "SetSecretBody": {
+        "type": "object",
+        "description": "Corpo de `set_secret`: o valor em claro, que nunca volta em resposta nenhuma.",
+        "properties": {
+          "value": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Valor do segredo (até 4096 caracteres); `null` apaga.",
+            "example": "sk-..."
+          }
+        },
+        "additionalProperties": false
+      },
       "SettingView": {
         "type": "object",
         "description": "Uma configuração com o valor efetivo, o padrão e a regra.",
@@ -14059,6 +15536,13 @@
               "json"
             ]
           },
+          "configured": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Só nos segredos: se há valor gravado."
+          },
           "default": {
             "type": "object"
           },
@@ -14086,6 +15570,10 @@
             "description": "Mínimo (`integer`, `number`) ou itens mínimos (`categories`); `null` para `boolean`.",
             "example": 1
           },
+          "secret": {
+            "type": "boolean",
+            "description": "Chave de segredo: `value` e `default` são sempre `null`; grave com `set_secret`."
+          },
           "type": {
             "type": "string",
             "example": "integer"
@@ -14095,7 +15583,7 @@
               "string",
               "null"
             ],
-            "description": "`null` quando vale o padrão."
+            "description": "`null` quando vale o padrão (no segredo, a última gravação)."
           },
           "updated_by_app": {
             "type": [
@@ -14157,7 +15645,9 @@
           "version",
           "database",
           "backup",
-          "counts"
+          "counts",
+          "queue",
+          "redator"
         ],
         "properties": {
           "backup": {
@@ -14168,6 +15658,12 @@
           },
           "database": {
             "$ref": "#/components/schemas/DatabaseStatus"
+          },
+          "queue": {
+            "$ref": "#/components/schemas/QueueStatus"
+          },
+          "redator": {
+            "$ref": "#/components/schemas/RedatorStatus"
           },
           "version": {
             "type": "string",
@@ -14308,6 +15804,58 @@
               "$ref": "#/components/schemas/Subscription"
             },
             "description": "Em ordem de criação."
+          }
+        }
+      },
+      "TestRedatorBody": {
+        "type": "object",
+        "description": "Corpo de `test_redator`: um texto de exemplo e, opcionalmente, uma configuração proposta\n(chaves `redator.*`, inclusive `redator.api_key` em claro), que não é gravada.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "settings": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Mapa parcial `redator.* → valor` usado só neste teste."
+          },
+          "text": {
+            "type": "string",
+            "description": "Texto de exemplo, com os limites de `memory.text_min`/`text_max`.",
+            "example": "Use cargo nextest para rodar os testes do servico localmente."
+          }
+        },
+        "additionalProperties": false
+      },
+      "TestRedatorResult": {
+        "type": "object",
+        "description": "Resultado do teste: o que o Redator faria com o texto (nada é gravado além de `llm_calls`).",
+        "required": [
+          "title",
+          "text",
+          "model",
+          "latency_ms"
+        ],
+        "properties": {
+          "latency_ms": {
+            "type": "integer",
+            "format": "int64",
+            "example": 850
+          },
+          "model": {
+            "type": "string",
+            "description": "Modelo que respondeu (o principal ou um de `fallback_models`).",
+            "example": "gpt-4o-mini"
+          },
+          "text": {
+            "type": "string",
+            "description": "Texto revisado (o original com `redator.rewrite_text = false`)."
+          },
+          "title": {
+            "type": "string",
+            "example": "Testes locais com cargo nextest"
           }
         }
       },
@@ -14701,6 +16249,10 @@
     {
       "name": "Status",
       "description": "Estado do serviço (token admin)"
+    },
+    {
+      "name": "Jobs",
+      "description": "Fila de jobs e chamadas ao LLM (token admin)"
     },
     {
       "name": "Audit",

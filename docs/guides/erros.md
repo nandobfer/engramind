@@ -48,6 +48,13 @@ Todo erro usa o envelope único:
 | `LAST_ADMIN_TOKEN` | 409 | 6 | A mudança deixaria a rede sem nenhum token `admin` ativo com `write`. |
 | `SETTING_UNKNOWN` | 400 | 2 | Chave de configuração desconhecida; `details.valid` lista as chaves. |
 | `SETTING_INVALID` | 400 | 2 | Valor fora do tipo ou do intervalo da configuração; `details` traz a regra. |
+| `SETTING_IS_SECRET` | 400 | 2 | A chave é um segredo e não passa por `update_settings`; grave com `set_secret`. |
+| `SECRET_UNKNOWN` | 400 | 2 | Chave de segredo fora do catálogo; `details.valid` traz as aceitas. |
+| `JOB_NOT_FOUND` | 404 | 5 | Job inexistente. |
+| `JOB_NOT_RETRYABLE` | 409 | 6 | Só jobs com `state = failed` voltam para a fila. |
+| `PROVIDER_NOT_CONFIGURED` | 400 | 2 | Redator sem provedor, modelo, URL ou chave; `details.missing` traz as chaves que faltam. |
+| `PROVIDER_FAILED` | 502 | 8 | O provedor do LLM falhou ou devolveu uma resposta inválida; `details.outcome` e `details.reason` trazem o motivo curto. |
+| `PROVIDER_TIMEOUT` | 504 | 8 | O provedor do LLM não respondeu dentro de `redator.timeout_ms`. |
 | `PAYLOAD_TOO_LARGE` | 413 | 1 | Corpo acima de MAX_BODY_BYTES. |
 | `MCP_BAD_REQUEST` | 400 | 1 | Cabeçalhos ou mensagem MCP inválidos. |
 | `MCP_HOST_FORBIDDEN` | 403 | 1 | Cabeçalho `Host` fora de MCP_ALLOWED_HOSTS. |
@@ -72,5 +79,9 @@ Todo erro usa o envelope único:
 - `409 CATEGORY_IN_USE`: mova ou recategorize as memórias de `details.in_use` antes de retirar a categoria.
 - `409 IDEMPOTENCY_KEY_CONFLICT`: a chave já foi usada com outro corpo; gere uma chave nova para a nova intenção.
 - `409 LAST_ADMIN_TOKEN`: emita outro token `admin` com `write` antes de revogar, desativar ou excluir o último.
+- `400 SETTING_IS_SECRET`: grave a chave com `set_secret`, nunca por `update_settings`.
+- `400 PROVIDER_NOT_CONFIGURED`: defina as chaves de `details.missing` (`update_settings` e `set_secret`) ou proponha-as em `settings` no `test_redator`.
+- `409 JOB_NOT_RETRYABLE`: só jobs `failed` voltam para a fila; os outros já estão nela ou terminaram.
+- `502 PROVIDER_FAILED` e `504 PROVIDER_TIMEOUT`: o provedor do LLM falhou; confira modelo, URL e chave, ou acrescente `redator.fallback_models`.
 - `429 RATE_LIMITED`: espere os segundos de `Retry-After`.
 - `503` e `504`: falhas transitórias; repita com backoff, usando `Idempotency-Key` nas mutações.

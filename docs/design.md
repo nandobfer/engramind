@@ -356,7 +356,17 @@ Resultado:
 - Se o Redator estiver desligado, falhar todas as tentativas ou não estiver configurado, a memória
   recebe `title_state = fallback` e mantém o texto como foi escrito.
 
-Toda chamada fica registrada em `llm_calls`, com tokens, custo e duração.
+Aplicação (decisão 0016):
+- O **título** aplicado vira `title_state = ready`, incrementa `channels.version` (o título aparece no
+  contexto) e gera auditoria `memory.redact`; não cria revisão nem muda `memories.version`, para não
+  dar `MEMORY_VERSION_CONFLICT` a quem edita.
+- O texto revisado também precisa ser diferente do original e não repetir outra memória do canal.
+- Um job está superado quando a memória foi excluída ou existe um `redact` mais novo para ela; na
+  aplicação, o `content_hash` precisa ser o lido no início do job. Superado termina sem efeito.
+- Até os embeddings (007), a guarda de sentido não tem como medir e falha fechada: só o título.
+
+Toda chamada fica registrada em `llm_calls`, com tokens, custo (só quando o provedor informa, como o
+`usage.cost` do OpenRouter) e duração.
 
 ### Embeddings
 

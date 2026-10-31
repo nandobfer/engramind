@@ -20,7 +20,7 @@ Guias: `contexto-e-cache`, `integracao-consumidor`, `integracao-mcp`.
 - O alcance vem só de `access::resolve(…, Purpose::Context, …)`: canais `inject`, nunca arquivados; `admin` alcança todos os ativos.
 - O `304` não toca o banco: a `version` sai da rede em cache e do `SettingsSnapshot`. Não adicione leitura de banco antes da comparação com `If-None-Match`.
 - Nada além de uma mudança real (memória, canal, assinatura, configuração de renderização) muda a ordem, o conteúdo ou a `version`. Contadores nunca entram.
-- Toda escrita que muda o que o bloco mostra (texto, título, status, categoria, canal) precisa incrementar `channels.version` e chamar `network_changed()`; o Redator (006) também ao aplicar só o título.
+- Toda escrita que muda o que o bloco mostra (texto, título, status, categoria, canal) precisa incrementar `channels.version` e chamar `network_changed()`; o Redator também ao aplicar só o título (`Store::apply_redaction`).
 - Chave nova que muda o bloco entra em `settings::CONTEXT_RENDER_KEYS` (hash da `version`).
 - A escolha das memórias é a mesma em todos os formatos; o custo é a linha `tagged`.
 - O texto vai para o bloco escapado (D-002); nunca para logs. `304` é `DEBUG`.

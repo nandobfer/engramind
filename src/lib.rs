@@ -10,6 +10,7 @@ pub mod http;
 pub mod mcp;
 pub mod observability;
 pub mod openapi;
+pub mod providers;
 pub mod rest;
 pub mod store;
 

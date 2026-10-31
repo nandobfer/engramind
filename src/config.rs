@@ -28,6 +28,10 @@ impl fmt::Debug for Secret {
 pub struct SecretKey([u8; 32]);
 
 impl SecretKey {
+    pub fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     pub fn expose(&self) -> &[u8; 32] {
         &self.0
     }

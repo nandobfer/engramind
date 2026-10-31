@@ -12,7 +12,7 @@ Uma memória é um **fato durável e curto** que outros agentes vão seguir: uma
 
 ## Escrever
 
-`create_memory { channel, text, category?, origin?, status? }` exige `write` efetivo no canal. A escrita nunca espera o LLM: a memória nasce na hora com um **título provisório** (a primeira frase, até 100 caracteres, `title_state: pending`), a revisão 1 e a auditoria, e o Redator e o embedding entram numa fila.
+`create_memory { channel, text, category?, origin?, status? }` exige `write` efetivo no canal. A escrita nunca espera o LLM: a memória nasce na hora com um **título provisório** (a primeira frase, até 100 caracteres, `title_state: pending`), a revisão 1 e a auditoria, e o Redator e o embedding entram numa fila. O Redator troca depois o título provisório por um título de uma linha (`title_state: ready`) e pode revisar o texto numa revisão nova de autor `system/redator`, que o histórico e `revert_memory` preservam; sem Redator configurado, o título provisório fica (`title_state: fallback`).
 
 - `text` precisa ter entre `memory.text_min` e `memory.text_max` caracteres (o máximo pode ser sobreposto por canal); fora disso, `400 VALIDATION_ERROR` com `details.field: "text"`.
 - Categoria fora de `categories.list` → `400 CATEGORY_NOT_FOUND` com as válidas em `details.valid`.

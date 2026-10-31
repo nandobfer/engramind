@@ -46,6 +46,7 @@ pub const TAG_CONTEXT: &str = "Context";
 pub const TAG_MEMORIES: &str = "Memories";
 pub const TAG_SETTINGS: &str = "Settings";
 pub const TAG_STATUS: &str = "Status";
+pub const TAG_JOBS: &str = "Jobs";
 pub const TAG_AUDIT: &str = "Audit";
 pub const TAG_DOCUMENTATION: &str = "Documentation";
 
@@ -589,6 +590,55 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "PUT",
         "/v1/channels/{channel}/settings",
         &["channels", "settings", "set"],
+    ),
+    mutation(
+        "set_secret",
+        TAG_SETTINGS,
+        "Grava ou apaga um segredo de configuração",
+        Scope::Write,
+        false,
+        true,
+        "PUT",
+        "/v1/secrets/{key}",
+        &["secrets", "set"],
+    ),
+    mutation(
+        "test_redator",
+        TAG_SETTINGS,
+        "Testa o Redator com um texto, sem gravar a memória",
+        Scope::Write,
+        false,
+        false,
+        "POST",
+        "/v1/settings/redator/test",
+        &["settings", "test-redator"],
+    ),
+    read(
+        "list_jobs",
+        TAG_JOBS,
+        "Lista os jobs da fila, do mais recente ao mais antigo",
+        Admin,
+        "/v1/jobs",
+        &["jobs", "list"],
+    ),
+    mutation(
+        "retry_job",
+        TAG_JOBS,
+        "Recoloca na fila um job que falhou",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/jobs/{job}/retry",
+        &["jobs", "retry"],
+    ),
+    read(
+        "list_llm_calls",
+        TAG_JOBS,
+        "Lista as chamadas ao LLM, da mais recente à mais antiga",
+        Admin,
+        "/v1/llm-calls",
+        &["llm-calls", "list"],
     ),
     read(
         "get_status",
