@@ -1,27 +1,27 @@
-//! `search_memories` (desenho §9): FTS5/BM25 sem acentos sobre os canais em modo `inject` e
-//! `search`, mais os `manage` citados. O ramo vetorial e a fusão completa chegam na 007; o
-//! `score` já é o RRF do ramo textual, para a escala não mudar.
+//! `search_memories` (desenho §9): ramo vetorial (cosseno do sqlite-vec, só o modelo vigente) e
+//! ramo textual (FTS5/BM25 sem acentos) sobre os canais em modo `inject` e `search`, mais os
+//! `manage` citados, unidos pela fusão RRF ponderada. Sem embeddings, só o FTS (`mode: text`).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::settings::{
+    SEARCH_DEFAULT_LIMIT, SEARCH_RRF_K, SEARCH_TEXT_WEIGHT, SEARCH_VECTOR_WEIGHT,
+};
 use super::{
     Core,
     access::Purpose,
     ids,
     memories::{Fields, MemoryItem},
     memory_text::query_terms,
-    model::{MemoryStatus, TextQuery, UsageEntry},
+    model::{Memory, MemoryStatus, TextQuery, UsageEntry, VectorQuery},
     principal::Principal,
     selection::Selection,
 };
 use crate::{error::ApiError, store::Store};
 
-pub const DEFAULT_LIMIT: u32 = 10;
 pub const MAX_LIMIT: u32 = 50;
-/// `k` da fusão RRF (`search.rrf_k` na 007).
-pub const RRF_K: f64 = 60.0;
 const MAX_QUERY: usize = 500;
 const MAX_EXCLUDED: usize = 500;
 
@@ -37,7 +37,7 @@ pub struct SearchMemoriesBody {
     pub channels: Option<Vec<String>>,
     #[schema(example = json!(["CONSTRAINTS"]))]
     pub categories: Option<Vec<String>>,
-    /// De 1 a 50 (padrão 10).
+    /// De 1 a 50 (padrão `search.default_limit`).
     #[schema(minimum = 1, maximum = 50)]
     pub limit: Option<u32>,
     /// Inclui as memórias arquivadas.
@@ -55,14 +55,62 @@ pub struct SearchHit {
     /// Posição, a partir de 1.
     #[schema(example = 1)]
     pub rank: u32,
-    /// `1 / (60 + rank)`.
-    #[schema(example = 0.016393)]
+    /// `Σ peso / (search.rrf_k + posição)` sobre os dois ramos, com 6 casas.
+    #[schema(example = 0.032787)]
     pub score: f64,
     pub memory: MemoryItem,
 }
 
+/// Ramos que rodaram: `hybrid` quando a consulta foi vetorizada (mesmo sem candidatos
+/// vetoriais), `text` quando não (desligado, sem configuração, falha ou prazo do provedor).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchMode {
+    Hybrid,
+    Text,
+}
+
+/// Pesos e `k` da fusão.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Fusion {
+    pub vector_weight: f64,
+    pub text_weight: f64,
+    pub k: f64,
+}
+
+/// RRF ponderado: `score(id) = Σ peso / (k + posição)`, ausente num ramo = 0; ordem por
+/// `score` decrescente e `id` crescente; até `limit`.
+pub fn fuse(
+    vector: Vec<Memory>,
+    text: Vec<Memory>,
+    fusion: Fusion,
+    limit: usize,
+) -> Vec<(Memory, f64)> {
+    let mut scored: Vec<(Memory, f64)> = Vec::new();
+    for (branch, weight) in [(vector, fusion.vector_weight), (text, fusion.text_weight)] {
+        for (index, memory) in branch.into_iter().enumerate() {
+            let score = weight / (fusion.k + index as f64 + 1.0);
+            match scored
+                .iter_mut()
+                .find(|(existing, _)| existing.id == memory.id)
+            {
+                Some((_, total)) => *total += score,
+                None => scored.push((memory, score)),
+            }
+        }
+    }
+    scored.sort_by(|(a, x), (b, y)| y.total_cmp(x).then_with(|| a.id.cmp(&b.id)));
+    scored.truncate(limit);
+    scored
+}
+
+fn round6(value: f64) -> f64 {
+    (value * 1_000_000.0).round() / 1_000_000.0
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct SearchResults {
+    pub mode: SearchMode,
     /// Da mais relevante à menos relevante.
     pub results: Vec<SearchHit>,
     /// `version` de `get_context` sem `format` para o mesmo token e seleção.
@@ -90,7 +138,10 @@ impl<S: Store> Core<S> {
                 "query precisa de ao menos uma palavra",
             ));
         }
-        let limit = body.limit.unwrap_or(DEFAULT_LIMIT);
+        let snapshot = self.settings_snapshot();
+        let limit = body
+            .limit
+            .unwrap_or_else(|| u32::try_from(snapshot.whole(SEARCH_DEFAULT_LIMIT)).unwrap_or(10));
         if !(1..=MAX_LIMIT).contains(&limit) {
             return Err(ApiError::validation(format!(
                 "limit deve estar entre 1 e {MAX_LIMIT}"
@@ -117,20 +168,48 @@ impl<S: Store> Core<S> {
         if body.include_archived.unwrap_or(false) {
             statuses.push(MemoryStatus::Archived);
         }
-        let found = self
+        let categories = body.categories.unwrap_or_default();
+        let text_hits = self
             .store()
             .search_text(TextQuery {
                 terms,
                 channel_ids: channel_ids.clone(),
-                categories: body.categories.unwrap_or_default(),
-                statuses,
-                exclude_ids,
+                categories: categories.clone(),
+                statuses: statuses.clone(),
+                exclude_ids: exclude_ids.clone(),
                 limit,
             })
             .await?;
+        let (mode, vector_hits) = match self.query_vector(query, "search_memories").await {
+            Some((runtime, embedding)) => {
+                let hits = self
+                    .store()
+                    .search_vectors(VectorQuery {
+                        embedding,
+                        model_id: runtime.model_id,
+                        channel_ids: channel_ids.clone(),
+                        categories,
+                        statuses,
+                        exclude_ids,
+                        limit,
+                    })
+                    .await?;
+                (
+                    SearchMode::Hybrid,
+                    hits.into_iter().map(|hit| hit.memory).collect(),
+                )
+            }
+            None => (SearchMode::Text, Vec::new()),
+        };
+        let fusion = Fusion {
+            vector_weight: snapshot.number(SEARCH_VECTOR_WEIGHT),
+            text_weight: snapshot.number(SEARCH_TEXT_WEIGHT),
+            k: snapshot.whole(SEARCH_RRF_K) as f64,
+        };
+        let found = fuse(vector_hits, text_hits, fusion, limit as usize);
         let at = ids::timestamp(ids::now());
         self.counters()
-            .record(found.iter().map(|memory| memory.id.as_str()), &at);
+            .record(found.iter().map(|(memory, _)| memory.id.as_str()), &at);
         self.counters().record_usage(UsageEntry {
             at,
             app_id: principal.app.id.clone(),
@@ -138,24 +217,101 @@ impl<S: Store> Core<S> {
             token_id: principal.token_id.clone(),
             op: "search_memories",
             channel_ids,
-            memory_ids: found.iter().map(|memory| memory.id.clone()).collect(),
+            memory_ids: found.iter().map(|(memory, _)| memory.id.clone()).collect(),
             rendered_tokens: None,
         });
         let fields = body.fields.unwrap_or_default();
         Ok(SearchResults {
+            mode,
             results: found
                 .into_iter()
                 .enumerate()
-                .map(|(index, memory)| {
-                    let rank = index as u32 + 1;
-                    SearchHit {
-                        rank,
-                        score: (1_000_000.0 / (RRF_K + f64::from(rank))).round() / 1_000_000.0,
-                        memory: MemoryItem::of(memory, fields),
-                    }
+                .map(|(index, (memory, score))| SearchHit {
+                    rank: index as u32 + 1,
+                    score: round6(score),
+                    memory: MemoryItem::of(memory, fields),
                 })
                 .collect(),
             context_version,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::model::{Author, EmbeddingState, TitleState};
+
+    fn memory(id: &str) -> Memory {
+        Memory {
+            id: id.to_owned(),
+            channel: "eng/global".to_owned(),
+            channel_id: "ch_1".to_owned(),
+            category: "CONSTRAINTS".to_owned(),
+            title: id.to_owned(),
+            title_state: TitleState::Ready,
+            text: id.to_owned(),
+            status: MemoryStatus::Active,
+            importance: None,
+            version: 1,
+            embedding_state: EmbeddingState::Ready,
+            author: Author {
+                app_id: "app_1".to_owned(),
+                app: None,
+                agent_id: None,
+                agent: None,
+            },
+            origin: None,
+            retrieval_count: 0,
+            injected_count: 0,
+            last_retrieved_at: None,
+            verified_at: None,
+            created_at: String::new(),
+            updated_at: String::new(),
+            archived_at: None,
+        }
+    }
+
+    fn ids(found: &[(Memory, f64)]) -> Vec<&str> {
+        found.iter().map(|(memory, _)| memory.id.as_str()).collect()
+    }
+
+    const EQUAL: Fusion = Fusion {
+        vector_weight: 1.0,
+        text_weight: 1.0,
+        k: 60.0,
+    };
+
+    #[test]
+    fn items_in_both_branches_win_and_ties_go_by_id() {
+        let found = fuse(
+            vec![memory("m_b"), memory("m_c")],
+            vec![memory("m_a"), memory("m_b")],
+            EQUAL,
+            10,
+        );
+        assert_eq!(ids(&found), ["m_b", "m_a", "m_c"]);
+        assert_eq!(round6(found[0].1), round6(1.0 / 61.0 + 1.0 / 62.0));
+        assert_eq!(round6(found[1].1), 0.016393);
+    }
+
+    #[test]
+    fn weights_change_the_order_predictably() {
+        let vector = || vec![memory("m_v")];
+        let text = || vec![memory("m_t")];
+        let only_text = Fusion {
+            vector_weight: 0.0,
+            ..EQUAL
+        };
+        assert_eq!(ids(&fuse(vector(), text(), only_text, 10)), ["m_t", "m_v"]);
+        let vector_first = Fusion {
+            vector_weight: 2.0,
+            ..EQUAL
+        };
+        assert_eq!(
+            ids(&fuse(vector(), text(), vector_first, 10)),
+            ["m_v", "m_t"]
+        );
+        assert_eq!(fuse(vector(), text(), EQUAL, 1).len(), 1);
     }
 }

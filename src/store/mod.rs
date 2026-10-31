@@ -12,13 +12,14 @@ use utoipa::ToSchema;
 use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
-        Channel, ChannelPatch, ChannelStats, ContextSnapshot, IdemRow, IdentityCounts,
-        InjectionBump, Job, JobCount, JobFilter, JobFinish, LlmActivity, LlmCall, LlmCallFilter,
-        Lookup, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite,
-        Network, NewAgent, NewApp, NewChannel, NewLlmCall, NewMemory, NewSubscription, NewToken,
-        Redaction, RetrievalBump, SecretView, SettingChange, SettingRow, StatusAction,
+        Channel, ChannelPatch, ChannelStats, ContextSnapshot, EmbedSource, EmbeddingState,
+        EmbeddingSwitch, IdemRow, IdentityCounts, InjectionBump, Job, JobCount, JobFilter,
+        JobFinish, LlmActivity, LlmCall, LlmCallFilter, Lookup, Memory, MemoryFilter, MemoryPatch,
+        MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent, NewApp, NewChannel,
+        NewLlmCall, NewMemory, NewSubscription, NewToken, Redaction, ReindexJobs, ReindexPlan,
+        ReindexState, RetrievalBump, SecretView, SettingChange, SettingRow, StatusAction,
         StoredSecret, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
-        UsageEntry, WriteContext,
+        UsageEntry, VectorBatch, VectorCounts, VectorHit, VectorQuery, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -315,10 +316,13 @@ pub trait Store: Clone + Send + Sync + 'static {
     fn get_settings(&self) -> impl Future<Output = Result<Vec<SettingRow>, StoreError>> + Send;
     /// Com `retained_categories`, falha com `Conflict("CATEGORY_IN_USE")` se alguma memória
     /// usa uma categoria fora da lista.
+    /// Com `embedding`, troca o espaço dos vetores na mesma transação (`model_id` vigente,
+    /// estados, lotes `embed` e o registro da reindexação).
     fn update_settings(
         &self,
         changes: Vec<SettingChange>,
         retained_categories: Option<Vec<String>>,
+        embedding: Option<EmbeddingSwitch>,
         context: WriteContext,
     ) -> impl Future<Output = Result<Vec<SettingRow>, StoreError>> + Send;
     fn find_idempotency(
@@ -427,6 +431,67 @@ pub trait Store: Clone + Send + Sync + 'static {
         &self,
         memory_id: String,
     ) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
+
+    // Embeddings (007). O `model_id` vigente fica no próprio `Store` (gravado com as
+    // configurações), para um vetor de outro modelo nunca entrar depois de uma troca.
+
+    /// `model_id` vigente; `Some("")` com os embeddings desligados, `None` antes da 0.7.0.
+    fn embedding_model(&self) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+    /// Grava o `model_id` vigente sem reindexar (inicialização).
+    fn set_embedding_model(
+        &self,
+        model_id: String,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Título, texto e `content_hash` das memórias que ainda existem.
+    fn embed_sources(
+        &self,
+        ids: Vec<String>,
+    ) -> impl Future<Output = Result<Vec<EmbedSource>, StoreError>> + Send;
+    /// Grava os vetores ainda válidos (`embedding_state = ready`); devolve quantos.
+    fn save_vectors(
+        &self,
+        batch: VectorBatch,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+    /// `embedding_state` (`failed` ou `off`) das memórias ainda `pending`.
+    fn mark_embedding(
+        &self,
+        ids: Vec<String>,
+        state: EmbeddingState,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
+    /// Ramo vetorial da busca, da menor para a maior distância.
+    fn search_vectors(
+        &self,
+        query: VectorQuery,
+    ) -> impl Future<Output = Result<Vec<VectorHit>, StoreError>> + Send;
+    fn vector_counts(
+        &self,
+        model_id: String,
+        since: Option<String>,
+    ) -> impl Future<Output = Result<VectorCounts, StoreError>> + Send;
+    fn reindex_state(
+        &self,
+    ) -> impl Future<Output = Result<Option<ReindexState>, StoreError>> + Send;
+    /// Jobs pendentes e falhos da reindexação, fora `exclude_job`.
+    fn reindex_jobs(
+        &self,
+        started_at: String,
+        exclude_job: Option<i64>,
+    ) -> impl Future<Output = Result<ReindexJobs, StoreError>> + Send;
+    /// `reembed_all`: revetoriza tudo com `model_id`, com auditoria e idempotência;
+    /// reindexação com jobs pendentes → `Conflict("REEMBED_IN_PROGRESS")`.
+    fn start_reindex(
+        &self,
+        model_id: String,
+        plan: ReindexPlan,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<ReindexState, StoreError>> + Send;
+    /// Fim da reindexação `started_at` (ou limpeza sem reindexação, com `None`): apaga os
+    /// vetores de outros modelos e o registro; devolve se encerrou.
+    fn finish_reindex(
+        &self,
+        model_id: String,
+        started_at: Option<String>,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

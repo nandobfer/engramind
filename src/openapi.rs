@@ -10,6 +10,7 @@ use utoipa::openapi::{
 };
 use utoipa::{Modify, OpenApi};
 
+use crate::providers::embeddings::EmbeddingModelEntry;
 use crate::{
     core::{
         audit::AuditList,
@@ -19,6 +20,11 @@ use crate::{
             ContextFormat, ContextLine, ContextNotModified, ContextTitle, ContextView,
         },
         docs::DocText,
+        embeddings::{
+            EmbeddingModelList, EmbeddingStatus, ListEmbeddingModelsBody, TestEmbeddingBody,
+            TestEmbeddingResult,
+        },
+        hints::{Hint, HintsBody, HintsResult},
         identities::{
             AgentList, AppList, CreateAgentBody, CreateAppBody, IssueTokenBody, IssuedToken,
             TokenList, UpdateBody, UpdateTokenBody, WhoAmI,
@@ -32,11 +38,11 @@ use crate::{
             Agent, App, AuditEvent, Author, Channel, ChannelReach, ChannelStats, EmbeddingState,
             IdentityCounts, Job, JobCount, JobState, LlmActivity, LlmCall, Memory, MemoryCounts,
             MemoryRevision, MemoryStatus, MemoryTitle, MemoryWrite, Mode, Origin, PendingCounts,
-            SecretView, SimilarMemory, Subscription, TitleState, Token, TokenStatus,
+            ReindexState, SecretView, SimilarMemory, Subscription, TitleState, Token, TokenStatus,
         },
         principal::{AgentRef, AppRef, Scope, TokenKind},
         redator::{TestRedatorBody, TestRedatorResult},
-        search::{SearchHit, SearchMemoriesBody, SearchResults},
+        search::{SearchHit, SearchMemoriesBody, SearchMode, SearchResults},
         secrets::SetSecretBody,
         settings::{
             Category, ChannelSettingView, ChannelSettingsView, SettingView, SettingsView,
@@ -89,7 +95,8 @@ use crate::{
         crate::rest::context::get_context,
         crate::rest::memories::list_memories,
         crate::rest::memories::get_memory,
-        crate::rest::memories::search_memories,
+        crate::rest::search::search_memories,
+        crate::rest::search::get_hints,
         crate::rest::memories::memory_history,
         crate::rest::memories::create_memory,
         crate::rest::memories::update_memory,
@@ -110,6 +117,9 @@ use crate::{
         crate::rest::settings::update_channel_settings,
         crate::rest::settings::set_secret,
         crate::rest::settings::test_redator,
+        crate::rest::embeddings::test_embedding,
+        crate::rest::embeddings::list_embedding_models,
+        crate::rest::embeddings::reembed_all,
         crate::rest::jobs::list_jobs,
         crate::rest::jobs::retry_job,
         crate::rest::jobs::list_llm_calls,
@@ -137,12 +147,14 @@ use crate::{
         MemoryStatus, TitleState, EmbeddingState, Author, Origin, Memory, MemoryTitle,
         SimilarMemory, MemoryWrite, MemoryRevision, MemoryItem, MemoryList, MemoryHistory, Fields,
         CreateMemoryBody, UpdateMemoryBody, MoveMemoryBody, RevertMemoryBody,
-        SearchMemoriesBody, SearchHit, SearchResults,
+        SearchMemoriesBody, SearchHit, SearchResults, SearchMode, HintsBody, Hint, HintsResult,
         ContextFormat, ContextCounts, ContextLine, ContextCategory, ContextChannel, ContextTitle,
         ContextDocument, ContextContent, ContextView, ContextNotModified,
         ChannelStats, MemoryCounts, PendingCounts,
         StatusView, DatabaseStatus, BackupStatus, IdentityCounts, QueueStatus, RedatorStatus,
         SecretView, SetSecretBody, TestRedatorBody, TestRedatorResult,
+        EmbeddingStatus, TestEmbeddingBody, TestEmbeddingResult, ListEmbeddingModelsBody,
+        EmbeddingModelList, EmbeddingModelEntry, ReindexState,
         Job, JobState, JobList, JobCount, LlmCall, LlmCallList, LlmActivity,
         AuditEvent, AuditList, DocText,
         McpJsonRpcRequest, McpJsonRpcResponse, McpJsonRpcError
@@ -156,8 +168,10 @@ use crate::{
         (name = "Channels", description = "Canais e assinaturas alcançados pelo token"),
         (name = "Network", description = "Criação e manutenção de canais e assinaturas (token admin)"),
         (name = "Context", description = "Contexto determinístico para o prompt, com `version`/ETag e `304`"),
-        (name = "Memories", description = "Memórias: escrita, edição versionada, status, busca e histórico"),
+        (name = "Memories", description = "Memórias: escrita, edição versionada, status e histórico"),
+        (name = "Search", description = "Busca híbrida (vetorial + FTS) e dicas"),
         (name = "Settings", description = "Configurações funcionais (token admin)"),
+        (name = "Embeddings", description = "Teste, modelos e reindexação dos embeddings (token admin)"),
         (name = "Status", description = "Estado do serviço (token admin)"),
         (name = "Jobs", description = "Fila de jobs e chamadas ao LLM (token admin)"),
         (name = "Audit", description = "Auditoria das mutações (token admin)"),

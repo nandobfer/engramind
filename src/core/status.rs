@@ -1,11 +1,12 @@
-//! `get_status`: versão, banco, migrações, backup, contagens, fila e Redator (o completo vem na
-//! 008).
+//! `get_status`: versão, banco, migrações, backup, contagens, fila, Redator e embeddings (o
+//! completo vem na 008).
 
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use super::{
     Core,
+    embeddings::EmbeddingStatus,
     model::{IdentityCounts, JobCount, LlmActivity},
     principal::Principal,
     redator::{self, RedatorConfig},
@@ -44,6 +45,7 @@ pub struct StatusView {
     pub counts: IdentityCounts,
     pub queue: QueueStatus,
     pub redator: RedatorStatus,
+    pub embedding: EmbeddingStatus,
 }
 
 /// Jobs por tipo e estado.
@@ -133,6 +135,7 @@ impl<S: Store> Core<S> {
             counts,
             queue,
             redator,
+            embedding: self.embedding_status().await?,
         })
     }
 }

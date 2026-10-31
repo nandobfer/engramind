@@ -4,7 +4,7 @@ Rede de memórias para agentes de IA. Um serviço em Rust, com SQLite (WAL), sql
 
 As memórias ficam em **canais** (ex.: `eng/global`, `eng/projeto-atlas`). Cada agente é identificado por um **token** com escopos (`read`, `write`, `delete`) e recebe as memórias por **REST, MCP ou CLI** (com skill), com documentação viva servida pelo próprio binário.
 
-> **Status:** versão 0.6.0 — fundação operável, identidades, canais e assinaturas com acesso efetivo, memórias (escrita, edição versionada, status, busca textual e histórico), contexto determinístico com `version`/ETag, e o Redator (fila de jobs, segredos cifrados, cliente LLM para OpenAI-compatível, Anthropic e Gemini, `llm_calls` e `test_redator`) nas três vias (REST, MCP e CLI), com a skill da CLI em [`skills/engramind/SKILL.md`](skills/engramind/SKILL.md). Embeddings, busca híbrida e integrações vêm nas próximas etapas ([`specs/`](specs/README.md)). O desenho completo está em [`docs/design.md`](docs/design.md).
+> **Status:** versão 0.7.0 — fundação operável, identidades, canais e assinaturas com acesso efetivo, memórias (escrita, edição versionada, status e histórico), contexto determinístico com `version`/ETag, o Redator (fila de jobs, segredos cifrados, cliente LLM para OpenAI-compatível, Anthropic e Gemini, `llm_calls` e `test_redator`) e os embeddings (local com fastembed/ONNX Runtime ou remotos, reindexação na troca de modelo) com busca híbrida e dicas (`search_memories`, `get_hints`), nas três vias (REST, MCP e CLI), com a skill da CLI em [`skills/engramind/SKILL.md`](skills/engramind/SKILL.md). Webhooks, importação, métricas e consolidação vêm nas próximas etapas ([`specs/`](specs/README.md)). O desenho completo está em [`docs/design.md`](docs/design.md).
 
 ## Por que existe
 
@@ -112,7 +112,7 @@ O formato padrão (`tagged`) agrupa as memórias por canal e categoria, com uma 
 1. **Por sentido:** embeddings comparados com sqlite-vec.
 2. **Textual:** FTS5 com BM25, sem acentos.
 
-Sem embeddings (desligados ou pendentes), a busca usa só o texto.
+Sem embeddings (desligados, pendentes ou com o provedor fora), a busca usa só o texto e responde `mode: text`.
 
 ## Redator e embeddings
 

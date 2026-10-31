@@ -9,8 +9,9 @@ use zeroize::Zeroize as _;
 
 use super::{
     AgentsCommand, AppsCommand, AuditCommand, ChannelSettingsCommand, ChannelsCommand, Command,
-    ConnectionArgs, DocsCommand, JobsCommand, LlmCallsCommand, MemoriesCommand, ProfilesCommand,
-    SecretsCommand, SettingsCommand, SubscriptionsCommand, TokensCommand, UpdateArgs,
+    ConnectionArgs, DocsCommand, EmbeddingsCommand, JobsCommand, LlmCallsCommand, MemoriesCommand,
+    ProfilesCommand, SecretsCommand, SettingsCommand, SubscriptionsCommand, TokensCommand,
+    UpdateArgs,
     client::{self, ApiRequest, Connection, Outcome, segment},
     output,
     profiles::{self, Profile},
@@ -282,6 +283,21 @@ fn read_stdin_text(command: Command) -> Result<Command, String> {
             text: Some(text), ..
         }) => read(text)?,
         Command::Settings(SettingsCommand::TestRedator { text, .. }) => read(text)?,
+        Command::Settings(SettingsCommand::TestEmbedding { text, .. }) => read(text)?,
+        Command::Settings(SettingsCommand::EmbeddingModels {
+            api_key_stdin: true,
+            api_key,
+            ..
+        }) => {
+            let mut buffer = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+                .map_err(|error| format!("falha ao ler a entrada padrao: {error}"))?;
+            let secret = buffer.trim().to_owned();
+            buffer.zeroize();
+            if !secret.is_empty() {
+                *api_key = Some(secret);
+            }
+        }
         Command::Secrets(SecretsCommand::Set {
             delete: false,
             value,
@@ -630,7 +646,52 @@ pub fn request(command: Command) -> ApiRequest {
                     .body(Value::Object(body))
                     .idempotency(idempotency.idempotency_key)
             }
+            SettingsCommand::TestEmbedding {
+                text,
+                settings,
+                idempotency,
+            } => {
+                let mut body = Map::new();
+                body.insert("text".to_owned(), json!(text));
+                if let Some(settings) = settings {
+                    body.insert("settings".to_owned(), setting_value(&settings));
+                }
+                ApiRequest::new(Method::POST, "/v1/settings/embedding/test".to_owned())
+                    .body(Value::Object(body))
+                    .idempotency(idempotency.idempotency_key)
+            }
+            SettingsCommand::EmbeddingModels {
+                provider,
+                base_url,
+                api_key,
+                idempotency,
+                ..
+            } => {
+                let mut body = Map::new();
+                body.insert("provider".to_owned(), json!(provider));
+                if let Some(base_url) = base_url {
+                    body.insert("base_url".to_owned(), json!(base_url));
+                }
+                if let Some(api_key) = api_key {
+                    body.insert("api_key".to_owned(), json!(api_key));
+                }
+                ApiRequest::new(Method::POST, "/v1/settings/embedding/models".to_owned())
+                    .body(Value::Object(body))
+                    .idempotency(idempotency.idempotency_key)
+            }
         },
+        Command::Hints { text, limit } => {
+            let mut body = Map::new();
+            body.insert("text".to_owned(), json!(text.join(" ")));
+            if let Some(limit) = limit {
+                body.insert("limit".to_owned(), json!(limit));
+            }
+            ApiRequest::new(Method::POST, "/v1/hints".to_owned()).body(Value::Object(body))
+        }
+        Command::Embeddings(EmbeddingsCommand::Reembed { idempotency }) => {
+            ApiRequest::new(Method::POST, "/v1/embeddings/reembed".to_owned())
+                .idempotency(idempotency.idempotency_key)
+        }
         Command::Secrets(SecretsCommand::Set {
             key,
             value,

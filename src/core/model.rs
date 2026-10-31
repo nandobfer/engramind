@@ -486,6 +486,15 @@ impl EmbeddingState {
             _ => None,
         }
     }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+            Self::Off => "off",
+        }
+    }
 }
 
 /// Quem escreveu: ids sempre; slugs `null` quando o app ou o agente foi excluído.
@@ -967,6 +976,109 @@ pub struct Redaction {
     pub memory_id: String,
     pub expected_hash: Vec<u8>,
     pub title: String,
-    /// Texto revisado e o `content_hash` dele: nova revisão `system/redator` e job `embed`.
+    /// Texto revisado e o `content_hash` dele: nova revisão `system/redator`.
     pub text: Option<(String, Vec<u8>)>,
+    /// Embeddings ligados: o título (e o texto) novo reenfileira o job `embed`; desligados,
+    /// o texto novo fica com `embedding_state = off`.
+    pub embed: bool,
+}
+
+// ---------- embeddings (007) ----------
+
+/// Chave de `schema_meta` com o `model_id` vigente (vazia com `embedding.provider = off`).
+pub const META_EMBEDDING_MODEL: &str = "embedding.model_id";
+/// Chave de `schema_meta` com a reindexação em andamento (`ReindexState` em JSON).
+pub const META_EMBEDDING_REINDEX: &str = "embedding.reindex";
+
+/// Texto a vetorizar de uma memória.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbedSource {
+    pub id: String,
+    pub title: String,
+    pub text: String,
+    pub content_hash: Vec<u8>,
+}
+
+/// Vetor de uma memória: só é gravado se ela ainda tiver o conteúdo e o título lidos.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewVector {
+    pub memory_id: String,
+    pub content_hash: Vec<u8>,
+    pub title: String,
+    pub embedding: Vec<f32>,
+}
+
+/// Vetores de um mesmo modelo; nada é gravado se `model_id` deixou de ser o vigente.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorBatch {
+    pub model_id: String,
+    pub dims: usize,
+    pub vectors: Vec<NewVector>,
+    pub at: String,
+}
+
+/// Ramo vetorial da busca: só vetores do `model_id` e da dimensão da consulta.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VectorQuery {
+    pub embedding: Vec<f32>,
+    pub model_id: String,
+    pub channel_ids: Vec<String>,
+    pub categories: Vec<String>,
+    pub statuses: Vec<MemoryStatus>,
+    pub exclude_ids: Vec<String>,
+    pub limit: u32,
+}
+
+/// Memória do ramo vetorial com a distância de cosseno (`1 - similaridade`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorHit {
+    pub memory: Memory,
+    pub distance: f64,
+}
+
+/// Reindexação a enfileirar: `all` revetoriza tudo; senão, só o que não tem vetor do modelo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReindexPlan {
+    pub all: bool,
+    pub batch_size: usize,
+    pub started_at: String,
+}
+
+/// Troca do espaço dos vetores na mesma transação das configurações: `model_id = None`
+/// desliga (`embedding_state = off`); com `reindex`, marca `pending` e enfileira os lotes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddingSwitch {
+    pub model_id: Option<String>,
+    pub reindex: Option<ReindexPlan>,
+}
+
+/// Reindexação em andamento (`schema_meta`), também a resposta de `reembed_all`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ReindexState {
+    #[schema(example = "local:multilingual-e5-small")]
+    pub model_id: String,
+    /// Marca dos jobs desta reindexação (`payload.reindex`).
+    #[schema(example = "2026-10-31T12:00:00.000Z")]
+    pub started_at: String,
+    /// Memórias enfileiradas.
+    #[schema(example = 1234)]
+    pub total: u64,
+}
+
+/// Jobs de uma reindexação.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ReindexJobs {
+    pub pending: u64,
+    pub failed: u64,
+}
+
+/// Contagens de vetores para `get_status`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VectorCounts {
+    /// Memórias existentes.
+    pub memories: u64,
+    /// Memórias com vetor do modelo.
+    pub vectors: u64,
+    /// Desses, os gravados a partir de `since`.
+    pub since: u64,
 }

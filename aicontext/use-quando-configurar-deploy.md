@@ -9,7 +9,7 @@
 
 ## Docker
 
-- `Dockerfile` multi-stage só de produção: `chef` (`rust:1.98.0-bookworm` + `cargo-chef` fixo) → `planner` → `builder` (camada de dependências cacheada) → `runtime` (`debian:bookworm-slim`, usuário `engramind` sem privilégios, `/data` com o dono certo, link `eng`, Litestream de versão fixa, entrypoint, `HEALTHCHECK` em `/health/live`). O ONNX Runtime entra na 007.
+- `Dockerfile` multi-stage só de produção: `chef` (`rust:1.98.0-bookworm` + `cargo-chef` fixo) → `planner` → `builder` (camada de dependências cacheada) → `runtime` (`debian:bookworm-slim`, usuário `engramind` sem privilégios, `/data` com o dono certo, link `eng`, Litestream de versão fixa, entrypoint, `HEALTHCHECK` em `/health/live`). Desde a 0.7.0, o estágio `onnxruntime` baixa `onnxruntime-linux-x64` de versão e SHA-256 fixos (`ONNX_RUNTIME_VERSION`, `ONNX_RUNTIME_SHA256`) e o runtime copia só a `.so`, com `ORT_DYLIB_PATH` apontando para ela; o modelo nunca entra na imagem (vai para `MODELS_PATH` no volume).
 - Desenvolvimento e testes rodam fora do Docker (`cargo run -- serve`, `cargo nextest run`).
 - `docker-compose.yml` com um único serviço `api`, sem perfis: `name: engramind-${APP_PORT}`, `image: ${API_IMAGE:-engramind-api:latest}`, `container_name: ${CONTAINER_NAME}`, `init: true`, `restart: unless-stopped`, limites de CPU e memória, redes externas `engramind-network` (`ENGRAMIND_NETWORK`, consumidores alcançam `http://${CONTAINER_NAME}:${APP_PORT}`) e `minio-network` (`S3_NETWORK`, Litestream) e volume nomeado `engramind-data:/data`. Antes do primeiro `up`: `docker network create engramind-network`.
 - Porta padrão `8000`, registrada em `/home/used_ports`.

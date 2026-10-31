@@ -55,6 +55,7 @@ pub struct DoctorOutput {
 pub async fn run(settings: &DatabaseSettings) -> DoctorOutput {
     let mut checks = database_checks(&settings.path, settings.read_pool_size).await;
     checks.push(backup_check(settings).await);
+    checks.push(onnx_runtime_check(std::env::var("ORT_DYLIB_PATH").ok()));
     DoctorOutput {
         version: env!("CARGO_PKG_VERSION"),
         database_path: settings.path.display().to_string(),
@@ -113,6 +114,19 @@ async fn database_checks(path: &Path, read_pool_size: usize) -> Vec<Check> {
             ),
         },
     ]
+}
+
+/// Biblioteca do ONNX Runtime do provedor local de embeddings (007). Sem `ORT_DYLIB_PATH`,
+/// o item é pulado: o provedor pode ser remoto ou `off`.
+fn onnx_runtime_check(path: Option<String>) -> Check {
+    match path.filter(|path| !path.trim().is_empty()) {
+        None => Check::new(
+            "onnx_runtime",
+            CheckStatus::Skip,
+            "ORT_DYLIB_PATH ausente; embedding.provider = local indisponivel",
+        ),
+        Some(path) => Check::from_bool("onnx_runtime", Path::new(&path).is_file(), path),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,6 +204,18 @@ fn replica_age(stdout: &[u8], now: DateTime<Utc>) -> Check {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn onnx_runtime_is_skipped_without_the_variable_and_checked_with_it() {
+        assert_eq!(onnx_runtime_check(None).status, CheckStatus::Skip);
+        assert_eq!(
+            onnx_runtime_check(Some("/nao/existe.so".to_owned())).status,
+            CheckStatus::Fail
+        );
+        let file = tempfile::NamedTempFile::new().expect("file");
+        let path = file.path().display().to_string();
+        assert_eq!(onnx_runtime_check(Some(path)).status, CheckStatus::Ok);
+    }
 
     #[test]
     fn replica_age_uses_the_newest_ltx_file() {

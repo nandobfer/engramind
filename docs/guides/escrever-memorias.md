@@ -72,16 +72,4 @@ engramind memories get m_8f2a1c3d --json
 
 ## Buscar
 
-`search_memories { query, channels?, categories?, limit?, include_archived?, exclude_ids?, exclude_context?, fields? }` faz busca textual sem acentos e sem caixa ("configuracao" encontra "configuração") nos canais em modo `inject` e `search`. Canais `manage` e arquivados só entram quando citados pelo slug exato em `channels` ou no `Engramind-Channels`.
-
-- Padrão `limit=10` (máximo 50); só memórias ativas e fixadas, a menos que `include_archived`.
-- `exclude_ids` tira ids escolhidos por você; `exclude_context: true` tira as que já estão com texto completo no contexto do mesmo token e da mesma seleção (os títulos da segunda faixa continuam buscáveis).
-- A resposta traz `context_version`, a `version` de `get_context` sem `format` para a mesma seleção: se ela mudou, o bloco do prompt está desatualizado (guia `contexto-e-cache`).
-- Cada resultado traz `rank` e `score`; `score` só serve para comparar resultados da mesma busca.
-- A busca conta uma recuperação de cada resultado (`retrieval_count`, `last_retrieved_at`).
-
-```bash
-engramind memories search testes locais --json
-engramind memories search configuracao --fields title --channels eng/global
-engramind memories search porta preview --exclude-context
-```
+A busca (`search_memories`) e as dicas (`get_hints`) têm guia próprio: `busca-e-dicas`.

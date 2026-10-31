@@ -15,6 +15,7 @@ pub const ADMIN_TAGS: &[&str] = &[
     "Identities",
     "Network",
     "Settings",
+    "Embeddings",
     "Status",
     "Jobs",
     "Audit",
@@ -68,6 +69,13 @@ const GUIDES: &[GuideSource] = &[
         content: include_str!("../../../docs/guides/contexto-e-cache.md"),
     },
     GuideSource {
+        id: "busca-e-dicas",
+        file: "busca-e-dicas.md",
+        audience: Audience::All,
+        tags: &["Search"],
+        content: include_str!("../../../docs/guides/busca-e-dicas.md"),
+    },
+    GuideSource {
         id: "integracao-consumidor",
         file: "integracao-consumidor.md",
         audience: Audience::All,
@@ -99,7 +107,7 @@ const GUIDES: &[GuideSource] = &[
         id: "configuracoes",
         file: "configuracoes.md",
         audience: Audience::Admin,
-        tags: &["Settings"],
+        tags: &["Settings", "Embeddings"],
         content: include_str!("../../../docs/guides/configuracoes.md"),
     },
     GuideSource {

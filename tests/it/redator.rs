@@ -901,7 +901,11 @@ async fn status_shows_the_queue_and_the_redator() {
     assert_eq!(body["redator"]["provider"], "openai_compatible");
     assert_eq!(body["redator"]["model"], "modelo-principal");
     assert!(body["redator"]["activity"]["last_success_at"].is_string());
-    assert_eq!(body["queue"]["pending"], 1, "so o embed");
+    // O título novo reenfileira o `embed` (o vetor é de título + texto).
+    assert_eq!(
+        body["queue"]["pending"], 2,
+        "o embed da escrita e o do titulo"
+    );
     assert!(!body.to_string().contains(API_KEY));
 }
 

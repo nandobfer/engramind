@@ -60,6 +60,7 @@ engramind memories create --channel eng/global --category CONSTRAINTS --text "�
 engramind context
 engramind context --format markdown --if-none-match cv_3f9e1a7c0b2d
 engramind memories search testes locais
+engramind hints como rodo os testes
 engramind memories list --fields title --channels eng/global
 engramind channels stats eng/global
 engramind channels settings set eng/global memory.text_max 2000
@@ -67,6 +68,9 @@ engramind settings get limits.rate_per_minute
 engramind settings set limits.rate_per_minute 1200
 printf '%s' "$CHAVE_DO_PROVEDOR" | engramind secrets set redator.api_key
 engramind settings test-redator --text "Use cargo nextest localmente"
+engramind settings test-embedding --text "Use cargo nextest localmente"
+engramind settings embedding-models --provider local
+engramind embeddings reembed
 engramind status
 engramind jobs list --state failed
 engramind jobs retry 42
@@ -76,7 +80,7 @@ engramind docs guide tokens-e-escopos --section Escopos
 engramind docs search idempotencia
 ```
 
-Mutações aceitam `--idempotency-key`. Em `settings set` e `channels settings set`, o valor é lido como JSON (`600`, `true`); `null` volta ao padrão. Em `memories create`, `memories update` e `settings test-redator`, `--text -` lê o texto da entrada padrão. `secrets set` lê o segredo só da entrada padrão (nunca de argumento) e `--delete` o apaga. `context` sem `--json` imprime só o `content` cru, pronto para colar no prompt (o `json` sai formatado); com `--if-none-match` e sem mudança, não imprime nada e sai com 0 (com `--json`, `{ "not_modified": true, "version" }`). O `--channels` global vira o cabeçalho `Engramind-Channels`: nenhum subcomando tem argumento próprio de canais.
+Mutações aceitam `--idempotency-key`. Em `settings set` e `channels settings set`, o valor é lido como JSON (`600`, `true`); `null` volta ao padrão. Em `memories create`, `memories update`, `settings test-redator` e `settings test-embedding`, `--text -` lê o texto da entrada padrão. `settings embedding-models --api-key-stdin` lê a chave do provedor da entrada padrão. `secrets set` lê o segredo só da entrada padrão (nunca de argumento) e `--delete` o apaga. `context` sem `--json` imprime só o `content` cru, pronto para colar no prompt (o `json` sai formatado); com `--if-none-match` e sem mudança, não imprime nada e sai com 0 (com `--json`, `{ "not_modified": true, "version" }`). O `--channels` global vira o cabeçalho `Engramind-Channels`: nenhum subcomando tem argumento próprio de canais.
 
 ## Códigos de saída
 

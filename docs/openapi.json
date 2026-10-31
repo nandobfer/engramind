@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.6.0"
+    "version": "0.7.0"
   },
   "servers": [
     {
@@ -6452,6 +6452,414 @@
         ]
       }
     },
+    "/v1/embeddings/reembed": {
+      "post": {
+        "tags": [
+          "Embeddings"
+        ],
+        "summary": "Revetoriza todas as memórias com o modelo vigente",
+        "description": "Marca todas as memórias como `pending` e enfileira jobs `embed` em lotes de `embedding.batch_size`, na mesma transação. O progresso aparece em `get_status.embedding` (`state = reindexing`, `total`, `done`); ao terminar sem falhas, os vetores de outros modelos e os modelos locais fora de uso são apagados. Durante a reindexação, a busca usa só os vetores já gravados do modelo vigente e o FTS. Útil depois de trocar a chave do provedor ou quando um lote falhou de vez (`state = failed`). Exige token admin com `write`.",
+        "operationId": "reembed_all",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Reindexação enfileirada",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReindexState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`PROVIDER_NOT_CONFIGURED` ou `SETTING_INVALID`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`REEMBED_IN_PROGRESS` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/hints": {
+      "post": {
+        "tags": [
+          "Search"
+        ],
+        "summary": "Dicas baratas (id, título e canal) para um texto, sem LLM",
+        "description": "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel }`; o agente busca o texto completo se quiser. Sem embeddings, lista vazia. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`.",
+        "operationId": "get_hints",
+        "parameters": [
+          {
+            "name": "Engramind-Channels",
+            "in": "header",
+            "description": "Filtro de canais da conexão: slugs e prefixos separados por vírgula",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HintsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Dicas por similaridade",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HintsResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/jobs": {
       "get": {
         "tags": [
@@ -7622,10 +8030,10 @@
     "/v1/memories/search": {
       "post": {
         "tags": [
-          "Memories"
+          "Search"
         ],
-        "summary": "Busca memórias por texto",
-        "description": "Busca textual (FTS5/BM25, sem acentos e sem caixa) nos canais em modo `inject` e `search`; canais `manage` e arquivados só entram citados pelo slug em `channels` ou no `Engramind-Channels`. Padrão `limit=10` (máximo 50), só memórias ativas e fixadas (`include_archived` inclui as arquivadas). `exclude_ids` tira as que já estão no contexto. Cada resultado traz `rank` e `score` (`1/(60+rank)`). Leitura: não aceita `Idempotency-Key`.",
+        "summary": "Busca memórias por sentido e por texto",
+        "description": "Busca híbrida nos canais em modo `inject` e `search`; canais `manage` e arquivados só entram citados pelo slug em `channels` ou no `Engramind-Channels`. O ramo vetorial compara o embedding da consulta com os vetores do modelo vigente (cosseno do sqlite-vec) e o textual usa FTS5/BM25 sem acentos; a fusão RRF dá `score = Σ peso / (search.rrf_k + posição)` com `search.vector_weight` e `search.text_weight`. Sem embeddings (desligados, sem configuração, provedor com falha ou acima de 2 s), só o FTS e `mode: text`. Padrão `limit = search.default_limit` (máximo 50), só memórias ativas e fixadas (`include_archived` inclui as arquivadas). `exclude_ids` e `exclude_context` tiram o que já está no contexto. Leitura: não aceita `Idempotency-Key`.",
         "operationId": "search_memories",
         "parameters": [
           {
@@ -10876,6 +11284,500 @@
           },
           "504": {
             "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/embedding/models": {
+      "post": {
+        "tags": [
+          "Embeddings"
+        ],
+        "summary": "Lista os modelos de embedding de um provedor",
+        "description": "Para a tela do sistema gestor montar o seletor: `local` lista os modelos suportados pelo `fastembed` (com a dimensão), `ollama` chama `GET {base_url}/api/tags` e `openai_compatible` chama `GET {base_url}/models` (OpenRouter, OpenAI, LM Studio…). `gemini` e `off` respondem `PROVIDER_LISTING_UNSUPPORTED`. Sem `base_url`/`api_key` no corpo, valem `embedding.base_url` e `embedding.api_key`; a chave do corpo nunca é gravada. Exige token admin com `write`.",
+        "operationId": "list_embedding_models",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ListEmbeddingModelsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Modelos do provedor",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbeddingModelList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`, `SETTING_INVALID`, `PROVIDER_NOT_CONFIGURED` ou `PROVIDER_LISTING_UNSUPPORTED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`PROVIDER_FAILED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`PROVIDER_TIMEOUT` ou `REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/settings/embedding/test": {
+      "post": {
+        "tags": [
+          "Embeddings"
+        ],
+        "summary": "Testa a configuração de embedding com um texto, sem gravar nada",
+        "description": "Vetoriza `text` (como memória) com a configuração atual ou com a proposta em `settings` (chaves `embedding.*`, inclusive `embedding.api_key` em claro), sem salvar nada. Devolve provedor, modelo, `model_id`, a dimensão detectada e a latência. No provedor `local`, a primeira chamada baixa o modelo para `MODELS_PATH`. Exige token admin com `write`.",
+        "operationId": "test_embedding",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestEmbeddingBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Resultado do teste",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestEmbeddingResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`, `SETTING_UNKNOWN`, `SETTING_INVALID` ou `PROVIDER_NOT_CONFIGURED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "`PROVIDER_FAILED` ou `EMBEDDING_DIMENSION_MISMATCH`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`PROVIDER_TIMEOUT` ou `REQUEST_TIMEOUT`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -14290,6 +15192,48 @@
           }
         }
       },
+      "EmbeddingModelEntry": {
+        "type": "object",
+        "description": "Um modelo listado por `list_embedding_models`.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dimensions": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "`null` quando o provedor não informa.",
+            "example": 384,
+            "minimum": 0
+          },
+          "id": {
+            "type": "string",
+            "example": "multilingual-e5-small"
+          }
+        }
+      },
+      "EmbeddingModelList": {
+        "type": "object",
+        "required": [
+          "models"
+        ],
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EmbeddingModelEntry"
+            }
+          }
+        }
+      },
       "EmbeddingState": {
         "type": "string",
         "enum": [
@@ -14298,6 +15242,91 @@
           "failed",
           "off"
         ]
+      },
+      "EmbeddingStatus": {
+        "type": "object",
+        "description": "Bloco `embedding` de `get_status`.",
+        "required": [
+          "enabled",
+          "configured",
+          "missing",
+          "state",
+          "total",
+          "done"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "description": "Provedor, modelo, URL e chave presentes."
+          },
+          "dimensions": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Dimensão esperada (a configurada ou a do modelo local); `null` até a primeira chamada\nnos remotos sem `embedding.dimensions`.",
+            "example": 384,
+            "minimum": 0
+          },
+          "done": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Já vetorizadas com o modelo vigente (na reindexação, desde o início dela).",
+            "example": 1234,
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`embedding.provider != off`."
+          },
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": []
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "multilingual-e5-small"
+          },
+          "model_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "local:multilingual-e5-small"
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "local"
+          },
+          "reindex_started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Início da reindexação em andamento."
+          },
+          "state": {
+            "type": "string",
+            "description": "`off`, `ready`, `reindexing` ou `failed` (lote da reindexação falhou de vez).",
+            "example": "ready"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memórias a vetorizar: todas, ou as da reindexação em andamento.",
+            "example": 1234,
+            "minimum": 0
+          }
+        }
       },
       "ErrorBody": {
         "type": "object",
@@ -14340,6 +15369,81 @@
           "full",
           "title"
         ]
+      },
+      "Hint": {
+        "type": "object",
+        "description": "`#id · título · canal`.",
+        "required": [
+          "id",
+          "title",
+          "channel"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "example": "eng/global"
+          },
+          "id": {
+            "type": "string",
+            "example": "m_8f2a1c3d"
+          },
+          "title": {
+            "type": "string",
+            "example": "Suíte completa com nextest"
+          }
+        }
+      },
+      "HintsBody": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "channels": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Slugs e prefixos (`eng/*`); restringe dentro do alcance e do `Engramind-Channels`.\nCanais `manage` nunca entram.",
+            "example": [
+              "eng/global"
+            ]
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "De 1 a 20 (padrão `search.hint_limit`).",
+            "maximum": 20,
+            "minimum": 1
+          },
+          "text": {
+            "type": "string",
+            "description": "Texto do turno (1 a 2000 caracteres), por exemplo a mensagem do usuário.",
+            "example": "como rodo os testes?"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HintsResult": {
+        "type": "object",
+        "required": [
+          "hints"
+        ],
+        "properties": {
+          "hints": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hint"
+            },
+            "description": "Da mais parecida à menos parecida; vazia sem embeddings."
+          }
+        }
       },
       "IdentityCounts": {
         "type": "object",
@@ -14572,6 +15676,36 @@
           "done",
           "failed"
         ]
+      },
+      "ListEmbeddingModelsBody": {
+        "type": "object",
+        "description": "Corpo de `list_embedding_models`.",
+        "required": [
+          "provider"
+        ],
+        "properties": {
+          "api_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Chave em claro (não é gravada); vazia usa `embedding.api_key`."
+          },
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "URL do provedor remoto; vazia usa `embedding.base_url`.",
+            "example": "http://127.0.0.1:11434"
+          },
+          "provider": {
+            "type": "string",
+            "description": "`local`, `openai_compatible`, `ollama` (`gemini` e `off` não listam).",
+            "example": "ollama"
+          }
+        },
+        "additionalProperties": false
       },
       "LiveResponse": {
         "type": "object",
@@ -15312,6 +16446,33 @@
           }
         }
       },
+      "ReindexState": {
+        "type": "object",
+        "description": "Reindexação em andamento (`schema_meta`), também a resposta de `reembed_all`.",
+        "required": [
+          "model_id",
+          "started_at",
+          "total"
+        ],
+        "properties": {
+          "model_id": {
+            "type": "string",
+            "example": "local:multilingual-e5-small"
+          },
+          "started_at": {
+            "type": "string",
+            "description": "Marca dos jobs desta reindexação (`payload.reindex`).",
+            "example": "2026-10-31T12:00:00.000Z"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memórias enfileiradas.",
+            "example": 1234,
+            "minimum": 0
+          }
+        }
+      },
       "RevertMemoryBody": {
         "type": "object",
         "required": [
@@ -15357,8 +16518,8 @@
           "score": {
             "type": "number",
             "format": "double",
-            "description": "`1 / (60 + rank)`.",
-            "example": 0.016393
+            "description": "`Σ peso / (search.rrf_k + posição)` sobre os dois ramos, com 6 casas.",
+            "example": 0.032787
           }
         }
       },
@@ -15433,7 +16594,7 @@
               "null"
             ],
             "format": "int32",
-            "description": "De 1 a 50 (padrão 10).",
+            "description": "De 1 a 50 (padrão `search.default_limit`).",
             "maximum": 50,
             "minimum": 1
           },
@@ -15445,9 +16606,18 @@
         },
         "additionalProperties": false
       },
+      "SearchMode": {
+        "type": "string",
+        "description": "Ramos que rodaram: `hybrid` quando a consulta foi vetorizada (mesmo sem candidatos\nvetoriais), `text` quando não (desligado, sem configuração, falha ou prazo do provedor).",
+        "enum": [
+          "hybrid",
+          "text"
+        ]
+      },
       "SearchResults": {
         "type": "object",
         "required": [
+          "mode",
           "results",
           "context_version"
         ],
@@ -15456,6 +16626,9 @@
             "type": "string",
             "description": "`version` de `get_context` sem `format` para o mesmo token e seleção.",
             "example": "cv_3f9e1a7c0b2d"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SearchMode"
           },
           "results": {
             "type": "array",
@@ -15647,7 +16820,8 @@
           "backup",
           "counts",
           "queue",
-          "redator"
+          "redator",
+          "embedding"
         ],
         "properties": {
           "backup": {
@@ -15658,6 +16832,9 @@
           },
           "database": {
             "$ref": "#/components/schemas/DatabaseStatus"
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/EmbeddingStatus"
           },
           "queue": {
             "$ref": "#/components/schemas/QueueStatus"
@@ -15804,6 +16981,63 @@
               "$ref": "#/components/schemas/Subscription"
             },
             "description": "Em ordem de criação."
+          }
+        }
+      },
+      "TestEmbeddingBody": {
+        "type": "object",
+        "description": "Corpo de `test_embedding`: um texto e, opcionalmente, uma configuração proposta (chaves\n`embedding.*`, inclusive `embedding.api_key` em claro), que não é gravada.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "settings": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Mapa parcial `embedding.* → valor` usado só neste teste."
+          },
+          "text": {
+            "type": "string",
+            "description": "Texto de exemplo (1 a 2000 caracteres).",
+            "example": "Use cargo nextest para rodar os testes localmente."
+          }
+        },
+        "additionalProperties": false
+      },
+      "TestEmbeddingResult": {
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "model_id",
+          "dimensions",
+          "latency_ms"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "integer",
+            "description": "Dimensão detectada no vetor devolvido.",
+            "example": 384,
+            "minimum": 0
+          },
+          "latency_ms": {
+            "type": "integer",
+            "format": "int64",
+            "example": 21
+          },
+          "model": {
+            "type": "string",
+            "example": "multilingual-e5-small"
+          },
+          "model_id": {
+            "type": "string",
+            "example": "local:multilingual-e5-small"
+          },
+          "provider": {
+            "type": "string",
+            "example": "local"
           }
         }
       },
@@ -16240,11 +17474,19 @@
     },
     {
       "name": "Memories",
-      "description": "Memórias: escrita, edição versionada, status, busca e histórico"
+      "description": "Memórias: escrita, edição versionada, status e histórico"
+    },
+    {
+      "name": "Search",
+      "description": "Busca híbrida (vetorial + FTS) e dicas"
     },
     {
       "name": "Settings",
       "description": "Configurações funcionais (token admin)"
+    },
+    {
+      "name": "Embeddings",
+      "description": "Teste, modelos e reindexação dos embeddings (token admin)"
     },
     {
       "name": "Status",

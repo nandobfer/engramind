@@ -12,7 +12,6 @@ use crate::{
             MoveMemoryBody, RevertMemoryBody, UpdateMemoryBody,
         },
         model::{Memory, MemoryWrite},
-        search::{SearchMemoriesBody, SearchResults},
     },
     error::{ApiError, ErrorResponse},
     http::{ApiJson, ApiPath, ApiQuery},
@@ -85,42 +84,6 @@ pub async fn get_memory(
     state
         .core
         .get_memory(&principal, &memory, header.as_deref())
-        .await
-        .map(Json)
-}
-
-#[utoipa::path(
-    post,
-    path = "/v1/memories/search",
-    operation_id = "search_memories",
-    tag = "Memories",
-    summary = "Busca memórias por texto",
-    description = "Busca textual (FTS5/BM25, sem acentos e sem caixa) nos canais em modo `inject` e `search`; canais `manage` e arquivados só entram citados pelo slug em `channels` ou no `Engramind-Channels`. Padrão `limit=10` (máximo 50), só memórias ativas e fixadas (`include_archived` inclui as arquivadas). `exclude_ids` tira as que já estão no contexto. Cada resultado traz `rank` e `score` (`1/(60+rank)`). Leitura: não aceita `Idempotency-Key`.",
-    params(
-        ("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão: slugs e prefixos separados por vírgula")
-    ),
-    request_body = SearchMemoriesBody,
-    security(("bearerAuth" = [])),
-    responses(
-        (status = 200, description = "Resultados por relevância", body = SearchResults),
-        (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
-        (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
-        (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
-        (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
-        (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
-        (status = 504, description = "`REQUEST_TIMEOUT`", body = ErrorResponse)
-    )
-)]
-pub async fn search_memories(
-    State(state): State<AppState>,
-    Auth(principal): Auth,
-    header: ChannelsHeader,
-    ApiJson(body): ApiJson<SearchMemoriesBody>,
-) -> Result<Json<SearchResults>, ApiError> {
-    state
-        .core
-        .search_memories(&principal, body, header.as_deref())
         .await
         .map(Json)
 }

@@ -2,6 +2,33 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.7.0] - 2026-10-31
+
+Etapa 007 — embeddings e busca híbrida.
+
+### Adicionado
+
+- Embeddings: provedores `local` (`fastembed` 7.5 + ONNX Runtime 1.31.1 carregado por `ORT_DYLIB_PATH`, padrão `multilingual-e5-small` baixado no primeiro uso para `MODELS_PATH`), `openai_compatible` (`POST /embeddings`), `ollama` (`/api/embed`), `gemini` (`batchEmbedContents`) e `off`, com prefixos automáticos da família e5 e conferência de quantidade, dimensão e valores.
+- Runner do job `embed` (2 em paralelo): vetor de `título + "\n" + texto`, gravado só se o conteúdo, o título e o modelo vigente ainda forem os lidos; superado por um `embed` mais novo; até 5 tentativas, depois `embedding_state = failed`. O backlog enfileirado desde a 0.4.0 é processado. O título aplicado pelo Redator também reenfileira o `embed`.
+- Tabela `memory_vectors` (um vetor por memória, cascata no `delete_memory`) e o ramo vetorial por `vec_distance_cosine` (varredura exata filtrada por modelo, dimensão, canal, categoria e status). Migração `0007_vectors.sql`.
+- `search_memories` híbrida: fusão RRF `Σ peso / (search.rrf_k + posição)` com `search.vector_weight` e `search.text_weight`, campo `mode` (`hybrid`/`text`) e queda silenciosa para o FTS (desligado, sem configuração, falha ou consulta acima de 2 s).
+- `get_hints` (`POST /v1/hints`, `engramind hints <texto>`, ferramenta MCP): dicas `{ id, title, channel }` acima de `search.hint_threshold` (cosseno), só em canais `inject`/`search`, sem o que já está no contexto; lista vazia sem embeddings.
+- Guarda de sentido real no Redator (cosseno entre original e revisado); falha fechada sem embeddings.
+- Troca de provedor, modelo, URL, dimensão ou prefixo em `update_settings`: valida o provedor antes da transação (no `local`, só confere o modelo) e reindexa na mesma transação (outro `model_id`: só o que falta; mesmo `model_id`: tudo; `off`: `embedding_state = off`). Ao terminar, apaga vetores de outros modelos e modelos locais fora de uso.
+- Operações `test_embedding` (`POST /v1/settings/embedding/test`, `engramind settings test-embedding`), `list_embedding_models` (`POST /v1/settings/embedding/models`, `engramind settings embedding-models`) e `reembed_all` (`POST /v1/embeddings/reembed`, `202`, `engramind embeddings reembed`), com as ferramentas MCP de mesmo nome. Novas tags OpenAPI `Search` (qualquer token) e `Embeddings` (admin).
+- Configurações `embedding.provider`, `model`, `base_url`, `api_key` (segredo), `dimensions`, `query_prefix`, `document_prefix`, `batch_size`, `timeout_ms` e `search.vector_weight`, `text_weight`, `rrf_k`, `default_limit`, `hint_threshold`, `hint_limit`.
+- `get_status.embedding` (provedor, modelo, `model_id`, dimensão, `state` `off`/`ready`/`reindexing`/`failed`, `total`, `done`) e o item `onnx_runtime` no `doctor`.
+- Códigos de erro `PROVIDER_LISTING_UNSUPPORTED` (400), `REEMBED_IN_PROGRESS` (409) e `EMBEDDING_DIMENSION_MISMATCH` (502).
+- Guia `busca-e-dicas`; decisões `docs/decisions/0018` a `0021`; dependência `fastembed`; a imagem traz a biblioteca do ONNX Runtime (versão e SHA-256 fixos).
+
+### Alterado
+
+- `search_memories` passou da tag `Memories` para `Search`; `score` agora é a fusão dos dois ramos e a resposta ganha `mode`.
+- Com `embedding.provider = off`, a escrita não enfileira `embed` e grava `embedding_state = off`.
+- `Core::new` recebe `ModelsSettings` (`MODELS_PATH` e `ORT_DYLIB_PATH`, validado no startup quando definido); `serve` sincroniza o `model_id` vigente na inicialização.
+- `PROVIDER_NOT_CONFIGURED`, `PROVIDER_FAILED` e `PROVIDER_TIMEOUT` valem também para os embeddings.
+- Guias `configuracoes`, `operacao`, `erros`, `escrever-memorias`, `contexto-e-cache`, `integracao-consumidor`, `integracao-mcp`, `overview` e `cli` e a skill atualizados.
+
 ## [0.6.0] - 2026-10-31
 
 Etapa 006 — Redator.

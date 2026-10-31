@@ -2,7 +2,7 @@
 
 O Engramind é uma rede de memórias para agentes de IA: guarda fatos duráveis e curtos em **canais** e os entrega por **REST, MCP e CLI**. Cada agente se identifica por um **token** com escopos. Uma memória pertence ao canal, não ao agente que a escreveu; o autor é proveniência.
 
-Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as memórias (escrita, edição versionada, status, busca textual e histórico), o contexto pronto para o prompt (`get_context`, com `version`/ETag e `304`), as configurações, a auditoria, o status básico e esta documentação. No MCP também há resources (`engramind://context`, `engramind://channels/{slug}`, `engramind://guides/{id}`) e o prompt `memory-writing`.
+Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as memórias (escrita, edição versionada, status e histórico), a busca por sentido e por texto e as dicas (`search_memories`, `get_hints`), os embeddings (local ou remoto, com reindexação na troca de modelo), o Redator, o contexto pronto para o prompt (`get_context`, com `version`/ETag e `304`), as configurações, a auditoria, o status básico e esta documentação. No MCP também há resources (`engramind://context`, `engramind://channels/{slug}`, `engramind://guides/{id}`) e o prompt `memory-writing`.
 
 ## Três vias, um contrato
 
@@ -28,7 +28,7 @@ Rotas públicas, sem token: `GET /health/live`, `GET /health/ready`, `GET /opena
 
 ## Memórias
 
-Memórias são fatos duráveis e curtos gravados num canal, com revisões, auditoria e busca textual. Como escrever bem, editar com `expected_version`, reverter e buscar está no guia `escrever-memorias`.
+Memórias são fatos duráveis e curtos gravados num canal, com revisões e auditoria. Como escrever bem, editar com `expected_version` e reverter está no guia `escrever-memorias`; buscar por sentido e pedir dicas, no guia `busca-e-dicas`.
 
 ## Contexto
 

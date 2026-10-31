@@ -77,9 +77,14 @@ async fn callers(context: &TestContext) -> Vec<Caller> {
     callers
 }
 
-/// Erro esperado de quem pode chamar: `test_redator` sem Redator configurado.
+/// Erro esperado de quem pode chamar: `test_redator` sem Redator configurado e `reembed_all`
+/// com a reindexação de outro chamador ainda na fila.
 fn expected_error(name: &str) -> Option<&'static str> {
-    (name == "test_redator").then_some("PROVIDER_NOT_CONFIGURED")
+    match name {
+        "test_redator" => Some("PROVIDER_NOT_CONFIGURED"),
+        "reembed_all" => Some("REEMBED_IN_PROGRESS"),
+        _ => None,
+    }
 }
 
 /// REST: método, URI e corpo de cada operação, contra alvos que existem ou que dão 404.
@@ -175,6 +180,22 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
             "/v1/memories/search".into(),
             Some(json!({ "query": "matriz" })),
         ),
+        "get_hints" => (
+            "POST",
+            "/v1/hints".into(),
+            Some(json!({ "text": "matriz" })),
+        ),
+        "test_embedding" => (
+            "POST",
+            "/v1/settings/embedding/test".into(),
+            Some(json!({ "text": "texto da matriz" })),
+        ),
+        "list_embedding_models" => (
+            "POST",
+            "/v1/settings/embedding/models".into(),
+            Some(json!({ "provider": "local" })),
+        ),
+        "reembed_all" => ("POST", "/v1/embeddings/reembed".into(), None),
         "memory_history" => ("GET", "/v1/memories/m_ffffffff/history".into(), None),
         "create_memory" => (
             "POST",
@@ -254,7 +275,9 @@ fn mcp_arguments(name: &str) -> Value {
         "unsubscribe" => json!({ "subscription": "sub_ffffffff" }),
         "update_settings" => json!({ "settings": { "limits.max_batch": 100 } }),
         "set_secret" => json!({ "key": "redator.api_key", "value": null }),
-        "test_redator" => json!({ "text": "texto da matriz" }),
+        "test_redator" | "test_embedding" => json!({ "text": "texto da matriz" }),
+        "list_embedding_models" => json!({ "provider": "local" }),
+        "get_hints" => json!({ "text": "matriz" }),
         "retry_job" => json!({ "job": "999999" }),
         "channel_stats" | "get_channel_settings" => json!({ "channel": "matrix/canal" }),
         "update_channel_settings" => {
@@ -412,6 +435,19 @@ fn cli_arguments(name: &str) -> Vec<String> {
             args
         }
         "search_memories" => vec!["memories".into(), "search".into(), "matriz".into()],
+        "get_hints" => vec!["hints".into(), "matriz".into()],
+        "test_embedding" => vec![
+            "settings".into(),
+            "test-embedding".into(),
+            "--text".into(),
+            "texto da matriz".into(),
+        ],
+        "list_embedding_models" => vec![
+            "settings".into(),
+            "embedding-models".into(),
+            "--provider".into(),
+            "local".into(),
+        ],
         "create_memory" => vec![
             "memories".into(),
             "create".into(),
