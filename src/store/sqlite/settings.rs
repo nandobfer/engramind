@@ -83,6 +83,7 @@ pub(super) fn update_settings(
     if let Some(embedding) = embedding {
         super::vectors::switch(transaction, embedding, &context.at).map_err(sql_error)?;
     }
+    journal::emit(transaction, context, &[])?;
     let rows = get_settings(transaction).map_err(sql_error)?;
     journal::remember(transaction, context, &rows)?;
     Ok(rows)

@@ -202,9 +202,21 @@ impl EmbeddingRuntime {
             EmbedKind::Document => &self.document_prefix,
         };
         let inputs: Vec<String> = texts.iter().map(|text| format!("{prefix}{text}")).collect();
-        let vectors = tokio::time::timeout(timeout, self.embedder.embed(&self.model, &inputs))
+        let started = std::time::Instant::now();
+        let result = tokio::time::timeout(timeout, self.embedder.embed(&self.model, &inputs))
             .await
-            .map_err(|_| EmbedError::Timeout)??;
+            .map_err(|_| EmbedError::Timeout)
+            .and_then(|result| result);
+        crate::metrics::embedding(
+            self.provider.as_str(),
+            match kind {
+                EmbedKind::Query => "query",
+                EmbedKind::Document => "document",
+            },
+            started.elapsed().as_secs_f64(),
+            result.is_ok(),
+        );
+        let vectors = result?;
         if vectors.len() != texts.len() {
             return Err(EmbedError::InvalidResponse);
         }

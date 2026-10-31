@@ -1,6 +1,6 @@
 [package]
 name = "engramind"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.98"
 description = "Rede de memórias para agentes de IA"
@@ -25,6 +25,8 @@ dirs = "7"
 dotenvy = "0.15"
 fastembed = { version = "7.5", default-features = false, features = ["ort-load-dynamic", "hf-hub-rustls-tls"] }
 hmac = "0.12"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rmcp = { version = "3.4", features = ["server", "macros", "transport-streamable-http-server"] }

@@ -50,6 +50,7 @@ pub const TAG_SETTINGS: &str = "Settings";
 pub const TAG_STATUS: &str = "Status";
 pub const TAG_JOBS: &str = "Jobs";
 pub const TAG_AUDIT: &str = "Audit";
+pub const TAG_INTEGRATION: &str = "Integration";
 pub const TAG_DOCUMENTATION: &str = "Documentation";
 
 const fn read(
@@ -566,6 +567,17 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/memories/{memory}",
         &["memories", "delete"],
     ),
+    mutation(
+        "import_memories",
+        TAG_INTEGRATION,
+        "Importa memórias em lote preservando data, autoria e origem",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/memories/import",
+        &["memories", "import"],
+    ),
     read(
         "get_settings",
         TAG_SETTINGS,
@@ -689,7 +701,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     read(
         "get_status",
         TAG_STATUS,
-        "Mostra versão, banco, backup e contagens",
+        "Mostra versão, uptime, banco, backup, fila, Redator, embeddings e webhooks",
         Admin,
         "/v1/status",
         &["status"],
@@ -701,6 +713,14 @@ pub const OPERATIONS: &[OperationSpec] = &[
         Admin,
         "/v1/audit",
         &["audit", "list"],
+    ),
+    read(
+        "get_usage",
+        TAG_STATUS,
+        "Agrega o uso (contexto, busca e dicas) por dia, agente, operação ou canal",
+        Admin,
+        "/v1/usage",
+        &["usage"],
     ),
     public_read(
         "get_overview",
@@ -755,6 +775,13 @@ pub const OPERATIONS: &[OperationSpec] = &[
 
 pub fn find(name: &str) -> Option<&'static OperationSpec> {
     OPERATIONS.iter().find(|operation| operation.name == name)
+}
+
+/// Operação servida pela rota REST (`método` + caminho parametrizado).
+pub fn by_route(method: &str, path: &str) -> Option<&'static OperationSpec> {
+    OPERATIONS
+        .iter()
+        .find(|operation| operation.path == path && operation.method.eq_ignore_ascii_case(method))
 }
 
 /// Operação pelo nome; nomes fora do catálogo são erro de programação.

@@ -26,7 +26,7 @@
 
 ## REST
 
-- Rotas de domínio em `/v1`. Públicas fora de `/v1`: `/health/live`, `/health/ready`, `/openapi.json`, `/docs`. `/mcp` exige token; `/metrics` é protegido por token `admin`·read ou restrito à rede interna (§20).
+- Rotas de domínio em `/v1`. Públicas fora de `/v1`: `/health/live`, `/health/ready`, `/openapi.json`, `/docs`. `/mcp` exige token; `/metrics` exige token `admin`·`read` (fora do catálogo, `operationId` `get_metrics`, decisão 0022).
 - `get_context` responde `ETag` com a `version` e `304` para `If-None-Match` igual.
 - Mutações aceitam `Idempotency-Key`; edições aceitam `expected_version`.
 - Gere ou preserve `x-request-id` em toda resposta.

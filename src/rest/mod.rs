@@ -6,6 +6,7 @@ pub mod context;
 pub mod docs;
 pub mod embeddings;
 pub mod identities;
+pub mod integration;
 pub mod jobs;
 pub mod memories;
 pub mod search;

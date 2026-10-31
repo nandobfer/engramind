@@ -29,6 +29,23 @@ pub struct App {
     pub created_at: String,
     /// Preenchido quando o app foi desativado: seus tokens deixam de autenticar.
     pub disabled_at: Option<String>,
+    /// Destino dos eventos do app (desenho §17); `null` sem `webhook_url`.
+    pub webhook: Option<AppWebhook>,
+}
+
+/// Webhook de um app: a URL e o estado do segredo, nunca o valor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AppWebhook {
+    #[schema(example = "https://gestor.interno/engramind/events")]
+    pub url: String,
+    pub secret: WebhookSecretState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct WebhookSecretState {
+    pub configured: bool,
+    /// Última gravação; `null` sem segredo.
+    pub updated_at: Option<String>,
 }
 
 impl App {
@@ -115,13 +132,21 @@ pub struct NewApp {
     pub slug: String,
     pub name: String,
     pub description: Option<String>,
+    pub webhook_url: Option<String>,
+    /// Segredo do webhook já cifrado pelo `Vault`.
+    pub webhook_secret: Option<Vec<u8>>,
 }
 
+/// Também serve aos agentes (`AgentPatch`), que ignoram os campos do webhook.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AppPatch {
     pub name: Option<String>,
     pub description: Option<Option<String>>,
     pub disabled: Option<bool>,
+    /// `Some(None)` remove a URL.
+    pub webhook_url: Option<Option<String>>,
+    /// Segredo cifrado; `Some(None)` remove.
+    pub webhook_secret: Option<Option<Vec<u8>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +219,9 @@ pub struct WriteContext {
     pub actor: Actor,
     pub at: String,
     pub idempotency: Option<IdemRecord>,
+    /// Eventos que a mutação dispara se mudar algo de fato (008 D-001); o `Store` cria um job
+    /// `webhook` por destinatário na mesma transação.
+    pub events: Vec<crate::core::events::EventDraft>,
 }
 
 /// Endereço de app ou agente: id público ou slug.
@@ -1081,4 +1109,160 @@ pub struct VectorCounts {
     pub vectors: u64,
     /// Desses, os gravados a partir de `since`.
     pub since: u64,
+}
+
+// ---------- integração (008) ----------
+
+/// Quem pode receber eventos: apps, agentes e tokens `admin` (cache da geração da rede).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WebhookDirectory {
+    pub apps: Vec<DirectoryApp>,
+    pub agents: Vec<DirectoryAgent>,
+    /// Tokens `admin` não revogados: `(app_id, expires_at)`.
+    pub admin_tokens: Vec<(String, Option<String>)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryApp {
+    pub id: String,
+    /// URL e segredo configurados.
+    pub webhook: bool,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DirectoryAgent {
+    pub id: String,
+    pub app_id: String,
+    pub disabled: bool,
+}
+
+/// O que a entrega precisa de um app; lido na hora de cada tentativa.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebhookTarget {
+    pub slug: String,
+    pub disabled: bool,
+    pub url: Option<String>,
+    pub secret_enc: Option<Vec<u8>>,
+}
+
+/// Memória importada (008 FR-009): autor, data e origem preservados.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewImportedMemory {
+    /// Posição no lote, devolvida em `created`/`duplicates`.
+    pub index: usize,
+    pub category: String,
+    pub title: String,
+    pub text: String,
+    pub status: MemoryStatus,
+    pub content_hash: Vec<u8>,
+    pub origin: Option<Origin>,
+    pub created_at: String,
+    pub author_app_id: String,
+    pub author_agent_id: Option<String>,
+    pub jobs: Vec<NewJob>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ImportCreated {
+    #[schema(example = 0)]
+    pub index: usize,
+    #[schema(example = "m_8f2a1c3d")]
+    pub id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ImportDuplicate {
+    #[schema(example = 3)]
+    pub index: usize,
+    /// Memória do canal (ou item anterior do lote) com o mesmo texto.
+    #[schema(example = "m_1b7d0e44")]
+    pub existing_id: String,
+}
+
+/// Resultado de `import_memories`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ImportResult {
+    pub created: Vec<ImportCreated>,
+    pub duplicates: Vec<ImportDuplicate>,
+}
+
+/// Agrupamento de `get_usage`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UsageGroup {
+    Day,
+    Agent,
+    Operation,
+    Channel,
+}
+
+impl UsageGroup {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Day => "day",
+            Self::Agent => "agent",
+            Self::Operation => "operation",
+            Self::Channel => "channel",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageQuery {
+    pub since: String,
+    pub until: String,
+    pub group: UsageGroup,
+}
+
+/// Uma linha agregada de `usage_log`. `key` é o dia, o id do agente (ou do app, para tokens
+/// sem agente), a operação ou o id do canal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageAggregate {
+    pub key: String,
+    pub requests: u64,
+    pub memories: u64,
+    pub rendered_tokens: u64,
+}
+
+/// Chamadas do LLM de uma finalidade num período.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LlmSummary {
+    #[schema(example = 40)]
+    pub calls: u64,
+    #[schema(example = 1)]
+    pub failures: u64,
+    /// Soma de `cost_usd` das chamadas com custo conhecido.
+    #[schema(example = 0.0123)]
+    pub cost_usd: f64,
+}
+
+/// Jobs `webhook` pendentes e terminados desde um instante.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WebhookCounts {
+    pub pending: u64,
+    pub delivered: u64,
+    pub failed: u64,
+}
+
+/// Tabelas com retenção (008 FR-014); um enum fechado, o `Store` monta o SQL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetentionTable {
+    UsageLog,
+    LlmCalls,
+    AuditLog,
+    Jobs,
+    Idempotency,
+}
+
+impl RetentionTable {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::UsageLog => "usage_log",
+            Self::LlmCalls => "llm_calls",
+            Self::AuditLog => "audit_log",
+            Self::Jobs => "jobs",
+            Self::Idempotency => "idempotency",
+        }
+    }
 }

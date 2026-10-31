@@ -137,11 +137,20 @@ struct LtxFile {
 /// Idade da última réplica pelo `litestream ltx` (D-009). Fora do contêiner, sem o binário,
 /// o item é pulado.
 pub async fn backup_check(settings: &DatabaseSettings) -> Check {
+    backup_measure(settings).await.0
+}
+
+/// Como `backup_check`, com o instante da réplica mais recente (amostrador de `get_status` e
+/// `/metrics`, 008 Q-009).
+pub async fn backup_measure(settings: &DatabaseSettings) -> (Check, Option<DateTime<Utc>>) {
     if !settings.litestream_enabled {
-        return Check::new(
-            "backup",
-            CheckStatus::Skip,
-            "LITESTREAM_ENABLED=false: sem backup",
+        return (
+            Check::new(
+                "backup",
+                CheckStatus::Skip,
+                "LITESTREAM_ENABLED=false: sem backup",
+            ),
+            None,
         );
     }
     let path = settings.path.display().to_string();
@@ -154,31 +163,50 @@ pub async fn backup_check(settings: &DatabaseSettings) -> Check {
     let output = match output {
         Ok(Ok(output)) => output,
         Ok(Err(error)) if error.kind() == ErrorKind::NotFound => {
-            return Check::new(
-                "backup",
-                CheckStatus::Skip,
-                "litestream nao instalado: sem backup",
+            return (
+                Check::new(
+                    "backup",
+                    CheckStatus::Skip,
+                    "litestream nao instalado: sem backup",
+                ),
+                None,
             );
         }
-        Ok(Err(error)) => return Check::new("backup", CheckStatus::Fail, error.to_string()),
-        Err(error) => return Check::new("backup", CheckStatus::Fail, error.to_string()),
+        Ok(Err(error)) => {
+            return (
+                Check::new("backup", CheckStatus::Fail, error.to_string()),
+                None,
+            );
+        }
+        Err(error) => {
+            return (
+                Check::new("backup", CheckStatus::Fail, error.to_string()),
+                None,
+            );
+        }
     };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let detail = stderr.lines().next().unwrap_or("litestream ltx falhou");
-        return Check::new("backup", CheckStatus::Fail, detail.to_owned());
+        return (
+            Check::new("backup", CheckStatus::Fail, detail.to_owned()),
+            None,
+        );
     }
     replica_age(&output.stdout, Utc::now())
 }
 
-fn replica_age(stdout: &[u8], now: DateTime<Utc>) -> Check {
+fn replica_age(stdout: &[u8], now: DateTime<Utc>) -> (Check, Option<DateTime<Utc>>) {
     let files: Vec<LtxFile> = match serde_json::from_slice(stdout) {
         Ok(files) => files,
         Err(error) => {
-            return Check::new(
-                "backup",
-                CheckStatus::Fail,
-                format!("saida do litestream invalida: {error}"),
+            return (
+                Check::new(
+                    "backup",
+                    CheckStatus::Fail,
+                    format!("saida do litestream invalida: {error}"),
+                ),
+                None,
             );
         }
     };
@@ -188,16 +216,22 @@ fn replica_age(stdout: &[u8], now: DateTime<Utc>) -> Check {
         .map(|timestamp| timestamp.with_timezone(&Utc))
         .max();
     match latest {
-        Some(latest) => Check::new(
-            "backup",
-            CheckStatus::Ok,
-            format!(
-                "ultima replica ha {}s ({})",
-                (now - latest).num_seconds().max(0),
-                latest.to_rfc3339()
+        Some(latest) => (
+            Check::new(
+                "backup",
+                CheckStatus::Ok,
+                format!(
+                    "ultima replica ha {}s ({})",
+                    (now - latest).num_seconds().max(0),
+                    latest.to_rfc3339()
+                ),
             ),
+            Some(latest),
         ),
-        None => Check::new("backup", CheckStatus::Fail, "nenhuma replica encontrada"),
+        None => (
+            Check::new("backup", CheckStatus::Fail, "nenhuma replica encontrada"),
+            None,
+        ),
     }
 }
 
@@ -226,7 +260,8 @@ mod tests {
             {"level":0,"min_txid":"1","max_txid":"1","size":10,"timestamp":"2026-10-30T11:00:00Z"},
             {"level":9,"min_txid":"1","max_txid":"2","size":10,"timestamp":"2026-10-30T11:59:30Z"}
         ]"#;
-        let check = replica_age(stdout, now);
+        let (check, latest) = replica_age(stdout, now);
+        assert!(latest.is_some());
         assert_eq!(check.status, CheckStatus::Ok);
         assert!(
             check.detail.starts_with("ultima replica ha 30s"),
@@ -234,7 +269,7 @@ mod tests {
             check.detail
         );
 
-        assert_eq!(replica_age(b"[]", now).status, CheckStatus::Fail);
-        assert_eq!(replica_age(b"nao json", now).status, CheckStatus::Fail);
+        assert_eq!(replica_age(b"[]", now).0.status, CheckStatus::Fail);
+        assert_eq!(replica_age(b"nao json", now).0.status, CheckStatus::Fail);
     }
 }

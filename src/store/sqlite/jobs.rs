@@ -325,6 +325,7 @@ pub(super) fn set_secret(
             after: Some(journal::to_value(&after)?),
         },
     )?;
+    journal::emit(transaction, context, &[])?;
     journal::remember(transaction, context, &after)?;
     Ok(after)
 }

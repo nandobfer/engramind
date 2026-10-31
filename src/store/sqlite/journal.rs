@@ -1,4 +1,5 @@
-//! Auditoria e idempotência gravadas na mesma transação de cada mutação (FR-008, D-008).
+//! Auditoria, idempotência e eventos gravados na mesma transação de cada mutação (FR-008,
+//! D-008; 008 D-001).
 
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Serialize;
@@ -47,6 +48,59 @@ pub(super) fn audit(
             ],
         )
         .map_err(sql_error)?;
+    Ok(())
+}
+
+/// Um job `webhook` por destinatário de cada evento do contexto (008 D-001). `memory_ids`
+/// preenche os eventos montados sem ids (a memória criada); `channel_version` é a do canal
+/// agora, depois dos incrementos da transação.
+pub(super) fn emit(
+    transaction: &Transaction,
+    context: &WriteContext,
+    memory_ids: &[String],
+) -> Result<(), StoreError> {
+    emit_with(transaction, context, memory_ids, &[])
+}
+
+/// Como `emit`, com campos que só a transação conhece (o id da assinatura criada).
+pub(super) fn emit_with(
+    transaction: &Transaction,
+    context: &WriteContext,
+    memory_ids: &[String],
+    fields: &[(&str, Value)],
+) -> Result<(), StoreError> {
+    for event in &context.events {
+        let version = match &event.channel {
+            Some(slug) => transaction
+                .query_row(
+                    "SELECT version FROM channels WHERE slug = ?1",
+                    params![slug],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()
+                .map_err(sql_error)?,
+            None => None,
+        };
+        let ids = if event.memory_ids.is_empty() {
+            memory_ids
+        } else {
+            &event.memory_ids
+        };
+        let mut payload = event.payload(version, ids, &context.at);
+        for (key, value) in fields {
+            payload[*key] = value.clone();
+        }
+        for app_id in &event.recipients {
+            let job = serde_json::json!({ "app_id": app_id, "event": payload });
+            transaction
+                .execute(
+                    "INSERT INTO jobs (kind, payload_json, run_after, created_at)
+                     VALUES ('webhook', ?1, ?2, ?2)",
+                    params![job.to_string(), context.at],
+                )
+                .map_err(sql_error)?;
+        }
+    }
     Ok(())
 }
 

@@ -9,6 +9,7 @@ use utoipa::{IntoParams, ToSchema};
 use super::{
     Core,
     access::{self, Purpose, Reach},
+    events::EventType,
     idempotency::Mutation,
     identities::{MAX_DESCRIPTION, MAX_NAME, next_cursor, optional_text, text},
     ids,
@@ -233,7 +234,10 @@ impl<S: Store> Core<S> {
                 key,
                 &body,
                 201,
-                |context| async move {
+                |mut context| async move {
+                    context.events = core
+                        .channel_event(EventType::ChannelUpdated, &new.slug)
+                        .await?;
                     core.store()
                         .create_channel(new, context)
                         .await
@@ -265,8 +269,12 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
-                    let id = core.find_channel(&channel).await?.id;
+                |mut context| async move {
+                    let found = core.find_channel(&channel).await?;
+                    context.events = core
+                        .channel_event(EventType::ChannelUpdated, &found.slug)
+                        .await?;
+                    let id = found.id;
                     core.store()
                         .update_channel(id, patch, context)
                         .await
@@ -318,8 +326,12 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
-                    let id = core.find_channel(&channel).await?.id;
+                |mut context| async move {
+                    let found = core.find_channel(&channel).await?;
+                    context.events = core
+                        .channel_event(EventType::ChannelUpdated, &found.slug)
+                        .await?;
+                    let id = found.id;
                     core.store()
                         .set_channel_archived(id, archived, context)
                         .await
@@ -349,8 +361,12 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
-                    let id = core.find_channel(&channel).await?.id;
+                |mut context| async move {
+                    let found = core.find_channel(&channel).await?;
+                    context.events = core
+                        .channel_event(EventType::ChannelUpdated, &found.slug)
+                        .await?;
+                    let id = found.id;
                     core.store()
                         .delete_channel(id, context)
                         .await

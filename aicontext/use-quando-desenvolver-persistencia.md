@@ -43,7 +43,8 @@ Outras regras:
 - `revert_memory` cria nova revisão; nunca reescreve histórico.
 - `idempotency` guarda `(token_id, key, request_hash, response_json)`; mesma chave com corpo diferente é conflito.
 - Fila `jobs`: captura com `UPDATE … RETURNING` e `locked_until`, backoff exponencial.
-- Retenção configurável para `usage_log`, `llm_calls` e `idempotency`.
+- Retenção configurável para `usage_log`, `llm_calls`, `audit_log`, jobs terminados e `idempotency`, só por `Store::purge_before` (enum `RetentionTable`, lotes de 5.000; decisão 0024).
+- Eventos: `journal::emit` grava os jobs `webhook` de `WriteContext.events` na mesma transação, só quando a mutação muda algo (decisão 0023).
 
 ## Testes
 

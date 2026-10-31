@@ -10,6 +10,7 @@ use utoipa::{IntoParams, ToSchema};
 use super::{
     Core,
     access::Purpose,
+    events::EventType,
     idempotency::Mutation,
     identities::{agent_lookup, app_lookup, next_cursor, optional_text, text},
     ids,
@@ -220,7 +221,7 @@ pub fn category(snapshot: &SettingsSnapshot, value: Option<&str>) -> Result<Stri
     })))
 }
 
-fn origin(value: Option<&Origin>) -> Result<Option<Origin>, ApiError> {
+pub(crate) fn origin(value: Option<&Origin>) -> Result<Option<Origin>, ApiError> {
     value
         .map(|origin| {
             Ok(Origin {
@@ -231,7 +232,7 @@ fn origin(value: Option<&Origin>) -> Result<Option<Origin>, ApiError> {
         .transpose()
 }
 
-fn initial_status(value: Option<MemoryStatus>) -> Result<MemoryStatus, ApiError> {
+pub(crate) fn initial_status(value: Option<MemoryStatus>) -> Result<MemoryStatus, ApiError> {
     match value.unwrap_or(MemoryStatus::Active) {
         MemoryStatus::Archived => Err(ApiError::validation(
             "status inicial deve ser active ou permanent",
@@ -272,7 +273,7 @@ fn csv(value: Option<&str>) -> Vec<String> {
 /// Jobs de conteúdo (Q-001): título e texto pelo Redator, e o vetor (só com os embeddings
 /// ligados, 007 FR-010). `title_only` no `revert` (Q-008), para o Redator não reescrever o
 /// texto restaurado.
-fn content_jobs(title_only: bool, embed: bool) -> Vec<NewJob> {
+pub(crate) fn content_jobs(title_only: bool, embed: bool) -> Vec<NewJob> {
     let mut extra = Map::new();
     if title_only {
         extra.insert("title_only".to_owned(), Value::Bool(true));
@@ -291,7 +292,7 @@ fn content_jobs(title_only: bool, embed: bool) -> Vec<NewJob> {
 }
 
 /// Erros do `Store` numa mutação de memória.
-fn memory_error(error: StoreError) -> ApiError {
+pub(crate) fn memory_error(error: StoreError) -> ApiError {
     store_error(error, memory_not_found)
 }
 
@@ -326,7 +327,7 @@ impl<S: Store> Core<S> {
     }
 
     /// `memory.text_max` do canal (com a sobreposição dele).
-    async fn text_limits(&self, channel_id: &str) -> Result<(usize, usize), ApiError> {
+    pub(crate) async fn text_limits(&self, channel_id: &str) -> Result<(usize, usize), ApiError> {
         let snapshot = self.settings_snapshot();
         let network = self.network().await?;
         Ok((
@@ -532,9 +533,12 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 201,
-                |context| async move {
+                |mut context| async move {
                     let reach = core
                         .require_channel(&principal_owned, &selection, &body.channel, Scope::Write)
+                        .await?;
+                    context.events = core
+                        .channel_event(EventType::MemoryCreated, &reach.channel.slug)
                         .await?;
                     let channel_id = reach.channel.id;
                     let (min, max) = core.text_limits(&channel_id).await?;
@@ -595,9 +599,12 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
+                |mut context| async move {
                     let memory = core
                         .reach_memory(&principal_owned, header.as_deref(), &id, Scope::Write)
+                        .await?;
+                    context.events = core
+                        .channel_event(EventType::MemoryUpdated, &memory.channel)
                         .await?;
                     let content = match &body.text {
                         Some(value) => {
@@ -673,9 +680,12 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
+                |mut context| async move {
                     let memory = core
                         .reach_memory(&principal_owned, header.as_deref(), &id, Scope::Write)
+                        .await?;
+                    context.events = core
+                        .channel_event(EventType::MemoryUpdated, &memory.channel)
                         .await?;
                     let revision = core
                         .store()
@@ -811,10 +821,15 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
+                |mut context| async move {
                     let memory = core
                         .reach_memory(&principal_owned, header.as_deref(), &id, Scope::Write)
                         .await?;
+                    let kind = match action {
+                        StatusAction::Archive => EventType::MemoryArchived,
+                        _ => EventType::MemoryUpdated,
+                    };
+                    context.events = core.channel_event(kind, &memory.channel).await?;
                     let target = MemoryTarget {
                         id: memory.id,
                         channel_id: memory.channel_id,
@@ -854,15 +869,26 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
+                |mut context| async move {
                     let memory = core
                         .reach_memory(&principal_owned, header.as_deref(), &id, Scope::Write)
                         .await?;
                     let destination = core
                         .require_channel(&principal_owned, &selection, &body.to, Scope::Write)
                         .await?
-                        .channel
-                        .id;
+                        .channel;
+                    // Um evento por canal envolvido (FR-007).
+                    let mut events = core
+                        .channel_event(EventType::MemoryUpdated, &memory.channel)
+                        .await?;
+                    if destination.slug != memory.channel {
+                        events.extend(
+                            core.channel_event(EventType::MemoryUpdated, &destination.slug)
+                                .await?,
+                        );
+                    }
+                    context.events = events;
+                    let destination = destination.id;
                     let target = MemoryTarget {
                         id: memory.id.clone(),
                         channel_id: memory.channel_id.clone(),
@@ -905,9 +931,12 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
+                |mut context| async move {
                     let memory = core
                         .reach_memory(&principal_owned, header.as_deref(), &id, Scope::Delete)
+                        .await?;
+                    context.events = core
+                        .channel_event(EventType::MemoryDeleted, &memory.channel)
                         .await?;
                     let target = MemoryTarget {
                         id: memory.id,

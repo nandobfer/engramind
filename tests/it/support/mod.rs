@@ -1,4 +1,5 @@
 pub mod llm;
+pub mod webhook;
 
 use std::{sync::Arc, time::Duration};
 

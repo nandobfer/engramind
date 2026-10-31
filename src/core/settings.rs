@@ -152,6 +152,13 @@ pub const SEARCH_RRF_K: &str = "search.rrf_k";
 pub const SEARCH_DEFAULT_LIMIT: &str = "search.default_limit";
 pub const SEARCH_HINT_THRESHOLD: &str = "search.hint_threshold";
 pub const SEARCH_HINT_LIMIT: &str = "search.hint_limit";
+pub const WEBHOOKS_ENABLED: &str = "webhooks.enabled";
+pub const WEBHOOKS_TIMEOUT_MS: &str = "webhooks.timeout_ms";
+pub const WEBHOOKS_MAX_ATTEMPTS: &str = "webhooks.max_attempts";
+pub const RETENTION_USAGE_DAYS: &str = "retention.usage_days";
+pub const RETENTION_LLM_CALLS_DAYS: &str = "retention.llm_calls_days";
+pub const RETENTION_AUDIT_DAYS: &str = "retention.audit_days";
+pub const RETENTION_JOBS_DAYS: &str = "retention.jobs_days";
 /// Provedores de embedding (`embedding.provider`).
 pub const EMBEDDING_PROVIDERS: &[&str] = &["local", "openai_compatible", "ollama", "gemini", "off"];
 /// Chaves que definem o espaço dos vetores: mudar uma delas valida o provedor e reindexa.
@@ -519,6 +526,65 @@ pub const SETTINGS: &[SettingSpec] = &[
         description: "Dicas devolvidas por `get_hints` quando `limit` não é informado.",
         since: "0.7.0",
     },
+    SettingSpec {
+        key: WEBHOOKS_ENABLED,
+        kind: SettingType::Boolean,
+        default: "true",
+        channel_override: false,
+        description: "Liga os webhooks: desligado, as mutações não enfileiram eventos e as entregas pendentes terminam como `skipped`.",
+        since: "0.8.0",
+    },
+    SettingSpec {
+        key: WEBHOOKS_TIMEOUT_MS,
+        kind: SettingType::Integer {
+            min: 500,
+            max: 30_000,
+        },
+        default: "5000",
+        channel_override: false,
+        description: "Prazo de cada tentativa de entrega de um webhook.",
+        since: "0.8.0",
+    },
+    SettingSpec {
+        key: WEBHOOKS_MAX_ATTEMPTS,
+        kind: SettingType::Integer { min: 1, max: 10 },
+        default: "5",
+        channel_override: false,
+        description: "Tentativas de entrega de um evento antes de o job ficar `failed`.",
+        since: "0.8.0",
+    },
+    SettingSpec {
+        key: RETENTION_USAGE_DAYS,
+        kind: SettingType::Integer { min: 1, max: 3650 },
+        default: "90",
+        channel_override: false,
+        description: "Dias de `usage_log` guardados (base de `get_usage`).",
+        since: "0.8.0",
+    },
+    SettingSpec {
+        key: RETENTION_LLM_CALLS_DAYS,
+        kind: SettingType::Integer { min: 1, max: 3650 },
+        default: "90",
+        channel_override: false,
+        description: "Dias de `llm_calls` guardados.",
+        since: "0.8.0",
+    },
+    SettingSpec {
+        key: RETENTION_AUDIT_DAYS,
+        kind: SettingType::Integer { min: 1, max: 3650 },
+        default: "null",
+        channel_override: false,
+        description: "Dias de `audit_log` guardados; vazio guarda para sempre.",
+        since: "0.8.0",
+    },
+    SettingSpec {
+        key: RETENTION_JOBS_DAYS,
+        kind: SettingType::Integer { min: 1, max: 3650 },
+        default: "30",
+        channel_override: false,
+        description: "Dias que jobs `done` e `failed` ficam na fila depois de terminar; `queued` e `running` nunca saem.",
+        since: "0.8.0",
+    },
 ];
 
 pub fn spec(key: &str) -> Option<&'static SettingSpec> {
@@ -840,6 +906,11 @@ impl SettingsSnapshot {
 
     pub fn whole(&self, key: &str) -> i64 {
         self.integer(key)
+    }
+
+    /// Inteiro efetivo que aceita vazio (`null`).
+    pub fn optional_whole(&self, key: &str) -> Option<i64> {
+        self.value(key).as_i64()
     }
 
     /// Texto efetivo sem espaços nas pontas; `None` quando vazio ou nulo.
@@ -1169,6 +1240,7 @@ impl<S: Store> Core<S> {
             .await?;
         let core = self.clone();
         let stored_switch = switch.clone();
+        let keys: Vec<String> = changes.iter().map(|change| change.key.clone()).collect();
         let mutation = self
             .mutate(
                 principal,
@@ -1176,7 +1248,8 @@ impl<S: Store> Core<S> {
                 key,
                 &body,
                 200,
-                |context| async move {
+                |mut context| async move {
+                    context.events = core.settings_event(None, &keys).await?;
                     match core
                         .store()
                         .update_settings(changes, retained.clone(), stored_switch, context)
@@ -1258,9 +1331,13 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
+                |mut context| async move {
                     let network = core.network().await?;
-                    let id = super::channels::find_in(&network, &target)?.id.clone();
+                    let found = super::channels::find_in(&network, &target)?;
+                    let keys: Vec<String> =
+                        changes.iter().map(|change| change.key.clone()).collect();
+                    context.events = core.settings_event(Some(&found.slug), &keys).await?;
+                    let id = found.id.clone();
                     core.store()
                         .update_channel_settings(id, changes, context)
                         .await

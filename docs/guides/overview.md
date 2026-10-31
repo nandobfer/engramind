@@ -2,7 +2,7 @@
 
 O Engramind é uma rede de memórias para agentes de IA: guarda fatos duráveis e curtos em **canais** e os entrega por **REST, MCP e CLI**. Cada agente se identifica por um **token** com escopos. Uma memória pertence ao canal, não ao agente que a escreveu; o autor é proveniência.
 
-Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as memórias (escrita, edição versionada, status e histórico), a busca por sentido e por texto e as dicas (`search_memories`, `get_hints`), os embeddings (local ou remoto, com reindexação na troca de modelo), o Redator, o contexto pronto para o prompt (`get_context`, com `version`/ETag e `304`), as configurações, a auditoria, o status básico e esta documentação. No MCP também há resources (`engramind://context`, `engramind://channels/{slug}`, `engramind://guides/{id}`) e o prompt `memory-writing`.
+Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as memórias (escrita, edição versionada, status e histórico), a busca por sentido e por texto e as dicas (`search_memories`, `get_hints`), os embeddings (local ou remoto, com reindexação na troca de modelo), o Redator, o contexto pronto para o prompt (`get_context`, com `version`/ETag e `304`), os webhooks por app, a importação em lote (`import_memories`), as configurações, a auditoria, o status completo, o uso (`get_usage`), as métricas Prometheus, a retenção e esta documentação. No MCP também há resources (`engramind://context`, `engramind://channels/{slug}`, `engramind://guides/{id}`) e o prompt `memory-writing`.
 
 ## Três vias, um contrato
 
@@ -24,7 +24,7 @@ Toda rota em `/v1` e o `/mcp` exigem `Authorization: Bearer eng.<token_id>.<segr
 
 Um token `agent` só alcança os canais que o agente assina (`403 CHANNEL_NOT_SUBSCRIBED` nos demais), com o acesso efetivo = escopos do token ∩ acesso da assinatura. O cabeçalho `Engramind-Channels` e o parâmetro `channels` restringem os canais de cada requisição. Os detalhes estão no guia `canais-e-assinaturas`.
 
-Rotas públicas, sem token: `GET /health/live`, `GET /health/ready`, `GET /openapi.json` e `GET /docs`.
+Rotas públicas, sem token: `GET /health/live`, `GET /health/ready`, `GET /openapi.json` e `GET /docs`. `GET /metrics` fica fora de `/v1` e exige um token `admin` com `read` (guia `operacao`).
 
 ## Memórias
 

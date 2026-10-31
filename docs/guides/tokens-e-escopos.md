@@ -60,6 +60,7 @@ engramind apps update app-a --disable
 ```
 
 - `update_app` e `update_agent` com `disabled: true` desativam sem perder o vínculo: os tokens deixam de autenticar e voltam com `disabled: false`.
+- `create_app` e `update_app` aceitam `webhook_url` e `webhook_secret` (só gravado, cifrado): o app passa a receber os eventos dos canais que os agentes dele assinam (todos, se ele tiver um token `admin`). A leitura mostra só `webhook: { url, secret: { configured, updated_at } }`; detalhes no guia `integracao-gestor`.
 - `delete_app` remove o app com os agentes, tokens e assinaturas; `delete_agent` remove o agente com os tokens e as assinaturas. A autoria das memórias guarda o id sem chave estrangeira, e a auditoria preserva o registro anterior.
 - Slug repetido recebe `409 SLUG_ALREADY_EXISTS`.
 

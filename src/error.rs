@@ -62,6 +62,18 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         description: "Path, query, header ou body inválido.",
     },
     ErrorCodeDoc {
+        code: "IDEMPOTENCY_KEY_REQUIRED",
+        status: 400,
+        exit_code: 2,
+        description: "A operação (`import_memories`) só roda com `Idempotency-Key` (`idempotency_key` no MCP).",
+    },
+    ErrorCodeDoc {
+        code: "BATCH_TOO_LARGE",
+        status: 400,
+        exit_code: 2,
+        description: "O lote passa de `limits.max_batch` itens; `details` traz `max` e `received`.",
+    },
+    ErrorCodeDoc {
         code: "AUTH_INVALID",
         status: 401,
         exit_code: 3,

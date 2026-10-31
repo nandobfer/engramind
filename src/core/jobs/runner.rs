@@ -11,7 +11,7 @@ use crate::{
     core::{
         Core, embeddings, ids,
         model::{Job, JobFinish},
-        redator,
+        redator, webhooks,
     },
     store::Store,
 };
@@ -30,6 +30,10 @@ pub trait JobHandler<S: Store>: Send + Sync + 'static {
     /// Tempo que o executor reserva para um job antes de outro poder capturá-lo.
     fn lease(&self, core: &Core<S>) -> Duration;
     fn run(&self, core: &Core<S>, job: Job) -> impl Future<Output = JobOutcome> + Send;
+    /// Espera antes da próxima tentativa; padrão = o do Redator.
+    fn backoff(&self, attempts: i64) -> Duration {
+        redator::backoff(attempts)
+    }
 }
 
 /// Job `redact`: o Redator.
@@ -59,6 +63,25 @@ impl<S: Store> JobHandler<S> for Embed {
 
     async fn run(&self, core: &Core<S>, job: Job) -> JobOutcome {
         core.run_embed(&job).await
+    }
+}
+
+/// Job `webhook`: a entrega de um evento a um app (008).
+pub struct Webhook;
+
+impl<S: Store> JobHandler<S> for Webhook {
+    const KIND: &'static str = webhooks::JOB_KIND;
+
+    fn lease(&self, core: &Core<S>) -> Duration {
+        core.webhook_lease()
+    }
+
+    async fn run(&self, core: &Core<S>, job: Job) -> JobOutcome {
+        core.run_webhook(&job).await
+    }
+
+    fn backoff(&self, attempts: i64) -> Duration {
+        webhooks::backoff(attempts)
     }
 }
 
@@ -102,7 +125,7 @@ async fn execute<S: Store, H: JobHandler<S>>(core: &Core<S>, handler: &H, job: J
             outcome: "superseded",
         },
         JobOutcome::Retry(error) => {
-            let delay = chrono::Duration::from_std(redator::backoff(attempts))
+            let delay = chrono::Duration::from_std(handler.backoff(attempts))
                 .unwrap_or(chrono::Duration::MAX);
             JobFinish::Retry {
                 error: error.clone(),
@@ -132,14 +155,17 @@ async fn execute<S: Store, H: JobHandler<S>>(core: &Core<S>, handler: &H, job: J
         ),
     }
     match outcome {
-        JobOutcome::Fail(error) => tracing::error!(
+        JobOutcome::Fail(error) => {
+            crate::metrics::job_failed(H::KIND);
+            tracing::error!(
             event = "jobs.failed",
             kind = H::KIND,
             job_id = id,
             attempts,
             error = %error,
             "job falhou definitivamente"
-        ),
+            );
+        }
         JobOutcome::Superseded => tracing::debug!(
             event = "jobs.superseded",
             kind = H::KIND,
@@ -200,12 +226,18 @@ pub fn spawn<S: Store, H: JobHandler<S>>(
 }
 
 impl<S: Store> Core<S> {
-    /// Sobe os runners da fila (`redact` e `embed`).
+    /// Sobe os runners da fila (`redact`, `embed` e `webhook`).
     pub fn spawn_workers(&self) -> Vec<JoinHandle<()>> {
         vec![
             spawn(self.clone(), Redact, REDACT_CONCURRENCY),
             spawn(self.clone(), Embed, EMBED_CONCURRENCY),
+            spawn(self.clone(), Webhook, webhooks::WEBHOOK_CONCURRENCY),
         ]
+    }
+
+    /// Executa agora os jobs `webhook` prontos em `now` (testes e diagnóstico).
+    pub async fn run_webhook_jobs(&self, now: DateTime<Utc>) -> usize {
+        drain(self, &Webhook, now).await
     }
 
     /// Executa agora os jobs `embed` prontos em `now` (testes e diagnóstico).

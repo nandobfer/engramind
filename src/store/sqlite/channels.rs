@@ -197,6 +197,7 @@ pub(super) fn create_channel(
             after: Some(to_value(&channel)?),
         },
     )?;
+    journal::emit(transaction, context, &[])?;
     journal::remember(transaction, context, &channel)?;
     Ok(channel)
 }
@@ -231,6 +232,7 @@ pub(super) fn update_channel(
             after: Some(to_value(&after)?),
         },
     )?;
+    journal::emit(transaction, context, &[])?;
     journal::remember(transaction, context, &after)?;
     Ok(after)
 }
@@ -269,6 +271,7 @@ pub(super) fn set_channel_archived(
             after: Some(to_value(&after)?),
         },
     )?;
+    journal::emit(transaction, context, &[])?;
     journal::remember(transaction, context, &after)?;
     Ok(after)
 }
@@ -282,6 +285,8 @@ pub(super) fn delete_channel(
     if before.archived_at.is_none() {
         return Err(StoreError::Conflict("CHANNEL_NOT_ARCHIVED"));
     }
+    // Antes de apagar o canal, para o evento levar a última `channel_version`.
+    journal::emit(transaction, context, &[])?;
     let removed = transaction
         .execute(
             "DELETE FROM subscriptions WHERE is_prefix = 0 AND target = ?1",
@@ -369,6 +374,7 @@ pub(super) fn update_channel_settings(
             after: Some(to_value(&after)?),
         },
     )?;
+    journal::emit(transaction, context, &[])?;
     journal::remember(transaction, context, &after)?;
     Ok(after)
 }
@@ -434,6 +440,12 @@ pub(super) fn create_subscription(
             after: Some(to_value(&subscription)?),
         },
     )?;
+    journal::emit_with(
+        transaction,
+        context,
+        &[],
+        &[("subscription", serde_json::json!(id))],
+    )?;
     journal::remember(transaction, context, &subscription)?;
     Ok(subscription)
 }
@@ -469,6 +481,7 @@ pub(super) fn update_subscription(
             after: Some(to_value(&after)?),
         },
     )?;
+    journal::emit(transaction, context, &[])?;
     journal::remember(transaction, context, &after)?;
     Ok(after)
 }
@@ -493,6 +506,7 @@ pub(super) fn delete_subscription(
             after: None,
         },
     )?;
+    journal::emit(transaction, context, &[])?;
     journal::remember(transaction, context, &before)?;
     Ok(before)
 }

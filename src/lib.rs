@@ -8,6 +8,7 @@ pub mod error;
 pub mod health;
 pub mod http;
 pub mod mcp;
+pub mod metrics;
 pub mod observability;
 pub mod openapi;
 pub mod providers;

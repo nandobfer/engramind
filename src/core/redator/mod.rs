@@ -18,6 +18,7 @@ use zeroize::Zeroizing;
 
 use super::{
     Core,
+    events::EventType,
     idempotency::Mutation,
     ids,
     jobs::JobOutcome,
@@ -217,6 +218,19 @@ pub fn validate(
 }
 
 /// Backoff da fila: 2 s × 2ⁿ, teto de 10 min (FR-003).
+/// Métricas das chamadas ao LLM (008 FR-011), sem modelo nem texto nos rótulos.
+fn record_llm_metrics(calls: &[NewLlmCall]) {
+    for call in calls {
+        crate::metrics::llm_call(
+            call.purpose,
+            &call.provider,
+            call.outcome,
+            (call.input_tokens, call.output_tokens),
+            call.cost_usd,
+        );
+    }
+}
+
 pub fn backoff(attempts: i64) -> Duration {
     let exponent = u32::try_from(attempts.saturating_sub(1).clamp(0, 20)).unwrap_or(20);
     Duration::from_secs(2u64.saturating_mul(2u64.saturating_pow(exponent)))
@@ -377,6 +391,7 @@ impl<S: Store> Core<S> {
         if calls.is_empty() {
             return;
         }
+        record_llm_metrics(&calls);
         if let Err(error) = self.store().append_llm_calls(calls, None).await {
             tracing::warn!(event = "llm_calls.write_failed", error = %error, "falha ao gravar llm_calls");
         }
@@ -494,6 +509,14 @@ impl<S: Store> Core<S> {
             }),
             embed: self.embeddings_enabled(),
         };
+        // O título (e o texto) do Redator muda o que o gestor mostra: `memory.updated` (008 D-005).
+        let events = match self
+            .channel_event(EventType::MemoryUpdated, &memory.channel)
+            .await
+        {
+            Ok(events) => events,
+            Err(error) => return JobOutcome::Retry(short(&error.message)),
+        };
         let context = WriteContext {
             actor: Actor {
                 app_id: Some(SYSTEM_APP.to_owned()),
@@ -502,6 +525,7 @@ impl<S: Store> Core<S> {
             },
             at: ids::timestamp(ids::now()),
             idempotency: None,
+            events,
         };
         match self.store().apply_redaction(redaction, context).await {
             Ok(_) => {
@@ -731,6 +755,7 @@ impl<S: Store> Core<S> {
                         };
                         let response =
                             serde_json::to_value(&result).map_err(|_| ApiError::internal())?;
+                        record_llm_metrics(&completion.calls);
                         core.store()
                             .append_llm_calls(completion.calls, Some((context, response)))
                             .await

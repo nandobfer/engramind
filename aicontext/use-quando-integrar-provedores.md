@@ -32,7 +32,8 @@
 - `POST` assinado com HMAC-SHA256 (`Engramind-Signature: t=<ts>,v1=<hex>`), segredo cifrado por app.
 - Payload mínimo, sem textos: `{ id, type, channel, channel_version, memory_ids, at }`.
 - Destinatários: apps com agente assinando o canal afetado e apps com token `admin`.
-- Retentativas com backoff (`webhooks.max_attempts`); o `id` permite deduplicar.
+- Retentativas com backoff próprio (10 s × 4ⁿ, teto 1 h) até `webhooks.max_attempts`; o `id` (`evt_` + 16 hex) permite deduplicar; sem seguir redirecionamentos; app removido, desativado ou sem URL → `skipped`.
+- Detalhes em `aicontext/webhooks.md` e decisão 0023.
 
 ## Observabilidade
 

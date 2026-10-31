@@ -212,6 +212,10 @@ impl NetworkCache {
         }
     }
 
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
     pub(crate) fn invalidate(&self) {
         self.generation.fetch_add(1, Ordering::AcqRel);
     }

@@ -160,7 +160,10 @@ impl<S: Store> Core<S> {
             key,
             &input,
             200,
-            |context| async move {
+            |mut context| async move {
+                context.events = core
+                    .settings_event(None, std::slice::from_ref(&target))
+                    .await?;
                 core.store()
                     .set_secret(target, sealed, context)
                     .await

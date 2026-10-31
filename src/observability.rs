@@ -16,7 +16,11 @@ use tracing_subscriber::{
 };
 use uuid::Uuid;
 
-use crate::http::REQUEST_ID_HEADER;
+use crate::{
+    core::operations,
+    http::REQUEST_ID_HEADER,
+    metrics::{self, OperationSlot},
+};
 
 const TIMESTAMP_FORMAT: &str = "%d/%m/%Y - %H:%M:%S";
 const DEFAULT_FILTER: &str = "engramind=info,tower_http=warn";
@@ -103,7 +107,7 @@ pub async fn assign_request_id(mut request: Request, next: Next) -> Response {
     response
 }
 
-pub async fn log_request(request: Request, next: Next) -> Response {
+pub async fn log_request(mut request: Request, next: Next) -> Response {
     let method = request.method().clone();
     let path = request.uri().path().to_owned();
     let route = request
@@ -118,6 +122,12 @@ pub async fn log_request(request: Request, next: Next) -> Response {
         .unwrap_or("unknown")
         .to_owned();
     let noisy = is_noisy(&method, &path);
+    // Rótulo `operation` das métricas: a rota REST do catálogo ou a ferramenta MCP.
+    let slot = OperationSlot::default();
+    if let Some(operation) = operations::by_route(method.as_str(), &route) {
+        slot.set(operation.name);
+    }
+    request.extensions_mut().insert(slot.clone());
     let span = tracing::info_span!(
         "http.request",
         request_id = %request_id,
@@ -132,6 +142,13 @@ pub async fn log_request(request: Request, next: Next) -> Response {
     let response = next.run(request).instrument(span.clone()).await;
     let latency_ms = started.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
+    metrics::record_http(
+        method.as_str(),
+        &route,
+        slot.get().unwrap_or(""),
+        status,
+        started.elapsed().as_secs_f64(),
+    );
 
     // `get_context` com `304` é o poll de cada turno (005 FR-010).
     if (noisy && status < 500) || status == 304 {

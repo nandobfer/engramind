@@ -10,8 +10,10 @@ use crate::{
     core::{
         ids,
         model::{
-            Agent, AgentLookup, AgentPatch, App, AppPatch, AuthTokenRow, IdentityCounts, Lookup,
-            NewAgent, NewApp, NewToken, Token, TokenFilter, TokenPatch, WriteContext, token_status,
+            Agent, AgentLookup, AgentPatch, App, AppPatch, AppWebhook, AuthTokenRow,
+            DirectoryAgent, DirectoryApp, IdentityCounts, Lookup, NewAgent, NewApp, NewToken,
+            Token, TokenFilter, TokenPatch, WebhookDirectory, WebhookSecretState, WebhookTarget,
+            WriteContext, token_status,
         },
         pagination::{Cursor, Page, PageRequest},
         principal::{AgentRef, AppRef, ScopeSet, TokenKind},
@@ -21,7 +23,8 @@ use crate::{
 
 const ID_ATTEMPTS: usize = 16;
 
-const APP_COLUMNS: &str = "a.id, a.slug, a.name, a.description, a.created_at, a.disabled_at";
+const APP_COLUMNS: &str = "a.id, a.slug, a.name, a.description, a.created_at, a.disabled_at, \
+     a.webhook_url, a.webhook_secret_enc IS NOT NULL, a.webhook_secret_updated_at";
 const AGENT_COLUMNS: &str =
     "g.id, g.slug, g.name, g.description, g.created_at, g.disabled_at, a.id, a.slug";
 const TOKEN_COLUMNS: &str = "t.id, t.kind, t.scopes, t.label, t.expires_at, t.created_at, \
@@ -37,6 +40,16 @@ fn app_from_row(row: &Row<'_>) -> rusqlite::Result<App> {
         description: row.get(3)?,
         created_at: row.get(4)?,
         disabled_at: row.get(5)?,
+        webhook: match row.get::<_, Option<String>>(6)? {
+            Some(url) => Some(AppWebhook {
+                url,
+                secret: WebhookSecretState {
+                    configured: row.get(7)?,
+                    updated_at: row.get(8)?,
+                },
+            }),
+            None => None,
+        },
     })
 }
 
@@ -405,10 +418,22 @@ fn load_token(transaction: &Transaction, id: &str) -> Result<Token, StoreError> 
 
 fn insert_app(transaction: &Transaction, new: &NewApp, at: &str) -> Result<App, StoreError> {
     let id = free_id(transaction, "apps", ids::APP_PREFIX)?;
+    let secret_at = new.webhook_secret.as_ref().map(|_| at);
     transaction
         .execute(
-            "INSERT INTO apps (id, slug, name, description, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, new.slug, new.name, new.description, at],
+            "INSERT INTO apps (id, slug, name, description, created_at, webhook_url,
+                               webhook_secret_enc, webhook_secret_updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                id,
+                new.slug,
+                new.name,
+                new.description,
+                at,
+                new.webhook_url,
+                new.webhook_secret,
+                secret_at
+            ],
         )
         .map_err(|error| unique_conflict(error, "SLUG_ALREADY_EXISTS"))?;
     load_app(transaction, &id)
@@ -483,6 +508,94 @@ fn apply_patch(
     Ok(())
 }
 
+/// URL e segredo do webhook de um app (008 FR-008); o segredo chega cifrado.
+fn apply_webhook(
+    transaction: &Transaction,
+    id: &str,
+    patch: &AppPatch,
+    at: &str,
+) -> Result<(), StoreError> {
+    if let Some(url) = &patch.webhook_url {
+        transaction
+            .execute(
+                "UPDATE apps SET webhook_url = ?1 WHERE id = ?2",
+                params![url, id],
+            )
+            .map_err(sql_error)?;
+    }
+    if let Some(secret) = &patch.webhook_secret {
+        transaction
+            .execute(
+                "UPDATE apps SET webhook_secret_enc = ?1, webhook_secret_updated_at = ?2
+                 WHERE id = ?3",
+                params![secret, secret.as_ref().map(|_| at), id],
+            )
+            .map_err(sql_error)?;
+    }
+    Ok(())
+}
+
+/// Apps, agentes e tokens `admin` não revogados, para calcular destinatários.
+pub(super) fn webhook_directory(connection: &Connection) -> rusqlite::Result<WebhookDirectory> {
+    let mut statement = connection.prepare(
+        "SELECT id, webhook_url IS NOT NULL AND webhook_secret_enc IS NOT NULL,
+                disabled_at IS NOT NULL
+         FROM apps",
+    )?;
+    let apps = statement
+        .query_map([], |row| {
+            Ok(DirectoryApp {
+                id: row.get(0)?,
+                webhook: row.get(1)?,
+                disabled: row.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut statement =
+        connection.prepare("SELECT id, app_id, disabled_at IS NOT NULL FROM agents")?;
+    let agents = statement
+        .query_map([], |row| {
+            Ok(DirectoryAgent {
+                id: row.get(0)?,
+                app_id: row.get(1)?,
+                disabled: row.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut statement = connection.prepare(
+        "SELECT app_id, expires_at FROM tokens WHERE kind = 'admin' AND revoked_at IS NULL",
+    )?;
+    let admin_tokens = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(WebhookDirectory {
+        apps,
+        agents,
+        admin_tokens,
+    })
+}
+
+pub(super) fn webhook_target(
+    connection: &Connection,
+    app_id: &str,
+) -> rusqlite::Result<Option<WebhookTarget>> {
+    connection
+        .query_row(
+            "SELECT slug, disabled_at IS NOT NULL, webhook_url, webhook_secret_enc
+             FROM apps WHERE id = ?1",
+            params![app_id],
+            |row| {
+                Ok(WebhookTarget {
+                    slug: row.get(0)?,
+                    disabled: row.get(1)?,
+                    url: row.get(2)?,
+                    secret_enc: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+}
+
 pub(super) fn update_app(
     transaction: &Transaction,
     id: &str,
@@ -492,6 +605,7 @@ pub(super) fn update_app(
     let before = load_app(transaction, id)?;
     let after = guard_last_admin(transaction, &context.at, || {
         apply_patch(transaction, "apps", id, patch, &context.at)?;
+        apply_webhook(transaction, id, patch, &context.at)?;
         load_app(transaction, id)
     })?;
     journal::audit(
