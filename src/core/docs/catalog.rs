@@ -11,7 +11,14 @@ pub enum Audience {
 }
 
 /// Tags OpenAPI restritas a tokens `admin` (operações, esquemas e tags ocultos para `agent`).
-pub const ADMIN_TAGS: &[&str] = &["Identities", "Network", "Settings", "Status", "Audit"];
+pub const ADMIN_TAGS: &[&str] = &[
+    "Identities",
+    "Network",
+    "Settings",
+    "Status",
+    "Jobs",
+    "Audit",
+];
 
 /// Tags sem guia próprio além da visão geral.
 pub const OPERATIONAL_TAGS: &[&str] = &["Health", "Operations"];
@@ -99,7 +106,7 @@ const GUIDES: &[GuideSource] = &[
         id: "operacao",
         file: "operacao.md",
         audience: Audience::Admin,
-        tags: &["Status", "Audit"],
+        tags: &["Status", "Jobs", "Audit"],
         content: include_str!("../../../docs/guides/operacao.md"),
     },
 ];

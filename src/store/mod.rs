@@ -13,10 +13,12 @@ use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
         Channel, ChannelPatch, ChannelStats, ContextSnapshot, IdemRow, IdentityCounts,
-        InjectionBump, Lookup, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget,
-        MemoryWrite, Network, NewAgent, NewApp, NewChannel, NewMemory, NewSubscription, NewToken,
-        RetrievalBump, SettingChange, SettingRow, StatusAction, Subscription, SubscriptionPatch,
-        TextQuery, Token, TokenFilter, TokenPatch, UsageEntry, WriteContext,
+        InjectionBump, Job, JobCount, JobFilter, JobFinish, LlmActivity, LlmCall, LlmCallFilter,
+        Lookup, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite,
+        Network, NewAgent, NewApp, NewChannel, NewLlmCall, NewMemory, NewSubscription, NewToken,
+        Redaction, RetrievalBump, SecretView, SettingChange, SettingRow, StatusAction,
+        StoredSecret, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
+        UsageEntry, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -334,6 +336,97 @@ pub trait Store: Clone + Send + Sync + 'static {
         filter: AuditFilter,
         page: PageRequest,
     ) -> impl Future<Output = Result<Page<AuditEvent>, StoreError>> + Send;
+
+    // Fila de jobs (006). A captura é um `UPDATE … RETURNING` que pega o job pronto mais
+    // antigo do tipo (ou um `running` com lease vencido) e conta a tentativa.
+
+    fn claim_job(
+        &self,
+        kind: String,
+        now: String,
+        lease_until: String,
+    ) -> impl Future<Output = Result<Option<Job>, StoreError>> + Send;
+    /// Só termina jobs `running`; devolve `false` se o job não estava mais com o executor.
+    fn finish_job(
+        &self,
+        id: i64,
+        finish: JobFinish,
+        at: String,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+    /// Existe job do mesmo tipo, mais novo que `after_id`, para a memória.
+    fn newer_job_exists(
+        &self,
+        kind: String,
+        memory_id: String,
+        after_id: i64,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+    /// Do mais recente ao mais antigo.
+    fn list_jobs(
+        &self,
+        filter: JobFilter,
+        page: PageRequest,
+    ) -> impl Future<Output = Result<Page<Job>, StoreError>> + Send;
+    /// Recoloca um job `failed` na fila; outro estado → `Conflict("JOB_NOT_RETRYABLE")`.
+    fn retry_job(
+        &self,
+        id: i64,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Job, StoreError>> + Send;
+    fn job_counts(&self) -> impl Future<Output = Result<Vec<JobCount>, StoreError>> + Send;
+
+    // Segredos cifrados (006): o `Store` só vê bytes cifrados.
+
+    fn get_secret(
+        &self,
+        key: String,
+    ) -> impl Future<Output = Result<Option<StoredSecret>, StoreError>> + Send;
+    fn list_secrets(&self) -> impl Future<Output = Result<Vec<SecretView>, StoreError>> + Send;
+    /// `None` apaga. Grava auditoria (sem o valor) e idempotência.
+    fn set_secret(
+        &self,
+        key: String,
+        value_enc: Option<Vec<u8>>,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<SecretView, StoreError>> + Send;
+
+    // Chamadas ao LLM e Redator (006).
+
+    /// Grava as chamadas e, com `remember`, a resposta idempotente na mesma transação.
+    fn append_llm_calls(
+        &self,
+        calls: Vec<NewLlmCall>,
+        remember: Option<(WriteContext, serde_json::Value)>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Da mais recente à mais antiga.
+    fn list_llm_calls(
+        &self,
+        filter: LlmCallFilter,
+        page: PageRequest,
+    ) -> impl Future<Output = Result<Page<LlmCall>, StoreError>> + Send;
+    fn llm_activity(
+        &self,
+        purpose: String,
+    ) -> impl Future<Output = Result<LlmActivity, StoreError>> + Send;
+    /// Aplica título (e texto) do Redator: `title_state = ready`, `channels.version + 1` e
+    /// auditoria; com texto, também revisão, `memories.version + 1` e job `embed`. Memória
+    /// inexistente → `NotFound`; conteúdo mudado → `Conflict("MEMORY_CHANGED")`.
+    fn apply_redaction(
+        &self,
+        redaction: Redaction,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Memory, StoreError>> + Send;
+    /// `title_state = fallback` se o conteúdo ainda for o de `expected_hash` e o título ainda
+    /// estiver `pending`; devolve se mudou.
+    fn set_title_fallback(
+        &self,
+        memory_id: String,
+        expected_hash: Vec<u8>,
+    ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+    /// `content_hash` atual da memória.
+    fn memory_content_hash(
+        &self,
+        memory_id: String,
+    ) -> impl Future<Output = Result<Option<Vec<u8>>, StoreError>> + Send;
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

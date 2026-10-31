@@ -559,6 +559,7 @@ impl<S: Store> Core<S> {
             )
             .await;
         self.network_changed();
+        self.jobs_enqueued();
         result
     }
 
@@ -641,6 +642,7 @@ impl<S: Store> Core<S> {
             )
             .await;
         self.network_changed();
+        self.jobs_enqueued();
         result
     }
 
@@ -709,6 +711,7 @@ impl<S: Store> Core<S> {
             )
             .await;
         self.network_changed();
+        self.jobs_enqueued();
         result
     }
 
@@ -822,6 +825,7 @@ impl<S: Store> Core<S> {
             )
             .await;
         self.network_changed();
+        self.jobs_enqueued();
         result
     }
 
@@ -875,6 +879,7 @@ impl<S: Store> Core<S> {
             )
             .await;
         self.network_changed();
+        self.jobs_enqueued();
         result
     }
 
@@ -914,6 +919,7 @@ impl<S: Store> Core<S> {
             )
             .await;
         self.network_changed();
+        self.jobs_enqueued();
         result
     }
 }

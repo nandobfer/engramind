@@ -12,5 +12,6 @@ mod logging;
 mod matrix;
 mod mcp;
 mod memories;
+mod redator;
 mod store;
 mod support;

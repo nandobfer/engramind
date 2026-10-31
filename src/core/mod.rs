@@ -14,6 +14,7 @@ pub mod docs;
 pub mod idempotency;
 pub mod identities;
 pub mod ids;
+pub mod jobs;
 pub mod memories;
 pub mod memory_text;
 pub mod model;
@@ -21,7 +22,9 @@ pub mod operations;
 pub mod pagination;
 pub mod pepper;
 pub mod principal;
+pub mod redator;
 pub mod search;
+pub mod secrets;
 pub mod selection;
 pub mod settings;
 pub mod status;
@@ -30,17 +33,19 @@ pub mod usage;
 
 use std::sync::{Arc, RwLock};
 
+use tokio::sync::Notify;
+
 use crate::{
     auth::token::TokenService,
-    config::{DatabaseSettings, Secret},
+    config::{DatabaseSettings, Secret, SecretKey},
     error::ApiError,
     store::{Store, StoreError},
 };
 
 use self::{
     access::NetworkCache, context::cache::ContextCache, counters::Counters, docs::Docs,
-    model::Actor, operations::OperationSpec, principal::Principal, settings::SettingsSnapshot,
-    usage::Usage,
+    model::Actor, operations::OperationSpec, principal::Principal, redator::guard::MeaningGuard,
+    redator::guard::NoGuard, secrets::Vault, settings::SettingsSnapshot, usage::Usage,
 };
 
 /// Ponto de entrada das operações. Barato de clonar.
@@ -59,11 +64,21 @@ struct Inner<S> {
     network: NetworkCache,
     context: ContextCache,
     database: DatabaseSettings,
+    vault: Vault,
+    http: reqwest::Client,
+    /// Acorda os runners da fila depois de um commit que enfileirou jobs.
+    jobs: Arc<Notify>,
+    guard: RwLock<Arc<dyn MeaningGuard>>,
 }
 
 impl<S: Store> Core<S> {
     /// Monta o `core` com as configurações padrão; `reload_settings` lê as persistidas.
-    pub fn new(store: S, pepper: Secret, database: DatabaseSettings) -> Self {
+    pub fn new(
+        store: S,
+        pepper: Secret,
+        secrets_key: SecretKey,
+        database: DatabaseSettings,
+    ) -> Self {
         Self {
             inner: Arc::new(Inner {
                 store,
@@ -75,6 +90,10 @@ impl<S: Store> Core<S> {
                 network: NetworkCache::default(),
                 context: ContextCache::default(),
                 database,
+                vault: Vault::new(secrets_key),
+                http: crate::providers::llm::http_client(),
+                jobs: Arc::new(Notify::new()),
+                guard: RwLock::new(Arc::new(NoGuard)),
             }),
         }
     }
@@ -117,6 +136,39 @@ impl<S: Store> Core<S> {
     /// Invalida o cache da rede depois de mudar canais, assinaturas ou agentes.
     pub(crate) fn network_changed(&self) {
         self.inner.network.invalidate();
+    }
+
+    pub(crate) fn vault(&self) -> &Vault {
+        &self.inner.vault
+    }
+
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.inner.http
+    }
+
+    pub(crate) fn jobs_notify(&self) -> Arc<Notify> {
+        self.inner.jobs.clone()
+    }
+
+    /// Acorda os runners: há jobs novos na fila.
+    pub(crate) fn jobs_enqueued(&self) {
+        self.inner.jobs.notify_waiters();
+    }
+
+    /// Guarda de sentido do Redator. Até a 007 é `NoGuard` (sem embeddings, nenhum texto
+    /// revisado passa); os testes trocam por uma guarda determinística.
+    pub fn set_meaning_guard(&self, guard: Arc<dyn MeaningGuard>) {
+        if let Ok(mut current) = self.inner.guard.write() {
+            *current = guard;
+        }
+    }
+
+    pub(crate) fn meaning_guard(&self) -> Arc<dyn MeaningGuard> {
+        self.inner
+            .guard
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_else(|_| Arc::new(NoGuard))
     }
 
     pub(crate) fn database(&self) -> &DatabaseSettings {
@@ -178,6 +230,7 @@ pub(crate) fn store_error(error: StoreError, not_found: impl FnOnce() -> ApiErro
             "CHANNEL_ARCHIVED",
             "O canal esta arquivado; restaure-o antes de escrever",
         ),
+        StoreError::Conflict("JOB_NOT_RETRYABLE") => jobs::job_not_retryable(),
         StoreError::Conflict("SUBSCRIPTION_EXISTS") => {
             ApiError::new("SUBSCRIPTION_EXISTS", "O agente ja assina esse alvo")
         }

@@ -1015,7 +1015,9 @@ async fn channel_settings_stats_categories_and_channel_deletion() {
         json!([
             "memory.text_max",
             "context.budget_tokens",
-            "context.titles_budget_tokens"
+            "context.titles_budget_tokens",
+            "redator.instructions",
+            "redator.rewrite_text"
         ])
     );
     let (_, view) = context

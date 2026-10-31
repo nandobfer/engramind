@@ -427,6 +427,7 @@ mod catalog {
         let settings = guide("configuracoes.md");
         for spec in SETTINGS {
             let default = match spec.kind {
+                _ if spec.default == "null" => "—".to_owned(),
                 SettingType::Categories => "as 5 do Magic Context".to_owned(),
                 SettingType::Choice(_) => format!("`{}`", spec.default.trim_matches('"')),
                 _ => spec.default.to_owned(),

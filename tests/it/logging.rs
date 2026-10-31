@@ -238,3 +238,71 @@ async fn context_polls_with_304_are_debug_and_never_log_the_block() {
         "texto no log"
     );
 }
+
+#[tokio::test]
+async fn the_redator_logs_provider_and_outcome_without_text_prompt_or_key() {
+    use crate::support::llm::{ScriptedLlm, openai};
+
+    let context = TestContext::new().await;
+    context.create_channel("eng/global").await;
+    let llm = ScriptedLlm::start().await;
+    let buffer = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(engramind::observability::log_filter("debug").expect("filter"))
+        .with_writer(buffer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    tracing::callsite::rebuild_interest_cache();
+
+    let key = "sk-chave-que-nunca-aparece";
+    let text = "Texto sensivel da memoria que nunca vai para o log";
+    let (status, body) = context
+        .call(
+            "PUT",
+            "/v1/settings",
+            Some(ADMIN_TOKEN),
+            Some(json!({
+                "redator.provider": "openai_compatible",
+                "redator.model": "principal",
+                "redator.base_url": llm.url,
+                "redator.fallback_models": ["reserva"],
+            })),
+        )
+        .await;
+    assert!(status.is_success(), "{body}");
+    let (status, body) = context
+        .call(
+            "PUT",
+            "/v1/secrets/redator.api_key",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "value": key })),
+        )
+        .await;
+    assert!(status.is_success(), "{body}");
+    context.create_memory(ADMIN_TOKEN, "eng/global", text).await;
+    llm.push(503, json!({})).push(
+        200,
+        openai(json!({ "title": "Titulo gerado", "text": text })),
+    );
+    context.core.run_redact_jobs(chrono::Utc::now()).await;
+
+    let (output, events) = events(&buffer);
+    assert!(!output.contains(key), "chave no log");
+    assert!(!output.contains(text), "texto no log");
+    assert!(!output.contains("MEMORIA-"), "prompt no log");
+    let fallback = events
+        .iter()
+        .find(|event| event["fields"]["event"] == "redator.fallback")
+        .expect("fallback");
+    assert_eq!(fallback["level"], "WARN");
+    assert_eq!(fallback["fields"]["next_model"], "reserva");
+    let completed = events
+        .iter()
+        .find(|event| event["fields"]["event"] == "redator.completed")
+        .expect("completed");
+    assert_eq!(completed["level"], "INFO");
+    assert_eq!(completed["fields"]["provider"], "openai_compatible");
+    assert_eq!(completed["fields"]["model"], "reserva");
+    assert!(completed["fields"]["duration_ms"].is_number());
+}

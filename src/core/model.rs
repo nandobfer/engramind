@@ -609,7 +609,8 @@ pub struct MemoryRevision {
     pub category: String,
     pub status: MemoryStatus,
     pub author: Author,
-    /// `create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move` ou `revert`.
+    /// `create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert` ou `redact`
+    /// (texto revisado pelo Redator, autor `system/redator`).
     #[schema(example = "create")]
     pub reason: String,
     #[schema(example = "2026-10-30T12:00:00.000Z")]
@@ -792,4 +793,180 @@ pub struct ChannelStats {
     pub retrievals: u64,
     /// Última mudança de memória do canal.
     pub last_memory_at: Option<String>,
+}
+
+// ---------- 006: fila, segredos, chamadas ao LLM e Redator ----------
+
+/// Estado de um job da fila.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum JobState {
+    Queued,
+    Running,
+    Done,
+    Failed,
+}
+
+impl JobState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Done => "done",
+            Self::Failed => "failed",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "queued" => Some(Self::Queued),
+            "running" => Some(Self::Running),
+            "done" => Some(Self::Done),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+}
+
+/// Um job da fila `jobs`. O payload só tem ids e versões, nunca texto.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct Job {
+    #[schema(example = 42)]
+    pub id: i64,
+    /// `redact` (006) ou `embed` (processado a partir da 007).
+    #[schema(example = "redact")]
+    pub kind: String,
+    #[schema(value_type = Object, example = json!({ "memory_id": "m_8f2a1c3d", "version": 1 }))]
+    pub payload: serde_json::Value,
+    pub state: JobState,
+    /// Tentativas iniciadas (cada captura conta uma).
+    #[schema(example = 1)]
+    pub attempts: i64,
+    #[schema(example = "2026-10-30T12:00:00.000Z")]
+    pub run_after: String,
+    /// Fim do lease de quem está executando; vencido, o job volta a ser capturável.
+    pub locked_until: Option<String>,
+    /// Motivo curto da última falha (sem texto de memória nem segredo).
+    pub last_error: Option<String>,
+    /// Em `done`: `applied`, `title_only`, `superseded` ou `skipped`.
+    pub outcome: Option<String>,
+    #[schema(example = "2026-10-30T12:00:00.000Z")]
+    pub created_at: String,
+    pub finished_at: Option<String>,
+}
+
+/// Como um job capturado termina.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobFinish {
+    Done {
+        outcome: &'static str,
+    },
+    /// Volta para `queued` em `run_after`.
+    Retry {
+        error: String,
+        run_after: String,
+    },
+    Fail {
+        error: String,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct JobFilter {
+    pub state: Option<JobState>,
+    pub kind: Option<String>,
+}
+
+/// Jobs por tipo e estado (`get_status`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct JobCount {
+    #[schema(example = "redact")]
+    pub kind: String,
+    pub state: JobState,
+    #[schema(example = 3)]
+    pub count: u64,
+}
+
+/// Segredo visto de fora: nunca o valor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SecretView {
+    #[schema(example = "redator.api_key")]
+    pub key: String,
+    pub configured: bool,
+    /// Última gravação; `null` quando não configurado.
+    pub updated_at: Option<String>,
+}
+
+/// Segredo cifrado como está no banco.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredSecret {
+    pub value_enc: Vec<u8>,
+    pub updated_at: String,
+}
+
+/// Uma chamada ao LLM a registrar (sem texto, prompt ou chave).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewLlmCall {
+    pub at: String,
+    pub purpose: &'static str,
+    pub provider: String,
+    pub model: String,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cost_usd: Option<f64>,
+    pub duration_ms: i64,
+    pub outcome: &'static str,
+    pub error: Option<String>,
+}
+
+/// Linha de `llm_calls`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct LlmCall {
+    #[schema(example = 7)]
+    pub id: i64,
+    #[schema(example = "2026-10-30T12:00:00.000Z")]
+    pub at: String,
+    /// `redact` ou `test`.
+    #[schema(example = "redact")]
+    pub purpose: String,
+    #[schema(example = "openai_compatible")]
+    pub provider: String,
+    #[schema(example = "gpt-4o-mini")]
+    pub model: String,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    /// Só quando o provedor informa o custo (por exemplo `usage.cost`).
+    pub cost_usd: Option<f64>,
+    #[schema(example = 820)]
+    pub duration_ms: i64,
+    /// `success`, `timeout`, `rate_limited`, `unavailable`, `rejected` ou `invalid_response`.
+    #[schema(example = "success")]
+    pub outcome: String,
+    /// Motivo curto da falha.
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LlmCallFilter {
+    pub since: Option<String>,
+    pub purpose: Option<String>,
+}
+
+/// Últimos resultados do Redator (`get_status`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LlmActivity {
+    pub last_success_at: Option<String>,
+    pub last_failure_at: Option<String>,
+}
+
+/// Resultado do Redator a aplicar numa memória. `expected_hash` é o `content_hash` lido no
+/// início do job: se o conteúdo mudou desde então, o `Store` falha com
+/// `Conflict("MEMORY_CHANGED")`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Redaction {
+    pub memory_id: String,
+    pub expected_hash: Vec<u8>,
+    pub title: String,
+    /// Texto revisado e o `content_hash` dele: nova revisão `system/redator` e job `embed`.
+    pub text: Option<(String, Vec<u8>)>,
 }

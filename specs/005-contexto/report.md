@@ -28,7 +28,7 @@ FR-001 a FR-012 implementados (detalhes em `implement.md`). As perguntas Q-001 a
 
 ## Pendências
 
-- PR, CI (lint, build, 4 shards, compose, Coverage) e deploy na `main` ainda não executados.
+- PR #7 com o CI verde (lint, build, 4 shards, compose), merge e deploy: produção na 0.5.0 com `/health/ready` 200 (5 de 5 migrações), contêiner `healthy` com a imagem do commit `5a7a750` e `eng doctor` todo ok; Coverage da `main` verde.
 - O Redator (006) precisa incrementar `channels.version` ao aplicar só o título (FR-007 da 006 ajustado; teste de regressão na 006).
 - `get_usage` e a retenção de `usage_log` chegam na 008; a tabela e os índices já existem.
 - Custo do `tiktoken-rs` medido só em testes (cerca de 1,7 s para carregar a tabela em debug); sem medição em produção com milhares de memórias.

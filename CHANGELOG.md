@@ -2,6 +2,29 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.6.0] - 2026-10-31
+
+Etapa 006 — Redator.
+
+### Adicionado
+
+- Fila de jobs com runner do `redact` (2 em paralelo), acordado no commit e a cada segundo: captura por `UPDATE … RETURNING` com lease (`locked_until`), lease vencido volta à fila, backoff de 2 s × 2ⁿ (teto de 10 min) até `redator.max_attempts`, `failed` com um único `ERROR jobs.failed`, e jobs superados (memória excluída ou `redact` mais novo) terminando sem efeito. O backlog enfileirado desde a 0.4.0 é processado. Coluna `jobs.outcome` (`applied`, `title_only`, `superseded`, `skipped`).
+- Redator: o texto vai ao LLM como dado, entre marcas aleatórias, com `redator.instructions` (global ou do canal) no prompt do sistema; resposta validada pelo serviço (`redator.title_max`, `memory.text_min`/`text_max`). O título aplicado vira `title_state = ready` e incrementa a `version` do canal (e a do contexto), sem revisão nem mudança na `version` da memória. O texto revisado (com `redator.rewrite_text`) só vale com a guarda de sentido, que até a 007 falha fechada; aplicado, gera uma revisão `system/redator` (`reason = redact`) e um job `embed`. Desligado ou sem configuração: `title_state = fallback`, sem chamada.
+- Cliente LLM próprio (`reqwest`) para OpenAI-compatível (`json_schema`, com JSON livre quando o servidor não aceita), Anthropic (tool forçada) e Gemini (`responseSchema`), com tempo limite por chamada e `redator.fallback_models` em indisponibilidade, `429` ou tempo limite.
+- `llm_calls` (finalidade, provedor, modelo, tokens, custo quando informado pelo provedor, duração, resultado e erro curto; nunca texto, prompt ou chave).
+- Cofre de segredos AES-256-GCM com a `SECRETS_KEY` (nonce aleatório por gravação, o nome da chave como dado associado).
+- Operações `set_secret` (`PUT /v1/secrets/{key}`, `engramind secrets set <chave>` lendo da entrada padrão, `--delete`), `test_redator` (`POST /v1/settings/redator/test`, `engramind settings test-redator --text … [--settings …]`), `list_jobs` (`GET /v1/jobs`, `engramind jobs list`), `retry_job` (`POST /v1/jobs/{job}/retry`, `engramind jobs retry <id>`) e `list_llm_calls` (`GET /v1/llm-calls`, `engramind llm-calls list`), com as ferramentas MCP de mesmo nome. Nova tag OpenAPI `Jobs` (admin).
+- Configurações `redator.enabled`, `provider`, `model`, `api_key` (segredo), `base_url`, `instructions` e `rewrite_text` (por canal), `title_max`, `min_similarity`, `timeout_ms`, `max_attempts` e `fallback_models`; novos tipos `text`, `url`, `list` e `secret`.
+- `get_status` com `queue` (pendentes, falhos, jobs por tipo e estado) e `redator` (ligado, configurado, `missing`, provedor, modelo e últimos sucesso e falha).
+- Códigos de erro `SETTING_IS_SECRET`, `SECRET_UNKNOWN`, `PROVIDER_NOT_CONFIGURED` (400), `JOB_NOT_FOUND` (404), `JOB_NOT_RETRYABLE` (409), `PROVIDER_FAILED` (502) e `PROVIDER_TIMEOUT` (504).
+- Migração `0006_redator.sql` (`secrets`, `llm_calls`, `jobs.outcome`). Decisões `docs/decisions/0015` a `0017`. Nova dependência `aes-gcm`.
+
+### Alterado
+
+- `get_settings` lista os segredos com `secret: true`, `configured` e `updated_at` (valor sempre `null`); `update_settings` recusa segredos com `SETTING_IS_SECRET`.
+- `Core::new` recebe a `SECRETS_KEY`.
+- Guias `configuracoes`, `operacao`, `erros` e `escrever-memorias` atualizados.
+
 ## [0.5.0] - 2026-10-30
 
 Etapa 005 — contexto. **Marco: MVP do primeiro consumidor.**

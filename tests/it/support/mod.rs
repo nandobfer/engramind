@@ -1,3 +1,5 @@
+pub mod llm;
+
 use std::time::Duration;
 
 use axum::{
@@ -8,7 +10,7 @@ use axum::{
 };
 use engramind::{
     HttpSettings, build_app,
-    config::{AllowedHosts, DatabaseSettings, Secret},
+    config::{AllowedHosts, DatabaseSettings, Secret, SecretKey},
     core::Core,
     mcp::McpSettings,
     store::SqliteStore,
@@ -53,6 +55,7 @@ impl TestContext {
         let core = Core::new(
             store.clone(),
             Secret::new(PEPPER.to_owned()),
+            SecretKey::new([7; 32]),
             DatabaseSettings {
                 path,
                 read_pool_size: 2,

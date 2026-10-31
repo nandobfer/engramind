@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderValue, Method, header},
     middleware::{self, Next},
     response::{IntoResponse, Redirect, Response},
-    routing::{MethodRouter, get, patch, post},
+    routing::{MethodRouter, get, patch, post, put},
 };
 use utoipa_swagger_ui::{Config as SwaggerConfig, SwaggerUi};
 
@@ -61,7 +61,7 @@ fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
 /// Rotas `/v1`, protegidas por `require_auth`. Uma entrada por operação do catálogo.
 fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
     use rest::{
-        audit, channels, context, docs, identities, memories, settings, status, subscriptions,
+        audit, channels, context, docs, identities, jobs, memories, settings, status, subscriptions,
     };
     vec![
         ("/v1/whoami", get(identities::whoami)),
@@ -157,6 +157,11 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
             "/v1/settings",
             get(settings::get_settings).put(settings::update_settings),
         ),
+        ("/v1/secrets/{key}", put(settings::set_secret)),
+        ("/v1/settings/redator/test", post(settings::test_redator)),
+        ("/v1/jobs", get(jobs::list_jobs)),
+        ("/v1/jobs/{job}/retry", post(jobs::retry_job)),
+        ("/v1/llm-calls", get(jobs::list_llm_calls)),
         ("/v1/status", get(status::get_status)),
         ("/v1/audit", get(audit::get_audit)),
         ("/v1/docs/overview", get(docs::get_overview)),

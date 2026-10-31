@@ -5,11 +5,12 @@ use std::process::ExitCode;
 use anyhow::bail;
 use reqwest::Method;
 use serde_json::{Map, Value, json};
+use zeroize::Zeroize as _;
 
 use super::{
     AgentsCommand, AppsCommand, AuditCommand, ChannelSettingsCommand, ChannelsCommand, Command,
-    ConnectionArgs, DocsCommand, MemoriesCommand, ProfilesCommand, SettingsCommand,
-    SubscriptionsCommand, TokensCommand, UpdateArgs,
+    ConnectionArgs, DocsCommand, JobsCommand, LlmCallsCommand, MemoriesCommand, ProfilesCommand,
+    SecretsCommand, SettingsCommand, SubscriptionsCommand, TokensCommand, UpdateArgs,
     client::{self, ApiRequest, Connection, Outcome, segment},
     output,
     profiles::{self, Profile},
@@ -280,6 +281,25 @@ fn read_stdin_text(command: Command) -> Result<Command, String> {
         Command::Memories(MemoriesCommand::Update {
             text: Some(text), ..
         }) => read(text)?,
+        Command::Settings(SettingsCommand::TestRedator { text, .. }) => read(text)?,
+        Command::Secrets(SecretsCommand::Set {
+            delete: false,
+            value,
+            ..
+        }) => {
+            let mut buffer = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+                .map_err(|error| format!("falha ao ler a entrada padrao: {error}"))?;
+            let secret = buffer.trim().to_owned();
+            buffer.zeroize();
+            if secret.is_empty() {
+                return Err(
+                    "informe o segredo pela entrada padrao (ou use --delete para apagar)"
+                        .to_owned(),
+                );
+            }
+            *value = Some(secret);
+        }
         _ => {}
     }
     Ok(command)
@@ -596,8 +616,50 @@ pub fn request(command: Command) -> ApiRequest {
                     .body(Value::Object(body))
                     .idempotency(idempotency.idempotency_key)
             }
+            SettingsCommand::TestRedator {
+                text,
+                settings,
+                idempotency,
+            } => {
+                let mut body = Map::new();
+                body.insert("text".to_owned(), json!(text));
+                if let Some(settings) = settings {
+                    body.insert("settings".to_owned(), setting_value(&settings));
+                }
+                ApiRequest::new(Method::POST, "/v1/settings/redator/test".to_owned())
+                    .body(Value::Object(body))
+                    .idempotency(idempotency.idempotency_key)
+            }
         },
+        Command::Secrets(SecretsCommand::Set {
+            key,
+            value,
+            idempotency,
+            ..
+        }) => ApiRequest::new(Method::PUT, format!("/v1/secrets/{}", segment(&key)))
+            .body(json!({ "value": value }))
+            .idempotency(idempotency.idempotency_key),
         Command::Status => ApiRequest::new(Method::GET, "/v1/status".to_owned()),
+        Command::Jobs(JobsCommand::List { state, kind, page }) => {
+            ApiRequest::new(Method::GET, "/v1/jobs".to_owned())
+                .query("state", state)
+                .query("kind", kind)
+                .query("cursor", page.cursor)
+                .query("limit", page.limit)
+        }
+        Command::Jobs(JobsCommand::Retry { job, idempotency }) => {
+            ApiRequest::new(Method::POST, format!("/v1/jobs/{}/retry", segment(&job)))
+                .idempotency(idempotency.idempotency_key)
+        }
+        Command::LlmCalls(LlmCallsCommand::List {
+            since,
+            purpose,
+            page,
+        }) => ApiRequest::new(Method::GET, "/v1/llm-calls".to_owned())
+            .query("since", since)
+            .query("purpose", purpose)
+            .query("cursor", page.cursor)
+            .query("limit", page.limit),
         Command::Audit(AuditCommand::List {
             entity,
             entity_id,

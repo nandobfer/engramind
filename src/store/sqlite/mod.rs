@@ -4,6 +4,7 @@
 mod channels;
 mod context;
 mod identities;
+mod jobs;
 mod journal;
 mod memories;
 mod migrations;
@@ -25,10 +26,12 @@ use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
         Channel, ChannelPatch, ChannelStats, ContextSnapshot, IdemRow, IdentityCounts,
-        InjectionBump, Lookup, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget,
-        MemoryWrite, Network, NewAgent, NewApp, NewChannel, NewMemory, NewSubscription, NewToken,
-        RetrievalBump, SettingChange, SettingRow, StatusAction, Subscription, SubscriptionPatch,
-        TextQuery, Token, TokenFilter, TokenPatch, UsageEntry, WriteContext,
+        InjectionBump, Job, JobCount, JobFilter, JobFinish, LlmActivity, LlmCall, LlmCallFilter,
+        Lookup, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite,
+        Network, NewAgent, NewApp, NewChannel, NewLlmCall, NewMemory, NewSubscription, NewToken,
+        Redaction, RetrievalBump, SecretView, SettingChange, SettingRow, StatusAction,
+        StoredSecret, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
+        UsageEntry, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -684,6 +687,124 @@ impl Store for SqliteStore {
         page: PageRequest,
     ) -> Result<Page<AuditEvent>, StoreError> {
         self.read(move |connection| settings::list_audit(connection, &filter, &page))
+            .await
+    }
+
+    async fn claim_job(
+        &self,
+        kind: String,
+        now: String,
+        lease_until: String,
+    ) -> Result<Option<Job>, StoreError> {
+        self.write(move |transaction| jobs::claim(transaction, &kind, &now, &lease_until))
+            .await
+    }
+
+    async fn finish_job(&self, id: i64, finish: JobFinish, at: String) -> Result<bool, StoreError> {
+        self.write(move |transaction| jobs::finish(transaction, id, &finish, &at))
+            .await
+    }
+
+    async fn newer_job_exists(
+        &self,
+        kind: String,
+        memory_id: String,
+        after_id: i64,
+    ) -> Result<bool, StoreError> {
+        self.read(move |connection| jobs::newer_exists(connection, &kind, &memory_id, after_id))
+            .await
+    }
+
+    async fn list_jobs(
+        &self,
+        filter: JobFilter,
+        page: PageRequest,
+    ) -> Result<Page<Job>, StoreError> {
+        self.read(move |connection| jobs::list(connection, &filter, &page))
+            .await
+    }
+
+    async fn retry_job(&self, id: i64, context: WriteContext) -> Result<Job, StoreError> {
+        self.mutate(move |transaction| jobs::retry(transaction, id, &context))
+            .await
+    }
+
+    async fn job_counts(&self) -> Result<Vec<JobCount>, StoreError> {
+        self.read(jobs::counts).await
+    }
+
+    async fn get_secret(&self, key: String) -> Result<Option<StoredSecret>, StoreError> {
+        self.read(move |connection| jobs::get_secret(connection, &key))
+            .await
+    }
+
+    async fn list_secrets(&self) -> Result<Vec<SecretView>, StoreError> {
+        self.read(jobs::list_secrets).await
+    }
+
+    async fn set_secret(
+        &self,
+        key: String,
+        value_enc: Option<Vec<u8>>,
+        context: WriteContext,
+    ) -> Result<SecretView, StoreError> {
+        self.mutate(move |transaction| {
+            jobs::set_secret(transaction, &key, value_enc.as_deref(), &context)
+        })
+        .await
+    }
+
+    async fn append_llm_calls(
+        &self,
+        calls: Vec<NewLlmCall>,
+        remember: Option<(WriteContext, serde_json::Value)>,
+    ) -> Result<(), StoreError> {
+        self.mutate(move |transaction| {
+            jobs::append_llm_calls(transaction, &calls).map_err(sql_error)?;
+            if let Some((context, response)) = &remember {
+                journal::remember(transaction, context, response)?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    async fn list_llm_calls(
+        &self,
+        filter: LlmCallFilter,
+        page: PageRequest,
+    ) -> Result<Page<LlmCall>, StoreError> {
+        self.read(move |connection| jobs::list_llm_calls(connection, &filter, &page))
+            .await
+    }
+
+    async fn llm_activity(&self, purpose: String) -> Result<LlmActivity, StoreError> {
+        self.read(move |connection| jobs::llm_activity(connection, &purpose))
+            .await
+    }
+
+    async fn apply_redaction(
+        &self,
+        redaction: Redaction,
+        context: WriteContext,
+    ) -> Result<Memory, StoreError> {
+        self.mutate(move |transaction| memories::apply_redaction(transaction, &redaction, &context))
+            .await
+    }
+
+    async fn set_title_fallback(
+        &self,
+        memory_id: String,
+        expected_hash: Vec<u8>,
+    ) -> Result<bool, StoreError> {
+        self.write(move |transaction| {
+            memories::set_title_fallback(transaction, &memory_id, &expected_hash)
+        })
+        .await
+    }
+
+    async fn memory_content_hash(&self, memory_id: String) -> Result<Option<Vec<u8>>, StoreError> {
+        self.read(move |connection| memories::content_hash(connection, &memory_id))
             .await
     }
 }
