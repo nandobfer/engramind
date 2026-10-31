@@ -1012,7 +1012,11 @@ async fn channel_settings_stats_categories_and_channel_deletion() {
     assert_eq!(error["error"]["code"], "SETTING_UNKNOWN");
     assert_eq!(
         error["error"]["details"]["valid"],
-        json!(["memory.text_max"])
+        json!([
+            "memory.text_max",
+            "context.budget_tokens",
+            "context.titles_budget_tokens"
+        ])
     );
     let (_, view) = context
         .call(

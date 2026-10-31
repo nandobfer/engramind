@@ -140,6 +140,7 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             limit,
             include_archived,
             exclude_ids,
+            exclude_context,
             fields,
         } => {
             let mut body = Map::new();
@@ -155,6 +156,9 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             }
             if let Some(exclude_ids) = list(exclude_ids) {
                 body.insert("exclude_ids".to_owned(), exclude_ids);
+            }
+            if exclude_context {
+                body.insert("exclude_context".to_owned(), json!(true));
             }
             if let Some(fields) = fields.fields {
                 body.insert("fields".to_owned(), json!(fields));
@@ -285,6 +289,12 @@ fn read_stdin_text(command: Command) -> Result<Command, String> {
 pub fn request(command: Command) -> ApiRequest {
     match command {
         Command::Whoami => ApiRequest::new(Method::GET, "/v1/whoami".to_owned()),
+        Command::Context {
+            format,
+            if_none_match,
+        } => ApiRequest::new(Method::GET, "/v1/context".to_owned())
+            .query("format", format)
+            .if_none_match(if_none_match),
         Command::Apps(command) => match command {
             AppsCommand::List { page } => ApiRequest::new(Method::GET, "/v1/apps".to_owned())
                 .query("cursor", page.cursor)
@@ -635,6 +645,7 @@ pub fn request(command: Command) -> ApiRequest {
 
 pub async fn run(command: Command, args: &ConnectionArgs, as_json: bool) -> ExitCode {
     let issuing = matches!(command, Command::Tokens(TokensCommand::Issue { .. }));
+    let context = matches!(command, Command::Context { .. });
     let connection = match connection(args) {
         Ok(connection) => connection,
         Err(message) => {
@@ -653,6 +664,8 @@ pub async fn run(command: Command, args: &ConnectionArgs, as_json: bool) -> Exit
         Outcome::Success(body) => {
             if as_json {
                 output::json(&body);
+            } else if context {
+                output::context(&body);
             } else {
                 output::human(&body);
                 if issuing && body["secret"].is_string() {

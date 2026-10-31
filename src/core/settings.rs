@@ -33,6 +33,8 @@ pub enum SettingType {
     Boolean,
     /// Lista `{ key, label, priority }` de 1 a `MAX_CATEGORIES` itens.
     Categories,
+    /// Um dos textos da lista.
+    Choice(&'static [&'static str]),
 }
 
 impl SettingType {
@@ -42,6 +44,7 @@ impl SettingType {
             Self::Number { .. } => "number",
             Self::Boolean => "boolean",
             Self::Categories => "categories",
+            Self::Choice(_) => "enum",
         }
     }
 
@@ -52,6 +55,11 @@ impl SettingType {
             Self::Number { min, max } => format!("{min} a {max}"),
             Self::Boolean => "—".to_owned(),
             Self::Categories => format!("1 a {MAX_CATEGORIES} itens"),
+            Self::Choice(choices) => choices
+                .iter()
+                .map(|choice| format!("`{choice}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
         }
     }
 
@@ -62,7 +70,7 @@ impl SettingType {
                 serde_json::Number::from_f64(min),
                 serde_json::Number::from_f64(max),
             ),
-            Self::Boolean => (None, None),
+            Self::Boolean | Self::Choice(_) => (None, None),
             Self::Categories => (Some(1.into()), Some((MAX_CATEGORIES as u64).into())),
         }
     }
@@ -87,6 +95,20 @@ pub const TEXT_MIN: &str = "memory.text_min";
 pub const TEXT_MAX: &str = "memory.text_max";
 pub const DEDUPE_EXACT: &str = "memory.dedupe_exact";
 pub const SIMILAR_THRESHOLD: &str = "memory.similar_threshold";
+pub const BUDGET_TOKENS: &str = "context.budget_tokens";
+pub const TITLES_BUDGET_TOKENS: &str = "context.titles_budget_tokens";
+pub const DEFAULT_FORMAT: &str = "context.default_format";
+pub const TOKEN_ESTIMATOR: &str = "context.token_estimator";
+pub const OVERFLOW_LINE: &str = "context.overflow_line";
+
+/// Chaves que mudam o bloco do contexto (entram no hash da `version`, 005 Q-008).
+pub const CONTEXT_RENDER_KEYS: &[&str] = &[
+    BUDGET_TOKENS,
+    TITLES_BUDGET_TOKENS,
+    TOKEN_ESTIMATOR,
+    OVERFLOW_LINE,
+    CATEGORIES,
+];
 
 pub const MAX_CATEGORIES: usize = 50;
 const MAX_CATEGORY_KEY: usize = 40;
@@ -154,6 +176,52 @@ pub const SETTINGS: &[SettingSpec] = &[
         channel_override: false,
         description: "Similaridade mínima para uma memória aparecer em `similar` na resposta de escrita (Jaccard dos termos até haver embeddings).",
         since: "0.4.0",
+    },
+    SettingSpec {
+        key: BUDGET_TOKENS,
+        kind: SettingType::Integer {
+            min: 0,
+            max: 200_000,
+        },
+        default: "4000",
+        channel_override: true,
+        description: "Tokens da faixa de texto completo do contexto. No canal, é o teto da parte dele nessa faixa; o global continua valendo para o bloco.",
+        since: "0.5.0",
+    },
+    SettingSpec {
+        key: TITLES_BUDGET_TOKENS,
+        kind: SettingType::Integer {
+            min: 0,
+            max: 50_000,
+        },
+        default: "800",
+        channel_override: true,
+        description: "Tokens da faixa `#id: título` do contexto. No canal, é o teto da parte dele nessa faixa.",
+        since: "0.5.0",
+    },
+    SettingSpec {
+        key: DEFAULT_FORMAT,
+        kind: SettingType::Choice(&["tagged", "markdown", "json"]),
+        default: r#""tagged""#,
+        channel_override: false,
+        description: "Formato do contexto quando `format` não é informado (e do resource `engramind://context`).",
+        since: "0.5.0",
+    },
+    SettingSpec {
+        key: TOKEN_ESTIMATOR,
+        kind: SettingType::Choice(&["o200k", "cl100k"]),
+        default: r#""o200k""#,
+        channel_override: false,
+        description: "Codificação usada para estimar os tokens do contexto (`o200k_base` ou `cl100k_base`).",
+        since: "0.5.0",
+    },
+    SettingSpec {
+        key: OVERFLOW_LINE,
+        kind: SettingType::Boolean,
+        default: "true",
+        channel_override: false,
+        description: "Mostra a linha de excedente (`<overflow count=\"N\">`) quando sobram memórias fora das duas faixas.",
+        since: "0.5.0",
     },
 ];
 
@@ -279,6 +347,13 @@ pub fn validate(spec: &SettingSpec, value: &Value) -> Result<(), ApiError> {
                 json!({ "key": spec.key, "type": "categories", "reason": reason }),
             ),
         },
+        SettingType::Choice(choices) => match value.as_str() {
+            Some(choice) if choices.contains(&choice) => Ok(()),
+            _ => invalid(
+                format!("{} deve ser um de: {}", spec.key, choices.join(", ")),
+                json!({ "key": spec.key, "type": "enum", "choices": choices }),
+            ),
+        },
     }
 }
 
@@ -373,6 +448,39 @@ impl SettingsSnapshot {
             .and_then(Value::as_f64)
             .unwrap_or(0.85)
     }
+
+    fn text(&self, key: &str) -> String {
+        self.value(key).as_str().unwrap_or_default().to_owned()
+    }
+
+    /// Orçamento global de uma faixa do contexto.
+    pub fn budget(&self, key: &str) -> u32 {
+        u32::try_from(self.integer(key)).unwrap_or(u32::MAX)
+    }
+
+    /// Teto de uma faixa no canal; `None` sem sobreposição válida.
+    pub fn channel_budget(key: &str, overrides: Option<&BTreeMap<String, Value>>) -> Option<u32> {
+        overrides
+            .and_then(|overrides| overrides.get(key))
+            .filter(|value| spec(key).is_some_and(|spec| validate(spec, value).is_ok()))
+            .and_then(Value::as_u64)
+            .map(|value| u32::try_from(value).unwrap_or(u32::MAX))
+    }
+
+    pub fn default_format(&self) -> String {
+        self.text(DEFAULT_FORMAT)
+    }
+
+    pub fn token_estimator(&self) -> String {
+        self.text(TOKEN_ESTIMATOR)
+    }
+
+    pub fn overflow_line(&self) -> bool {
+        self.values
+            .get(OVERFLOW_LINE)
+            .and_then(Value::as_bool)
+            .unwrap_or(true)
+    }
 }
 
 /// Uma configuração com sobreposição por canal.
@@ -466,6 +574,10 @@ pub struct SettingView {
     pub min: Option<serde_json::Number>,
     #[schema(value_type = Option<f64>, example = 100000)]
     pub max: Option<serde_json::Number>,
+    /// Valores aceitos (tipo `enum`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(example = json!(["tagged", "markdown", "json"]))]
+    pub choices: Option<Vec<String>>,
     /// Se aceita sobreposição por canal (a partir da 003).
     pub channel_override: bool,
     pub description: String,
@@ -515,6 +627,12 @@ pub fn view(rows: &[SettingRow], key: Option<&str>) -> Result<SettingsView, ApiE
                 kind: spec.kind.name().to_owned(),
                 min,
                 max,
+                choices: match spec.kind {
+                    SettingType::Choice(choices) => {
+                        Some(choices.iter().map(|choice| (*choice).to_owned()).collect())
+                    }
+                    _ => None,
+                },
                 channel_override: spec.channel_override,
                 description: spec.description.to_owned(),
                 updated_at: row.map(|row| row.updated_at.clone()),
@@ -791,7 +909,50 @@ mod tests {
         assert!(channel_spec(TEXT_MAX).is_ok());
         let error = channel_spec(TEXT_MIN).expect_err("global");
         assert_eq!(error.code, "SETTING_UNKNOWN");
-        assert_eq!(error.details.expect("details")["valid"], json!([TEXT_MAX]));
+        assert_eq!(
+            error.details.expect("details")["valid"],
+            json!([TEXT_MAX, BUDGET_TOKENS, TITLES_BUDGET_TOKENS])
+        );
+    }
+
+    #[test]
+    fn context_settings_have_typed_readers_and_choices() {
+        let snapshot = SettingsSnapshot::default();
+        assert_eq!(snapshot.budget(BUDGET_TOKENS), 4000);
+        assert_eq!(snapshot.budget(TITLES_BUDGET_TOKENS), 800);
+        assert_eq!(snapshot.default_format(), "tagged");
+        assert_eq!(snapshot.token_estimator(), "o200k");
+        assert!(snapshot.overflow_line());
+        let overrides = BTreeMap::from([(BUDGET_TOKENS.to_owned(), json!(100))]);
+        assert_eq!(
+            SettingsSnapshot::channel_budget(BUDGET_TOKENS, Some(&overrides)),
+            Some(100)
+        );
+        assert_eq!(
+            SettingsSnapshot::channel_budget(TITLES_BUDGET_TOKENS, Some(&overrides)),
+            None
+        );
+        let format = spec(DEFAULT_FORMAT).expect("format");
+        assert!(validate(format, &json!("json")).is_ok());
+        let error = validate(format, &json!("xml")).expect_err("invalid");
+        assert_eq!(error.code, "SETTING_INVALID");
+        assert_eq!(
+            error.details.expect("details")["choices"],
+            json!(["tagged", "markdown", "json"])
+        );
+        assert_eq!(format.kind.range(), "`tagged`, `markdown`, `json`");
+        let view = view(&[], Some(DEFAULT_FORMAT)).expect("view");
+        assert_eq!(view.settings[0].kind, "enum");
+        assert_eq!(
+            view.settings[0].choices.as_deref(),
+            Some(
+                &[
+                    "tagged".to_owned(),
+                    "markdown".to_owned(),
+                    "json".to_owned()
+                ][..]
+            )
+        );
     }
 
     #[test]

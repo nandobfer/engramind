@@ -59,6 +59,7 @@ pub struct ApiRequest {
     pub query: Vec<(&'static str, String)>,
     pub body: Option<Value>,
     pub idempotency_key: Option<String>,
+    pub if_none_match: Option<String>,
 }
 
 impl ApiRequest {
@@ -69,6 +70,7 @@ impl ApiRequest {
             query: Vec::new(),
             body: None,
             idempotency_key: None,
+            if_none_match: None,
         }
     }
 
@@ -86,6 +88,19 @@ impl ApiRequest {
 
     pub fn idempotency(mut self, key: Option<String>) -> Self {
         self.idempotency_key = key;
+        self
+    }
+
+    /// `If-None-Match` (`engramind context`); a `version` vai entre aspas, como um ETag.
+    pub fn if_none_match(mut self, version: Option<String>) -> Self {
+        self.if_none_match = version.map(|version| {
+            let version = version.trim();
+            if version.starts_with('"') || version.starts_with("W/") {
+                version.to_owned()
+            } else {
+                format!("\"{version}\"")
+            }
+        });
         self
     }
 }
@@ -131,6 +146,9 @@ pub async fn send(connection: &Connection, request: ApiRequest) -> Outcome {
     if let Some(key) = &request.idempotency_key {
         builder = builder.header("Idempotency-Key", key);
     }
+    if let Some(tag) = &request.if_none_match {
+        builder = builder.header("If-None-Match", tag);
+    }
     if let Some(body) = &request.body {
         builder = builder.json(body);
     }
@@ -148,6 +166,14 @@ pub async fn send(connection: &Connection, request: ApiRequest) -> Outcome {
         }
     };
     let status = response.status();
+    if status == reqwest::StatusCode::NOT_MODIFIED {
+        let version = response
+            .headers()
+            .get("etag")
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.trim_start_matches("W/").trim_matches('"').to_owned());
+        return Outcome::Success(json!({ "not_modified": true, "version": version }));
+    }
     let text = match response.text().await {
         Ok(text) => text,
         Err(error) => return failure("CLI_CONNECTION_FAILED", without_url(&error)),

@@ -211,8 +211,15 @@ mod catalog {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|parameter| parameter["in"] != "header")
-                .map(|parameter| parameter["name"].as_str().expect("name").to_owned())
+                .filter_map(|parameter| {
+                    let name = parameter["name"].as_str().expect("name");
+                    match (parameter["in"].as_str(), name) {
+                        // O único cabeçalho com argumento MCP próprio (`get_context`).
+                        (Some("header"), "If-None-Match") => Some("if_none_match".to_owned()),
+                        (Some("header"), _) => None,
+                        _ => Some(name.to_owned()),
+                    }
+                })
                 .collect();
             if let Some(reference) =
                 operation["requestBody"]["content"]["application/json"]["schema"]["$ref"].as_str()
@@ -421,6 +428,7 @@ mod catalog {
         for spec in SETTINGS {
             let default = match spec.kind {
                 SettingType::Categories => "as 5 do Magic Context".to_owned(),
+                SettingType::Choice(_) => format!("`{}`", spec.default.trim_matches('"')),
                 _ => spec.default.to_owned(),
             };
             let row = format!(
@@ -432,5 +440,37 @@ mod catalog {
             );
             assert!(settings.contains(&row), "configuracoes.md sem {row}");
         }
+    }
+
+    #[test]
+    fn every_mcp_resource_and_prompt_is_documented() {
+        use engramind::mcp::resources;
+
+        let mcp = guide("integracao-mcp.md");
+        let mut documented = vec![resources::CONTEXT_URI.to_owned()];
+        documented.extend(
+            resources::templates()
+                .into_iter()
+                .map(|template| template.uri_template),
+        );
+        for uri in documented {
+            assert!(
+                mcp.contains(&format!("`{uri}`")),
+                "integracao-mcp.md sem {uri}"
+            );
+        }
+        for prompt in resources::prompts() {
+            assert!(
+                mcp.contains(&format!("`{}`", prompt.name)),
+                "integracao-mcp.md sem o prompt {}",
+                prompt.name
+            );
+        }
+        let writing = guide("escrever-memorias.md");
+        assert!(
+            resources::MEMORY_WRITING_TEXT.contains("Um fato por memória")
+                && writing.contains("Um fato por memória"),
+            "o prompt memory-writing deriva do guia escrever-memorias"
+        );
     }
 }

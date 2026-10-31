@@ -60,7 +60,9 @@ fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
 
 /// Rotas `/v1`, protegidas por `require_auth`. Uma entrada por operação do catálogo.
 fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
-    use rest::{audit, channels, docs, identities, memories, settings, status, subscriptions};
+    use rest::{
+        audit, channels, context, docs, identities, memories, settings, status, subscriptions,
+    };
     vec![
         ("/v1/whoami", get(identities::whoami)),
         (
@@ -112,6 +114,7 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
             "/v1/channels/{channel}/settings",
             get(settings::get_channel_settings).put(settings::update_channel_settings),
         ),
+        ("/v1/context", get(context::get_context)),
         (
             "/v1/memories",
             get(memories::list_memories).post(memories::create_memory),

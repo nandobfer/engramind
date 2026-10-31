@@ -717,6 +717,48 @@ pub struct RetrievalBump {
     pub at: String,
 }
 
+/// Memória como o contexto a usa (só os campos da ordem e do bloco).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextMemory {
+    pub id: String,
+    pub channel_id: String,
+    pub category: String,
+    pub title: String,
+    pub text: String,
+    pub status: MemoryStatus,
+    pub importance: Option<f64>,
+    pub created_at: String,
+}
+
+/// Memórias `active`/`permanent` e versões dos canais lidas na mesma transação de leitura.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ContextSnapshot {
+    /// `(channel_id, channels.version)` dos canais que ainda existem.
+    pub versions: Vec<(String, i64)>,
+    pub memories: Vec<ContextMemory>,
+}
+
+/// Injeções de uma memória a somar em lote (`injected_count`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InjectionBump {
+    pub memory_id: String,
+    pub count: i64,
+}
+
+/// Uma linha de `usage_log` (desenho §6): `get_context` entregue ou `search_memories`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageEntry {
+    /// Instante RFC 3339 em UTC com milissegundos (ordenável como texto).
+    pub at: String,
+    pub app_id: String,
+    pub agent_id: Option<String>,
+    pub token_id: String,
+    pub op: &'static str,
+    pub channel_ids: Vec<String>,
+    pub memory_ids: Vec<String>,
+    pub rendered_tokens: Option<u32>,
+}
+
 /// Estatísticas de um canal.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct MemoryCounts {

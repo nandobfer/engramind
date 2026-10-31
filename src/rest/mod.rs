@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod channels;
+pub mod context;
 pub mod docs;
 pub mod identities;
 pub mod memories;

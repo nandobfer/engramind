@@ -29,7 +29,7 @@ Toda memória ganha título e texto revisados pelo Redator, de forma assíncrona
 | FR-004 | Job de uma versão superada da memória termina sem efeito (`done`, `outcome = superseded`). |
 | FR-005 | O texto vai ao LLM como dado, entre delimitadores, com instrução de não seguir nada do conteúdo; `redator.instructions` (global ou por canal) é acrescentada ao prompt do sistema. |
 | FR-006 | A resposta `{ title, text }` é validada por esquema JSON, `redator.title_max` e `memory.text_max`; resposta inválida conta como falha da tentativa. |
-| FR-007 | Título aplicado → `title_state = ready`. Texto alterado (com `rewrite_text`) → nova revisão com autor `system/redator`, `version + 1`, `channels.version + 1`, auditoria, reenfileira `embed`. |
+| FR-007 | Título aplicado → `title_state = ready`, `channels.version + 1` e `network_changed()` (o título aparece na faixa 2 do contexto; 005, decisão 0013). Texto alterado (com `rewrite_text`) → nova revisão com autor `system/redator`, `version + 1`, `channels.version + 1`, auditoria, reenfileira `embed`. |
 | FR-008 | Guarda de sentido conforme Q-001. |
 | FR-009 | Redator desligado ou sem provedor/modelo/chave → `title_state = fallback` sem chamar nada e sem `ERROR`. |
 | FR-010 | `fallback_models[]` é tentado em ordem quando o modelo principal falha por indisponibilidade, limite ou timeout. |

@@ -14,6 +14,10 @@ use crate::{
     core::{
         audit::AuditList,
         channels::{ChannelList, CreateChannelBody, UpdateChannelBody},
+        context::{
+            ContextCategory, ContextChannel, ContextContent, ContextCounts, ContextDocument,
+            ContextFormat, ContextLine, ContextNotModified, ContextTitle, ContextView,
+        },
         docs::DocText,
         identities::{
             AgentList, AppList, CreateAgentBody, CreateAppBody, IssueTokenBody, IssuedToken,
@@ -79,6 +83,7 @@ use crate::{
         crate::rest::channels::restore_channel,
         crate::rest::channels::delete_channel,
         crate::rest::channels::channel_stats,
+        crate::rest::context::get_context,
         crate::rest::memories::list_memories,
         crate::rest::memories::get_memory,
         crate::rest::memories::search_memories,
@@ -125,6 +130,8 @@ use crate::{
         SimilarMemory, MemoryWrite, MemoryRevision, MemoryItem, MemoryList, MemoryHistory, Fields,
         CreateMemoryBody, UpdateMemoryBody, MoveMemoryBody, RevertMemoryBody,
         SearchMemoriesBody, SearchHit, SearchResults,
+        ContextFormat, ContextCounts, ContextLine, ContextCategory, ContextChannel, ContextTitle,
+        ContextDocument, ContextContent, ContextView, ContextNotModified,
         ChannelStats, MemoryCounts, PendingCounts,
         StatusView, DatabaseStatus, BackupStatus, IdentityCounts,
         AuditEvent, AuditList, DocText,
@@ -138,6 +145,7 @@ use crate::{
         (name = "Identities", description = "Apps, agentes e tokens (token admin)"),
         (name = "Channels", description = "Canais e assinaturas alcançados pelo token"),
         (name = "Network", description = "Criação e manutenção de canais e assinaturas (token admin)"),
+        (name = "Context", description = "Contexto determinístico para o prompt, com `version`/ETag e `304`"),
         (name = "Memories", description = "Memórias: escrita, edição versionada, status, busca e histórico"),
         (name = "Settings", description = "Configurações funcionais (token admin)"),
         (name = "Status", description = "Estado do serviço (token admin)"),

@@ -145,6 +145,16 @@ fn object_lines(map: &serde_json::Map<String, Value>, indent: &str) {
     }
 }
 
+/// `engramind context` sem `--json`: o `content` cru, para colar no prompt (JSON formatado no
+/// formato `json`); nada quando não mudou.
+pub fn context(body: &Value) {
+    match &body["content"] {
+        Value::String(content) => line(content),
+        Value::Null => {}
+        document => json(document),
+    }
+}
+
 /// Saída legível genérica: Markdown de `content`, listas em linhas, objetos em `chave: valor`.
 pub fn human(value: &Value) {
     let Value::Object(map) = value else {

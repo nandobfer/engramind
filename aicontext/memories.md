@@ -4,7 +4,7 @@
 
 - `src/core/memories.rs`: entradas, validação (texto, categoria, origem, status), `reach_memory`, `similar` e as operações de memória.
 - `src/core/memory_text.rs`: funções puras — `content_hash`, título provisório, termos sem acento e Jaccard.
-- `src/core/search.rs`: `search_memories`.
+- `src/core/search.rs`: `search_memories` (com `exclude_context` e `context_version`, ver [`context.md`](context.md)).
 - `src/core/counters.rs`: `retrieval_count`/`last_retrieved_at` em lote (flush a cada 5 s em `background.rs` e no shutdown).
 - `src/core/channels.rs` (`channel_stats`) e `src/core/settings.rs` (`get_channel_settings`, `update_channel_settings`, `categories.list`, `memory.*`).
 - `src/store/sqlite/memories.rs`: SQL, FTS5, a transação única de cada mutação e a fila `jobs` (só `enqueue`).

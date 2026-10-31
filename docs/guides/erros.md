@@ -34,6 +34,8 @@ Todo erro usa o envelope único:
 | `OPERATION_NOT_FOUND` | 404 | 5 | Operação inexistente ou oculta para o token; `details.valid` lista as visíveis. |
 | `SCHEMA_NOT_FOUND` | 404 | 5 | Esquema inexistente ou oculto para o token; `details.valid` lista os visíveis. |
 | `TAG_NOT_FOUND` | 404 | 5 | Tag OpenAPI inexistente ou oculta para o token; `details.valid` lista as visíveis. |
+| `RESOURCE_NOT_FOUND` | 404 | 5 | URI de resource MCP desconhecida (só no MCP, como erro `-32002`). |
+| `PROMPT_NOT_FOUND` | 404 | 5 | Prompt MCP inexistente (só no MCP, como `-32002`). |
 | `METHOD_NOT_ALLOWED` | 405 | 1 | Método não suportado pela rota. |
 | `SLUG_ALREADY_EXISTS` | 409 | 6 | Já existe um app, um agente no mesmo app ou um canal com esse slug. |
 | `SUBSCRIPTION_EXISTS` | 409 | 6 | O agente já assina esse alvo (mesmo canal exato ou mesmo prefixo). |

@@ -12,11 +12,11 @@ use utoipa::ToSchema;
 use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
-        Channel, ChannelPatch, ChannelStats, IdemRow, IdentityCounts, Lookup, Memory, MemoryFilter,
-        MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent, NewApp,
-        NewChannel, NewMemory, NewSubscription, NewToken, RetrievalBump, SettingChange, SettingRow,
-        StatusAction, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
-        WriteContext,
+        Channel, ChannelPatch, ChannelStats, ContextSnapshot, IdemRow, IdentityCounts,
+        InjectionBump, Lookup, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget,
+        MemoryWrite, Network, NewAgent, NewApp, NewChannel, NewMemory, NewSubscription, NewToken,
+        RetrievalBump, SettingChange, SettingRow, StatusAction, Subscription, SubscriptionPatch,
+        TextQuery, Token, TokenFilter, TokenPatch, UsageEntry, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -290,6 +290,21 @@ pub trait Store: Clone + Send + Sync + 'static {
         &self,
         channel_id: String,
     ) -> impl Future<Output = Result<Option<ChannelStats>, StoreError>> + Send;
+    /// Memórias `active`/`permanent` dos canais e as versões deles, no mesmo instantâneo.
+    fn context_memories(
+        &self,
+        channel_ids: Vec<String>,
+    ) -> impl Future<Output = Result<ContextSnapshot, StoreError>> + Send;
+    /// Soma `injected_count` sem mudar `version`.
+    fn bump_injections(
+        &self,
+        batch: Vec<InjectionBump>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
+    /// Grava as linhas acumuladas de `usage_log`.
+    fn append_usage(
+        &self,
+        batch: Vec<UsageEntry>,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Memórias por categoria em toda a rede.
     fn category_counts(
         &self,

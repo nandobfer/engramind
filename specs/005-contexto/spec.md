@@ -1,7 +1,7 @@
 # Spec - contexto
 
 **Criado em**: 2026-10-30
-**Status**: Draft
+**Status**: Implementado (0.5.0)
 **Versão alvo**: 0.5.0 — **marco: MVP do primeiro consumidor**
 **Input**: Desenho §8, §12 (`context`), §13 (MCP resources e prompts), §19 (consumidor).
 

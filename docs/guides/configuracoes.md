@@ -33,6 +33,11 @@ No REST, `PUT /v1/settings` com `{ "limits.rate_per_minute": 1200 }`; no MCP, `u
 | `memory.text_max` | integer | 4000 | 10 a 20000 | sim | Caracteres máximos do texto de uma memória. |
 | `memory.dedupe_exact` | boolean | true | — | não | Texto igual (`content_hash` normalizado) a outra memória do canal devolve a existente com `duplicate: true`. |
 | `memory.similar_threshold` | number | 0.85 | 0 a 1 | não | Similaridade mínima para uma memória aparecer em `similar` na resposta de escrita (Jaccard dos termos até haver embeddings). |
+| `context.budget_tokens` | integer | 4000 | 0 a 200000 | sim | Tokens da faixa de texto completo do contexto. No canal, é o teto da parte dele nessa faixa; o global continua valendo para o bloco. |
+| `context.titles_budget_tokens` | integer | 800 | 0 a 50000 | sim | Tokens da faixa `#id: título` do contexto. No canal, é o teto da parte dele nessa faixa. |
+| `context.default_format` | enum | `tagged` | `tagged`, `markdown`, `json` | não | Formato do contexto quando `format` não é informado (e do resource `engramind://context`). |
+| `context.token_estimator` | enum | `o200k` | `o200k`, `cl100k` | não | Codificação usada para estimar os tokens do contexto (`o200k_base` ou `cl100k_base`). |
+| `context.overflow_line` | boolean | true | — | não | Mostra a linha de excedente (`<overflow count="N">`) quando sobram memórias fora das duas faixas. |
 
 As categorias padrão são `PROJECT_RULES` (prioridade 50), `ARCHITECTURE` (40), `CONSTRAINTS` (30), `CONFIG_VALUES` (20) e `NAMING` (10). Mudar `label` e `priority` é livre; uma `key` nova vale na hora. Retirar uma `key` usada por alguma memória é recusado com `409 CATEGORY_IN_USE` e a contagem em `details.in_use`.
 
@@ -41,7 +46,9 @@ engramind settings set memory.similar_threshold 0.6
 engramind settings set categories.list '[{"key":"RULES","label":"Regras","priority":10}]'
 ```
 
-Os demais grupos do desenho (contexto, Redator, embeddings, busca, consolidação, webhooks e retenção) entram junto com as capacidades que eles controlam.
+As chaves `context.*` e `categories.list` mudam o bloco de `get_context`, então mudá-las muda a `version` do contexto (guia `contexto-e-cache`); `context.default_format` só vale para quem não passa `format`. Valores `enum` são texto JSON: `engramind settings set context.default_format markdown`.
+
+Os demais grupos do desenho (Redator, embeddings, busca, consolidação, webhooks e retenção) entram junto com as capacidades que eles controlam.
 
 ## Por canal
 
@@ -51,6 +58,7 @@ As chaves com "sim" na coluna "Por canal" aceitam sobreposição num canal: `get
 engramind channels settings get eng/global
 engramind channels settings set eng/global memory.text_max 2000
 engramind channels settings set eng/global memory.text_max null
+engramind channels settings set eng/global context.budget_tokens 1500
 ```
 
 No REST, `PUT /v1/channels/{channel}/settings` com `{ "memory.text_max": 2000 }`; no MCP, `update_channel_settings` com `{ "channel": "eng/global", "settings": { "memory.text_max": 2000 } }`.

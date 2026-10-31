@@ -175,3 +175,66 @@ async fn memory_text_never_reaches_the_logs() {
         assert!(!output.contains(forbidden), "{forbidden} no log");
     }
 }
+
+#[tokio::test]
+async fn context_polls_with_304_are_debug_and_never_log_the_block() {
+    let context = TestContext::new().await;
+    let buffer = LogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_env_filter(engramind::observability::log_filter("debug").expect("filter"))
+        .with_writer(buffer.clone())
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    tracing::callsite::rebuild_interest_cache();
+
+    context.create_channel("eng/global").await;
+    context
+        .create_memory(ADMIN_TOKEN, "eng/global", "texto-sigiloso-do-contexto abc")
+        .await;
+    let (_, body) = context
+        .call("GET", "/v1/context", Some(ADMIN_TOKEN), None)
+        .await;
+    let version = body["version"].as_str().expect("version").to_owned();
+    let (status, _, _) = context
+        .call_with(
+            "GET",
+            "/v1/context",
+            Some(ADMIN_TOKEN),
+            None,
+            &[("If-None-Match", &version)],
+        )
+        .await;
+    assert_eq!(status, axum::http::StatusCode::NOT_MODIFIED);
+    context
+        .rpc(
+            ADMIN_TOKEN,
+            "resources/read",
+            json!({ "uri": "engramind://context" }),
+        )
+        .await;
+
+    let (output, events) = events(&buffer);
+    let completed: Vec<&Value> = events
+        .iter()
+        .filter(|event| {
+            event["fields"]["event"] == "http.request.completed"
+                && event["span"]["route"] == "/v1/context"
+        })
+        .collect();
+    assert_eq!(completed.len(), 2, "{output}");
+    assert_eq!(completed[0]["level"], "INFO");
+    assert_eq!(completed[0]["fields"]["status"], 200);
+    assert_eq!(completed[1]["level"], "DEBUG");
+    assert_eq!(completed[1]["fields"]["status"], 304);
+    assert!(
+        events
+            .iter()
+            .any(|event| event["fields"]["event"] == "mcp.resource.completed"),
+        "{output}"
+    );
+    assert!(
+        !output.contains("texto-sigiloso-do-contexto"),
+        "texto no log"
+    );
+}

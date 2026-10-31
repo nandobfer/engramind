@@ -294,7 +294,8 @@ audit_log     (id, at, app_id, agent_id, token_id, action, entity, entity_id,
                before_json, after_json)
 llm_calls     (id, at, purpose, provider, model, input_tokens, output_tokens,
                cost_usd NULL, duration_ms, outcome, error)
-usage_log     (id, at, agent_id, op, channel_ids, memory_ids, rendered_tokens)
+usage_log     (id, at, app_id, agent_id NULL, token_id, op, channel_ids, memory_ids, rendered_tokens NULL)
+              -- at RFC 3339 UTC ordenável; índices (at), (agent_id, at), (op, at) para consultas por período
 ```
 
 Regras gerais:
@@ -446,8 +447,17 @@ Exemplo (`tagged`):
    - texto completo até `context.budget_tokens` (padrão 4.000);
    - em seguida, só `#id: título` até `context.titles_budget_tokens` (padrão 800);
    - o que sobrar vira a linha `overflow` com a contagem.
-4. Devolve `{ content, version, counts: { full, titles, overflow }, rendered_tokens }`.
-   `injected_count` é incrementado em lote.
+   - A primeira memória que não cabe fecha a faixa (a ordem nunca se inverte). A sobreposição
+     por canal do orçamento é o teto da parte daquele canal; o global vale para o bloco.
+   - O custo é a linha `#id: texto` (ou `#id: título`); a escolha é a mesma em todos os formatos.
+4. Agrupa: canais por prioridade e slug, categorias por prioridade e chave, memórias na ordem
+   da escolha. Quebras de linha do texto viram espaço e `<` seguido de um nome de tag do bloco
+   vira `&lt;`.
+5. Devolve `{ content, version, counts: { full, titles, overflow }, rendered_tokens, format }`.
+   `injected_count` (só a faixa 1) e `usage_log` são gravados em lote; o `304` não grava nada.
+
+A `version` é `cv_` + 12 hex do SHA-256 sobre o formato, `(canal, versão, modo, prioridade)`
+dos canais alcançados e as configurações que mudam o bloco (decisão 0013).
 
 ### Como o sistema consumidor deve usar
 
@@ -638,6 +648,8 @@ Observações:
   - `engramind://context`, que é o contexto do token com o filtro da conexão;
   - `engramind://channels/{slug}`, que lista as memórias do canal;
   - `engramind://guides/{id}`, que são os guias.
+  - URI desconhecida, canal fora do alcance ou guia inexistente → erro JSON-RPC `-32002`, com o
+    envelope do domínio em `data` (`RESOURCE_NOT_FOUND`, `CHANNEL_NOT_SUBSCRIBED`…).
 - **Prompts**: `memory-writing`, um guia curto de como escrever uma boa memória, para o consumidor
   anexar ao agente.
 - Proteção contra DNS rebinding por `MCP_ALLOWED_HOSTS`, como no sap-middleman.

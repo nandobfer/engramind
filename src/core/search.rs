@@ -12,7 +12,7 @@ use super::{
     ids,
     memories::{Fields, MemoryItem},
     memory_text::query_terms,
-    model::{MemoryStatus, TextQuery},
+    model::{MemoryStatus, TextQuery, UsageEntry},
     principal::Principal,
     selection::Selection,
 };
@@ -44,6 +44,9 @@ pub struct SearchMemoriesBody {
     pub include_archived: Option<bool>,
     /// Ids a deixar de fora (por exemplo, os que já estão no contexto).
     pub exclude_ids: Option<Vec<String>>,
+    /// Exclui as memórias com texto completo no contexto do mesmo token e seleção (faixa 1
+    /// de `get_context` sem `format`); somado a `exclude_ids`.
+    pub exclude_context: Option<bool>,
     pub fields: Option<Fields>,
 }
 
@@ -62,6 +65,9 @@ pub struct SearchHit {
 pub struct SearchResults {
     /// Da mais relevante à menos relevante.
     pub results: Vec<SearchHit>,
+    /// `version` de `get_context` sem `format` para o mesmo token e seleção.
+    #[schema(example = "cv_3f9e1a7c0b2d")]
+    pub context_version: String,
 }
 
 impl<S: Store> Core<S> {
@@ -90,7 +96,7 @@ impl<S: Store> Core<S> {
                 "limit deve estar entre 1 e {MAX_LIMIT}"
             )));
         }
-        let exclude_ids = body.exclude_ids.unwrap_or_default();
+        let mut exclude_ids = body.exclude_ids.unwrap_or_default();
         if exclude_ids.len() > MAX_EXCLUDED {
             return Err(ApiError::validation(format!(
                 "exclude_ids aceita ate {MAX_EXCLUDED} ids"
@@ -99,6 +105,14 @@ impl<S: Store> Core<S> {
         let channels = body.channels.map(|channels| channels.join(","));
         let selection = Selection::parse(header, channels.as_deref())?;
         let reaches = self.resolve(principal, &selection, Purpose::Search).await?;
+        let (context_version, in_context) = self
+            .context_for_search(principal, &selection, body.exclude_context.unwrap_or(false))
+            .await?;
+        exclude_ids.extend(in_context);
+        let channel_ids: Vec<String> = reaches
+            .iter()
+            .map(|reach| reach.channel.id.clone())
+            .collect();
         let mut statuses = vec![MemoryStatus::Active, MemoryStatus::Permanent];
         if body.include_archived.unwrap_or(false) {
             statuses.push(MemoryStatus::Archived);
@@ -107,10 +121,7 @@ impl<S: Store> Core<S> {
             .store()
             .search_text(TextQuery {
                 terms,
-                channel_ids: reaches
-                    .iter()
-                    .map(|reach| reach.channel.id.clone())
-                    .collect(),
+                channel_ids: channel_ids.clone(),
                 categories: body.categories.unwrap_or_default(),
                 statuses,
                 exclude_ids,
@@ -120,6 +131,16 @@ impl<S: Store> Core<S> {
         let at = ids::timestamp(ids::now());
         self.counters()
             .record(found.iter().map(|memory| memory.id.as_str()), &at);
+        self.counters().record_usage(UsageEntry {
+            at,
+            app_id: principal.app.id.clone(),
+            agent_id: principal.agent.as_ref().map(|agent| agent.id.clone()),
+            token_id: principal.token_id.clone(),
+            op: "search_memories",
+            channel_ids,
+            memory_ids: found.iter().map(|memory| memory.id.clone()).collect(),
+            rendered_tokens: None,
+        });
         let fields = body.fields.unwrap_or_default();
         Ok(SearchResults {
             results: found
@@ -134,6 +155,7 @@ impl<S: Store> Core<S> {
                     }
                 })
                 .collect(),
+            context_version,
         })
     }
 }

@@ -32,6 +32,26 @@ Cada operação do Engramind é uma ferramenta com o mesmo nome base, os mesmos 
 - Erros de protocolo (método inexistente, ferramenta desconhecida) continuam como erros JSON-RPC.
 - Falhas HTTP (token, `Host`, `Accept`, `Content-Type`, corpo grande) usam o envelope padrão: `401 AUTH_INVALID`, `403 MCP_HOST_FORBIDDEN`, `406 MCP_NOT_ACCEPTABLE`, `413 PAYLOAD_TOO_LARGE`, `415 MCP_UNSUPPORTED_MEDIA_TYPE`, `400 MCP_BAD_REQUEST` e `422 MCP_INVALID_MESSAGE`.
 
+## Contexto
+
+A ferramenta `get_context { channels?, format?, if_none_match? }` é a mesma operação do REST. `if_none_match` faz o papel do cabeçalho `If-None-Match`: com a `version` atual, o resultado é `{ "not_modified": true, "version" }`, sem ler o banco. Detalhes no guia `contexto-e-cache`.
+
+## Resources
+
+`resources/list` mostra o que o token alcança; `resources/templates/list`, os modelos.
+
+| URI | Conteúdo | Exige |
+|---|---|---|
+| `engramind://context` | O bloco de `get_context` com o `Engramind-Channels` da conexão, no `context.default_format` (`text/plain`, ou `application/json` no formato `json`) | `read` |
+| `engramind://channels/{slug}` | `#id: título` das memórias `active` e `permanent` do canal, na ordem do contexto, até 500 linhas e uma linha final com o restante (`text/plain`). O slug vai cru, com as barras: `engramind://channels/eng/global` | `read` efetivo no canal |
+| `engramind://guides/{id}` | O guia em Markdown (`text/markdown`); guias `admin` ocultos para tokens `agent` | qualquer token |
+
+Erros de resource são erros JSON-RPC: `-32002` (não encontrado) para URI desconhecida (`RESOURCE_NOT_FOUND`), guia inexistente, canal inexistente ou fora das assinaturas; os demais usam `-32600` ou `-32603`. O envelope do domínio vai em `data`.
+
+## Prompt
+
+`prompts/list` mostra `memory-writing`, um texto curto de como escrever uma boa memória, para o consumidor anexar ao agente que grava. `prompts/get` com outro nome devolve `-32002` (`PROMPT_NOT_FOUND`).
+
 ## Documentação pelo MCP
 
 As ferramentas `get_overview`, `list_guides`, `get_guide`, `search_docs`, `list_operations`, `get_operation` e `get_schema` servem a documentação da versão em execução. Guias e operações administrativas não aparecem para tokens `agent`.

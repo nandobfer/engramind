@@ -8,8 +8,10 @@ use rmcp::{
     ErrorData, ServerHandler,
     handler::server::{router::tool::ToolRouter, tool::ToolCallContext, wrapper::Parameters},
     model::{
-        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, Implementation,
-        ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+        CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+        GetPromptRequestParams, GetPromptResponse, Implementation, ListPromptsResult,
+        ListResourceTemplatesResult, ListResourcesResult, ListToolsResult, PaginatedRequestParams,
+        ReadResourceRequestParams, ReadResourceResponse, ServerCapabilities, ServerConfig, Tool,
         ToolAnnotations,
     },
     service::{RequestContext, RoleServer},
@@ -19,12 +21,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::resources;
 use crate::{
     core::{
         Core,
         audit::AuditQuery,
         authz,
         channels::{CreateChannelBody, ListChannelsQuery, UpdateChannelBody},
+        context::{ContextFormat, ContextOutcome, GetContextQuery},
         docs::{GetGuideQuery, ListOperationsQuery, SearchDocsQuery},
         identities::{
             CreateAgentBody, CreateAppBody, IssueTokenBody, ListAgentsQuery, ListQuery,
@@ -51,7 +55,8 @@ const INSTRUCTIONS: &str = "Engramind: rede de memorias para agentes de IA. As f
 operacoes da API, com os mesmos nomes, parametros, escopos e erros do REST; so aparecem as que este \
 token pode usar. O cabecalho Engramind-Channels da conexao restringe os canais. Comece por \
 whoami e get_overview; use get_guide e search_docs para as regras e \
-get_operation/get_schema para o contrato exato. Erros de dominio voltam com isError e o envelope \
+get_operation/get_schema para o contrato exato. get_context (ou o resource engramind://context) \
+traz o bloco de memorias para o prompt. Erros de dominio voltam com isError e o envelope \
 { error: { code, message, details } }. Mutacoes aceitam idempotency_key.";
 
 #[derive(Clone)]
@@ -308,6 +313,22 @@ pub struct RevertMemoryRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct GetContextRequest {
+    /// Slugs e prefixos (`eng/global,eng/projeto-*`) separados por vírgula; restringe dentro do
+    /// que o token alcança e do cabeçalho `Engramind-Channels`.
+    #[serde(default)]
+    pub channels: Option<String>,
+    /// `tagged`, `markdown` ou `json`; padrão `context.default_format`.
+    #[serde(default)]
+    pub format: Option<ContextFormat>,
+    /// Mesmo efeito do cabeçalho `If-None-Match` do REST: com a `version` atual, a resposta é
+    /// `{ not_modified: true, version }`.
+    #[serde(default)]
+    pub if_none_match: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GuideRequest {
     /// Id do guia devolvido por `list_guides`, por exemplo `tokens-e-escopos`.
     pub guide: String,
@@ -347,6 +368,37 @@ fn channels_header(context: &RequestContext<RoleServer>) -> Result<Option<String
     match context.extensions.get::<axum::http::request::Parts>() {
         Some(parts) => ChannelsHeader::from_headers(&parts.headers).map(|header| header.0),
         None => Ok(None),
+    }
+}
+
+/// Evento de conclusão de resources (sem URI nem conteúdo): `DEBUG`, ou `WARN` em falha
+/// interna.
+fn completed<T>(method: &'static str, result: &Result<T, ApiError>, started: Instant) {
+    let duration_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Err(error) if error.status.is_server_error() => tracing::warn!(
+            event = "mcp.resource.completed",
+            method,
+            outcome = "error",
+            code = error.code,
+            duration_ms,
+            "resource MCP concluido com falha"
+        ),
+        Err(error) => tracing::debug!(
+            event = "mcp.resource.completed",
+            method,
+            outcome = "domain_error",
+            code = error.code,
+            duration_ms,
+            "resource MCP concluido"
+        ),
+        Ok(_) => tracing::debug!(
+            event = "mcp.resource.completed",
+            method,
+            outcome = "success",
+            duration_ms,
+            "resource MCP concluido"
+        ),
     }
 }
 
@@ -836,6 +888,41 @@ impl EngramindServer {
     }
 
     #[tool]
+    async fn get_context(
+        &self,
+        Parameters(request): Parameters<GetContextRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let query = GetContextQuery {
+            channels: request.channels,
+            format: request.format,
+        };
+        let result = match channels_header(&context) {
+            Ok(header) => self
+                .core
+                .get_context(
+                    &principal,
+                    query,
+                    request.if_none_match.as_deref(),
+                    header.as_deref(),
+                )
+                .await
+                .and_then(|outcome| {
+                    match outcome {
+                        ContextOutcome::NotModified(not_modified) => {
+                            serde_json::to_value(not_modified)
+                        }
+                        ContextOutcome::Rendered(rendered) => serde_json::to_value(&rendered.view),
+                    }
+                    .map_err(|_| ApiError::internal())
+                }),
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
     async fn list_memories(
         &self,
         Parameters(query): Parameters<ListMemoriesQuery>,
@@ -1261,11 +1348,17 @@ impl EngramindServer {
 
 impl ServerHandler for EngramindServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(
-                Implementation::new(SERVER_NAME, env!("CARGO_PKG_VERSION")).with_title("Engramind"),
-            )
-            .with_instructions(INSTRUCTIONS)
+        ServerConfig::new(
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .enable_prompts()
+                .build(),
+        )
+        .with_server_info(
+            Implementation::new(SERVER_NAME, env!("CARGO_PKG_VERSION")).with_title("Engramind"),
+        )
+        .with_instructions(INSTRUCTIONS)
     }
 
     async fn list_tools(
@@ -1290,6 +1383,73 @@ impl ServerHandler for EngramindServer {
                 .unwrap_or(usize::MAX)
         });
         Ok(ListToolsResult::with_all_items(tools))
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        let principal = principal(&context)?;
+        let started = Instant::now();
+        let result = match channels_header(&context) {
+            Ok(header) => resources::list(&self.core, &principal, header.as_deref()).await,
+            Err(error) => Err(error),
+        };
+        completed("resources/list", &result, started);
+        result
+            .map(ListResourcesResult::with_all_items)
+            .map_err(|error| resources::resource_error(&error))
+    }
+
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, ErrorData> {
+        principal(&context)?;
+        Ok(ListResourceTemplatesResult::with_all_items(
+            resources::templates(),
+        ))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let principal = principal(&context)?;
+        let started = Instant::now();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                resources::read(&self.core, &principal, &request.uri, header.as_deref()).await
+            }
+            Err(error) => Err(error),
+        };
+        completed("resources/read", &result, started);
+        result
+            .map(ReadResourceResponse::from)
+            .map_err(|error| resources::resource_error(&error))
+    }
+
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, ErrorData> {
+        principal(&context)?;
+        Ok(ListPromptsResult::with_all_items(resources::prompts()))
+    }
+
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResponse, ErrorData> {
+        principal(&context)?;
+        resources::prompt(&request.name)
+            .map(GetPromptResponse::from)
+            .map_err(|error| resources::resource_error(&error))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
