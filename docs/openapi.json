@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.8.0"
+    "version": "0.9.0"
   },
   "servers": [
     {
@@ -5419,6 +5419,272 @@
         ]
       }
     },
+    "/v1/consolidation/run": {
+      "post": {
+        "tags": [
+          "Consolidation"
+        ],
+        "summary": "Consolida canais sob demanda ou mostra o plano (dry_run)",
+        "description": "Com `dry_run: true`, devolve na hora (`200`), sem gravar e sem chamar o LLM, o plano de cada canal: pares candidatos a fusão (com o cosseno), memórias a classificar, sinalizações, limpezas e arquivamentos de desuso e as tarefas puladas com o motivo; a execução avalia exatamente esses candidatos. Sem `dry_run`, enfileira um job `consolidate` por canal (`202`); canal com um job pendente devolve esse com `already_queued: true`. `channel` ausente consolida todos os canais com `consolidation.enabled`; `channel` explícito desligado responde `409 CONSOLIDATION_DISABLED` (o `dry_run` é permitido). `tasks` padrão = `consolidation.tasks`. Aceita `Idempotency-Key` (sem efeito no `dry_run`). Exige token admin com `write`.",
+        "operationId": "run_consolidation",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunConsolidationBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Plano (`dry_run`)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsolidationRun"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Jobs `consolidate` enfileirados",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsolidationRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`CONSOLIDATION_DISABLED`, `CHANNEL_ARCHIVED` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/context": {
       "get": {
         "tags": [
@@ -7698,6 +7964,15 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "stale",
+            "in": "query",
+            "description": "`true`: só as candidatas por desuso (`stale_candidate`); `false`: só as demais.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
             }
           },
           {
@@ -10878,6 +11153,245 @@
         "responses": {
           "200": {
             "description": "Memória desafixada",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Memory"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`MEMORY_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`CHANNEL_ARCHIVED` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/memories/{memory}/verify": {
+      "post": {
+        "tags": [
+          "Memories"
+        ],
+        "summary": "Registra que a memória foi conferida",
+        "description": "Exige `write` efetivo no canal. Grava `verified_at` (agora) e a auditoria `memory.verify` e limpa `stale_candidate`, sem nova revisão, sem mudar `version` da memória nem do canal e sem evento: o contexto não muda. Vale para qualquer status. Aceita `Idempotency-Key`.",
+        "operationId": "mark_verified",
+        "parameters": [
+          {
+            "name": "memory",
+            "in": "path",
+            "description": "Id da memória (`m_…`)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Engramind-Channels",
+            "in": "header",
+            "description": "Filtro de canais da conexão: slugs e prefixos separados por vírgula",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conferência registrada",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -15392,7 +15906,8 @@
           "memories",
           "by_category",
           "pending",
-          "retrievals"
+          "retrievals",
+          "stale"
         ],
         "properties": {
           "by_category": {
@@ -15437,9 +15952,217 @@
             "description": "Soma de `retrieval_count` das memórias do canal.",
             "minimum": 0
           },
+          "stale": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memórias com `stale_candidate`.",
+            "minimum": 0
+          },
           "version": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ConsolidationJobRef": {
+        "type": "object",
+        "description": "Job enfileirado por canal.",
+        "required": [
+          "channel",
+          "job_id",
+          "already_queued"
+        ],
+        "properties": {
+          "already_queued": {
+            "type": "boolean",
+            "description": "O canal já tinha um `consolidate` na fila ou rodando; devolve esse."
+          },
+          "channel": {
+            "type": "string",
+            "example": "eng/global"
+          },
+          "job_id": {
+            "type": "integer",
+            "format": "int64",
+            "example": 481
+          }
+        }
+      },
+      "ConsolidationPlan": {
+        "type": "object",
+        "description": "Plano de um canal: os candidatos que a execução avalia.",
+        "required": [
+          "channel",
+          "skipped",
+          "duplicates",
+          "classify",
+          "stale"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "example": "eng/global"
+          },
+          "classify": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Memórias que recebem nota de importância."
+          },
+          "duplicates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlannedMerge"
+            }
+          },
+          "skipped": {
+            "type": "object",
+            "description": "Tarefa pulada → motivo (`redator_not_configured`, `embeddings_off`)."
+          },
+          "stale": {
+            "$ref": "#/components/schemas/PlannedStale"
+          }
+        }
+      },
+      "ConsolidationRun": {
+        "type": "object",
+        "description": "Resposta de `run_consolidation`: o plano (`dry_run`) ou os jobs enfileirados.",
+        "required": [
+          "dry_run",
+          "channels",
+          "jobs"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsolidationPlan"
+            },
+            "description": "Planos por canal (só com `dry_run`)."
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsolidationJobRef"
+            },
+            "description": "Jobs `consolidate` (só sem `dry_run`)."
+          }
+        }
+      },
+      "ConsolidationStatus": {
+        "type": "object",
+        "description": "`get_status.consolidation` (FR-012).",
+        "required": [
+          "enabled_channels",
+          "schedule",
+          "queued",
+          "running",
+          "last_24h",
+          "llm_last_24h"
+        ],
+        "properties": {
+          "enabled_channels": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Canais ativos com `consolidation.enabled` efetivo.",
+            "example": 3,
+            "minimum": 0
+          },
+          "last_24h": {
+            "$ref": "#/components/schemas/ConsolidationTotals"
+          },
+          "last_scheduled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Último horário que o agendador disparou."
+          },
+          "llm_last_24h": {
+            "$ref": "#/components/schemas/LlmSummary",
+            "description": "Chamadas ao LLM com `purpose = consolidation` nas últimas 24 h."
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Próximo horário (UTC); `null` com a expressão inválida."
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs `consolidate` na fila.",
+            "minimum": 0
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "schedule": {
+            "type": "string",
+            "example": "0 3 * * *"
+          }
+        }
+      },
+      "ConsolidationTotals": {
+        "type": "object",
+        "description": "Ações somadas das execuções das últimas 24 h.",
+        "required": [
+          "merged",
+          "declined",
+          "classified",
+          "flagged",
+          "cleared",
+          "archived",
+          "superseded",
+          "failed"
+        ],
+        "properties": {
+          "archived": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "classified": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "cleared": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "declined": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "flagged": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "merged": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "superseded": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -16812,7 +17535,8 @@
           "retrieval_count",
           "injected_count",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "stale_candidate"
         ],
         "properties": {
           "archived_at": {
@@ -16866,6 +17590,13 @@
               "null"
             ]
           },
+          "merged_into": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Memória que recebeu o texto desta numa fusão do consolidador."
+          },
           "origin": {
             "oneOf": [
               {
@@ -16880,6 +17611,10 @@
             "type": "integer",
             "format": "int64",
             "description": "Gravado em lote a cada 5 s; pode atrasar alguns segundos."
+          },
+          "stale_candidate": {
+            "type": "boolean",
+            "description": "Sem uso há mais de `consolidation.stale_after_days` (consolidador); continua no\ncontexto até ser arquivada."
           },
           "status": {
             "$ref": "#/components/schemas/MemoryStatus"
@@ -17203,6 +17938,65 @@
           }
         }
       },
+      "PlannedMerge": {
+        "type": "object",
+        "description": "Par candidato do plano.",
+        "required": [
+          "keep",
+          "archive",
+          "similarity"
+        ],
+        "properties": {
+          "archive": {
+            "type": "string",
+            "description": "Vira `archived` com `merged_into = keep`.",
+            "example": "m_8f2a1c3d"
+          },
+          "keep": {
+            "type": "string",
+            "description": "A mais antiga: recebe o texto fundido.",
+            "example": "m_1b7d0e44"
+          },
+          "similarity": {
+            "type": "number",
+            "format": "double",
+            "description": "Cosseno entre os vetores.",
+            "example": 0.95
+          }
+        }
+      },
+      "PlannedStale": {
+        "type": "object",
+        "description": "Desuso previsto.",
+        "required": [
+          "flag",
+          "clear",
+          "archive"
+        ],
+        "properties": {
+          "archive": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Arquivadas (`consolidation.auto_archive_stale`)."
+          },
+          "clear": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Voltaram a ser usadas: `stale_candidate = false`."
+          },
+          "flag": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ganham `stale_candidate = true`."
+          }
+        }
+      },
       "QueueStatus": {
         "type": "object",
         "description": "Jobs por tipo e estado.",
@@ -17399,6 +18193,38 @@
             "description": "Versão do histórico cujo texto, título e categoria voltam numa revisão nova.",
             "example": 1,
             "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "RunConsolidationBody": {
+        "type": "object",
+        "description": "Corpo de `run_consolidation`.",
+        "properties": {
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Canal (id `ch_…` ou slug); ausente: todos os canais com `consolidation.enabled`.",
+            "example": "eng/global"
+          },
+          "dry_run": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true`: devolve o plano sem gravar e sem chamar o LLM."
+          },
+          "tasks": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "description": "Tarefas (padrão `consolidation.tasks`); executadas sempre na ordem `duplicates`,\n`importance`, `stale`."
           }
         },
         "additionalProperties": false
@@ -17726,6 +18552,14 @@
           }
         }
       },
+      "SkipReason": {
+        "type": "string",
+        "description": "Por que uma tarefa foi pulada.",
+        "enum": [
+          "redator_not_configured",
+          "embeddings_off"
+        ]
+      },
       "StatusView": {
         "type": "object",
         "required": [
@@ -17737,11 +18571,15 @@
           "queue",
           "redator",
           "embedding",
-          "webhooks"
+          "webhooks",
+          "consolidation"
         ],
         "properties": {
           "backup": {
             "$ref": "#/components/schemas/BackupStatus"
+          },
+          "consolidation": {
+            "$ref": "#/components/schemas/ConsolidationStatus"
           },
           "counts": {
             "$ref": "#/components/schemas/IdentityCounts"
@@ -17778,7 +18616,7 @@
           },
           "version": {
             "type": "string",
-            "example": "0.8.0"
+            "example": "0.9.0"
           },
           "webhooks": {
             "$ref": "#/components/schemas/WebhooksStatus"
@@ -17920,6 +18758,15 @@
             "description": "Em ordem de criação."
           }
         }
+      },
+      "Task": {
+        "type": "string",
+        "description": "Tarefa do consolidador; a ordem das variantes é a de execução.",
+        "enum": [
+          "duplicates",
+          "importance",
+          "stale"
+        ]
       },
       "TestEmbeddingBody": {
         "type": "object",
@@ -18636,6 +19483,10 @@
     {
       "name": "Integration",
       "description": "Importação de memórias de outros sistemas (token admin)"
+    },
+    {
+      "name": "Consolidation",
+      "description": "Consolidação: duplicatas, importância e desuso (token admin)"
     },
     {
       "name": "Jobs",

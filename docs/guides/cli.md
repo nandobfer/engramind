@@ -64,6 +64,9 @@ engramind hints como rodo os testes
 engramind memories list --fields title --channels eng/global
 engramind channels stats eng/global
 engramind channels settings set eng/global memory.text_max 2000
+engramind memories verify m_8f2a1c3d
+engramind memories list --stale
+engramind consolidation run --channel eng/global --dry-run
 engramind settings get limits.rate_per_minute
 engramind settings set limits.rate_per_minute 1200
 printf '%s' "$CHAVE_DO_PROVEDOR" | engramind secrets set redator.api_key

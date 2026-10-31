@@ -148,6 +148,9 @@ pub enum Command {
     /// Embeddings: reindexação (token admin).
     #[command(subcommand)]
     Embeddings(EmbeddingsCommand),
+    /// Consolidação: duplicatas, importância e desuso (token admin).
+    #[command(subcommand)]
+    Consolidation(ConsolidationCommand),
     /// Mostra versão, uptime, banco, backup, fila, Redator, embeddings e webhooks (token admin).
     Status,
     /// Agrega o uso (contexto, busca e dicas) por dia, agente, operação ou canal (token admin).
@@ -471,6 +474,9 @@ pub enum MemoriesCommand {
         /// Só as alteradas a partir deste instante (RFC 3339).
         #[arg(long)]
         since: Option<String>,
+        /// Só as candidatas por desuso (`--stale false`: só as demais).
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+        stale: Option<bool>,
         #[command(flatten)]
         fields: FieldsArgs,
         #[command(flatten)]
@@ -588,6 +594,13 @@ pub enum MemoriesCommand {
     },
     /// Desafixa uma memória.
     Unpin {
+        /// Id da memória (`m_…`).
+        memory: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Registra que a memória foi conferida (`verified_at`), sem mudar o contexto.
+    Verify {
         /// Id da memória (`m_…`).
         memory: String,
         #[command(flatten)]
@@ -742,6 +755,24 @@ pub enum SettingsCommand {
 pub enum EmbeddingsCommand {
     /// Revetoriza todas as memórias com o modelo vigente (progresso em `engramind status`).
     Reembed {
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum ConsolidationCommand {
+    /// Enfileira a consolidação (um job por canal) ou, com `--dry-run`, mostra o plano.
+    Run {
+        /// Canal (id ou slug); ausente: todos os canais com `consolidation.enabled`.
+        #[arg(long)]
+        channel: Option<String>,
+        /// `duplicates`, `importance`, `stale`, separados por vírgula (padrão `consolidation.tasks`).
+        #[arg(long)]
+        tasks: Option<String>,
+        /// Só o plano: não grava nada e não chama o LLM.
+        #[arg(long)]
+        dry_run: bool,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },

@@ -1017,7 +1017,8 @@ async fn channel_settings_stats_categories_and_channel_deletion() {
             "context.budget_tokens",
             "context.titles_budget_tokens",
             "redator.instructions",
-            "redator.rewrite_text"
+            "redator.rewrite_text",
+            "consolidation.enabled"
         ])
     );
     let (_, view) = context

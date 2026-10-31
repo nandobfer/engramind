@@ -52,15 +52,20 @@ pub(super) fn context_memories(
     Ok(ContextSnapshot { versions, memories })
 }
 
-/// Soma `injected_count` sem mudar `version` nem `updated_at`.
+/// Soma `injected_count` e avança `last_injected_at` sem mudar `version` nem `updated_at`.
 pub(super) fn bump_injections(
     transaction: &Transaction,
     batch: &[InjectionBump],
 ) -> rusqlite::Result<()> {
-    let mut statement = transaction
-        .prepare("UPDATE memories SET injected_count = injected_count + ?2 WHERE id = ?1")?;
+    let mut statement = transaction.prepare(
+        "UPDATE memories SET injected_count = injected_count + ?2,
+             last_injected_at = CASE
+                 WHEN last_injected_at IS NULL OR last_injected_at < ?3 THEN ?3
+                 ELSE last_injected_at END
+         WHERE id = ?1",
+    )?;
     for bump in batch {
-        statement.execute(params![bump.memory_id, bump.count])?;
+        statement.execute(params![bump.memory_id, bump.count, bump.at])?;
     }
     Ok(())
 }

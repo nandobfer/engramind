@@ -61,8 +61,8 @@ fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
 /// Rotas protegidas por `require_auth`: uma entrada por operação do catálogo e `/metrics`.
 fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
     use rest::{
-        audit, channels, context, docs, embeddings, identities, integration, jobs, memories,
-        search, settings, status, subscriptions,
+        audit, channels, consolidation, context, docs, embeddings, identities, integration, jobs,
+        memories, search, settings, status, subscriptions,
     };
     vec![
         ("/v1/whoami", get(identities::whoami)),
@@ -145,6 +145,10 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         ("/v1/memories/{memory}/unpin", post(memories::unpin_memory)),
         ("/v1/memories/{memory}/move", post(memories::move_memory)),
         (
+            "/v1/memories/{memory}/verify",
+            post(memories::mark_verified),
+        ),
+        (
             "/v1/memories/{memory}/revert",
             post(memories::revert_memory),
         ),
@@ -171,6 +175,10 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
             post(embeddings::list_embedding_models),
         ),
         ("/v1/embeddings/reembed", post(embeddings::reembed_all)),
+        (
+            "/v1/consolidation/run",
+            post(consolidation::run_consolidation),
+        ),
         ("/v1/jobs", get(jobs::list_jobs)),
         ("/v1/jobs/{job}/retry", post(jobs::retry_job)),
         ("/v1/llm-calls", get(jobs::list_llm_calls)),

@@ -9,7 +9,7 @@ use tokio::{sync::Semaphore, task::JoinHandle};
 use super::JobOutcome;
 use crate::{
     core::{
-        Core, embeddings, ids,
+        Core, consolidation, embeddings, ids,
         model::{Job, JobFinish},
         redator, webhooks,
     },
@@ -82,6 +82,21 @@ impl<S: Store> JobHandler<S> for Webhook {
 
     fn backoff(&self, attempts: i64) -> Duration {
         webhooks::backoff(attempts)
+    }
+}
+
+/// Job `consolidate`: a consolidação de um canal (009).
+pub struct Consolidate;
+
+impl<S: Store> JobHandler<S> for Consolidate {
+    const KIND: &'static str = consolidation::JOB_KIND;
+
+    fn lease(&self, _core: &Core<S>) -> Duration {
+        consolidation::job::LEASE
+    }
+
+    async fn run(&self, core: &Core<S>, job: Job) -> JobOutcome {
+        core.run_consolidate(&job).await
     }
 }
 
@@ -226,13 +241,23 @@ pub fn spawn<S: Store, H: JobHandler<S>>(
 }
 
 impl<S: Store> Core<S> {
-    /// Sobe os runners da fila (`redact`, `embed` e `webhook`).
+    /// Sobe os runners da fila (`redact`, `embed`, `webhook` e `consolidate`).
     pub fn spawn_workers(&self) -> Vec<JoinHandle<()>> {
         vec![
             spawn(self.clone(), Redact, REDACT_CONCURRENCY),
             spawn(self.clone(), Embed, EMBED_CONCURRENCY),
             spawn(self.clone(), Webhook, webhooks::WEBHOOK_CONCURRENCY),
+            spawn(
+                self.clone(),
+                Consolidate,
+                consolidation::job::CONSOLIDATE_CONCURRENCY,
+            ),
         ]
+    }
+
+    /// Executa agora os jobs `consolidate` prontos em `now` (testes e diagnóstico).
+    pub async fn run_consolidate_jobs(&self, now: DateTime<Utc>) -> usize {
+        drain(self, &Consolidate, now).await
     }
 
     /// Executa agora os jobs `webhook` prontos em `now` (testes e diagnóstico).

@@ -1,21 +1,49 @@
 # Clarify - consolidação
 
-**Atualizado em**: 2026-10-30
+**Atualizado em**: 2026-10-31
 
 ## Perguntas
 
 | ID | Tópico | Pergunta | Status | Resolução |
-|----|--------|----------|--------|-----------|
-| Q-001 | Escopo de `mark_verified` | Qual escopo e tipo de token? | aberta | Recomendação: any·write, sujeito ao acesso efetivo no canal. |
-| Q-002 | `stale_candidate` no contexto | Memória sinalizada continua no contexto? | aberta | Recomendação: sim, sem mudança; é só sinal para a tela do gestor até ser arquivada. |
+|----|--------|----------|--------|--------------|
+| Q-001 | `mark_verified` | Tipo, escopo, status aceitos e efeitos. | resolvida | `any`·`write` com `write` efetivo no canal (como `pin_memory`); aceita qualquer status; grava `verified_at = agora` e auditoria `memory.verify`, limpa `stale_candidate`; sem revisão, sem mudar `memories.version`/`channels.version`; aceita `Idempotency-Key`; responde a `Memory`. Corpo vazio. |
+| Q-002 | `stale_candidate` no contexto e na leitura | A candidata continua no contexto? Como o gestor a encontra? | resolvida | Continua no contexto, sem mudança (é sinal para o gestor até ser arquivada). `Memory` ganha `stale_candidate` e `merged_into`; `list_memories` ganha `stale=true\|false`; `channel_stats` ganha `stale`. `restore_memory` limpa `merged_into` e `stale_candidate`. `importance_pending` não é exposto. |
+| Q-003 | Base do desuso | "Sem injeção recente" exige um instante, mas só existe `injected_count`. | resolvida | Coluna nova `memories.last_injected_at`, avançada no mesmo lote de `bump_injections` (sem mudar `version`). Último uso = maior entre `updated_at`, `last_retrieved_at`, `last_injected_at` e `verified_at`. Só `active`. A tarefa recalcula nos dois sentidos (sinaliza e limpa). `usage_log` descartado como base: a retenção de 90 dias o corta e exige varrer JSON. |
+| Q-004 | `dry_run` e o LLM | O `dry_run` chama o Redator para saber se cada par seria fundido? | resolvida | Não: o `dry_run` é síncrono, sem LLM e sem custo. Devolve os pares candidatos (com o cosseno), as memórias a classificar e as sinalizações/limpezas/arquivamentos de desuso, já com os limites de lote aplicados. A execução avalia exatamente esses candidatos; a decisão de fundir (e as notas) só existe nela. O critério "prevê as mesmas ações" passa a ser sobre os candidatos. |
+| Q-005 | Forma da execução | Um job por canal ou por ação? Lease? Onde fica o resultado? | resolvida | Um job `consolidate` por canal (`payload { channel_id, tasks, trigger: schedule\|manual }`), concorrência 1, lease fixo de 30 min (o runner não renova lease). Cada ação é uma transação com compare-and-set; reexecutar depois de um lease perdido é seguro. Pedido para canal com `consolidate` `queued`/`running` devolve o job existente (`already_queued: true`). Resultado: auditoria `consolidation.run` (entidade canal, contagens, sem textos) e resumo em `schema_meta['consolidation.last_run']` para o `get_status`. Sem coluna nova em `jobs`. |
+| Q-006 | Regras da fusão | Pareamento, limites, guarda, categoria e contadores. | resolvida | Pares só entre `active` do canal com vetor do modelo vigente; varredura exata em Rust sobre os vetores do canal; ordem por cosseno decrescente (desempate por ids); guloso, cada memória em no máximo um par por execução; até 20 pares por canal por execução (constante). O Redator recebe os dois textos como dado e devolve `{ merge: bool, text? }`. Fusão aceita só se o texto respeitar `memory.text_min/max`, não repetir outra memória do canal e passar a guarda de sentido contra **cada** original (`redator.min_similarity`; falha fechada = não funde). A mais antiga mantém a categoria, recebe a soma de `retrieval_count`/`injected_count` e o maior `last_*`, zera `importance`/`importance_pending` e `stale_candidate`, volta a `title_state = pending` e reenfileira `redact` e `embed`. |
+| Q-007 | Regras da importância | Quais memórias, lote, prompt e reclassificação. | resolvida | Só `active` com `importance` e `importance_pending` nulos; lotes de até 20 por chamada e até 10 chamadas por canal por execução (constantes). Prompt com slug, nome e descrição do canal e, por memória, `id`, categoria, título e texto como dado; resposta `{ scores: [{ id, importance }] }` validada (todos os ids do lote, uma vez, 0 a 1, arredondado a 2 casas). Lote inválido não grava nada. Sem reclassificação periódica: só edição (que zera) devolve a memória à fila de classificação. |
+| Q-008 | Promoção de `importance_pending` | Confirmar D-001 e o ponto exato. | resolvida | Toda transação do `Store` que incrementa `channels.version` (`bump_channel` das memórias e as três atualizações de `channels.rs`) promove, no mesmo statement de apoio, `importance = importance_pending, importance_pending = NULL` do canal. `move_memory` leva a pendência junto e promove nos dois canais. Mudança de assinatura não incrementa `channels.version` e não promove (a `version` muda por outro termo, sem mudar a ordem interna). |
+| Q-009 | Eventos | Quais ações do consolidador e de `mark_verified` geram webhook? | resolvida | Fusão: `memory.updated` (a mantida) e `memory.archived` (a fundida) na mesma transação; arquivamento por desuso: um `memory.archived` por canal com todos os ids. Importância, sinalização de desuso e `mark_verified` não geram evento: não mudam `channels.version` e um evento com a mesma `channel_version` seria descartado por quem desempata por ela. `run_consolidation` e `mark_verified` entram em `WITHOUT_EVENTS`. O guia `integracao-gestor` registra isso. |
+| Q-010 | Agendador | Crate, fuso, frequência e perda de horário. | resolvida | `croner` 4 (D-002), expressão de 5 campos em UTC, validada no `update_settings` por um `SettingType::Cron` novo. Verificação a cada 60 s em `background.rs`; `schema_meta['consolidation.last_scheduled']` guarda o último horário disparado; se houver um ou mais horários perdidos desde ele, dispara uma vez só (sem recuperar cada um). Primeiro start sem registro: grava o horário atual como base, sem disparar. |
+| Q-011 | `run_consolidation` nos limites | Canal desligado, arquivado, sem canal, `tasks` e respostas. | resolvida | `channel` explícito com `enabled = false` → `409 CONSOLIDATION_DISABLED` (código novo), exceto com `dry_run` (para pré-visualizar antes de ligar); canal arquivado → `409 CHANNEL_ARCHIVED`; inexistente → `404 CHANNEL_NOT_FOUND`. Sem `channel`: todos os habilitados (lista vazia é `202` com `jobs: []`). `tasks` padrão = `consolidation.tasks`; valor fora de `duplicates`/`importance`/`stale` → `VALIDATION_ERROR`. `dry_run` → `200 { dry_run: true, channels: [...] }`; execução → `202 { dry_run: false, jobs: [{ channel, job_id, already_queued }] }`. Aceita `Idempotency-Key`. |
+| Q-012 | Provedores indisponíveis | O que acontece sem Redator ou sem embeddings? | resolvida | Usa `redator.*` (inclusive `redator.enabled`, `fallback_models`, `timeout_ms` e as `instructions` do canal). Redator desligado/não configurado → `duplicates` e `importance` puladas com `redator_not_configured`; `embedding.provider = off` → `duplicates` pulada com `embeddings_off`; durante reindexação, só entram memórias com vetor do modelo vigente. Falha do LLM numa chamada: a ação é pulada e contada como `failed`; o job termina `done` (o próximo horário tenta de novo), sem retentativa da fila. |
+| Q-013 | Tag e guia | Onde documentar `run_consolidation`? | resolvida | Tag nova `Consolidation` (admin, em `ADMIN_TAGS`) coberta pelo guia novo `docs/guides/consolidacao.md` (admin): tarefas, configurações, `dry_run`, efeitos na ordem e na `version`, auditoria e eventos. `mark_verified` fica na tag `Memories` (guia `escrever-memorias`). |
+| Q-014 | Pares recusados | Sem memória das recusas, o mesmo par volta ao Redator toda noite e ocupa o limite de 20. | resolvida | Tabela nova `consolidation_pairs (memory_a, memory_b, hash_a, hash_b, decided_at)`, com `memory_a < memory_b` e as duas colunas referenciando `memories (id)` com `ON DELETE CASCADE` (como `memory_vectors`), gravada quando o Redator recusa. O planejador ignora o par enquanto os dois `content_hash` forem os gravados; a consolidação do canal remove os pares cujo hash mudou. Alternativa descartada: `schema_meta` (cresce sem índice). |
 
 ## Decisões
 
 | ID | Decisão | Fonte | Impacto |
 |----|---------|-------|---------|
-| D-001 | A nota calculada vai para `importance_pending`; a próxima mutação real do canal promove `importance_pending → importance` na mesma transação que incrementa `channels.version`. Assim a ordem nunca muda sem mudança de `version`, inclusive após reinício. | desenho §2, §8 | Coluna nova na migração `0009`. |
-| D-002 | Agendador com a crate `croner`; um job `consolidate` por canal elegível no horário. | desenho §10 | Nova dependência registrada. |
+| D-001 | A nota calculada vai para `importance_pending`; a próxima transação que incrementa `channels.version` promove `importance_pending → importance` (Q-008). Assim a ordem nunca muda sem mudança de `version`, inclusive após reinício ou despejo do cache LRU. | desenho §2, §8 | Coluna nova na migração `0009`. |
+| D-002 | Agendador com a crate `croner` (4.x, versão exata fixada no spike); um job `consolidate` por canal elegível no horário. | desenho §10 | Dependência nova (decisão 0025). |
+| D-003 | Autor das revisões e da auditoria: `system/consolidador` (mesmo `SYSTEM_APP` do Redator). Razões de revisão: `consolidation.merge` (as duas memórias do par) e `consolidation.stale` (arquivamento automático). | desenho §10 | Reaproveita o padrão do Redator. |
+| D-004 | O planejador é uma função pura `plan(channel, memórias, vetores, pares recusados, config, agora) -> ChannelPlan`, usada pelo `dry_run` e pela execução; a execução só age sobre o plano. | FR-005 | Garante `dry_run` = candidatos executados. |
+| D-005 | O cosseno entre memórias é calculado em Rust sobre os vetores do canal (varredura exata, como a decisão 0018), não com `vec_distance_cosine` em junção do SQLite. | 0018 | Sem SQL novo de vetor; custo O(n²) por canal, aceitável no volume esperado e só no horário. |
+
+## Mudanças no desenho
+
+1. **§6**: `memories.importance_pending`, `memories.last_injected_at`, tabela `consolidation_pairs`; promoção da pendência na transação de `channels.version`.
+2. **§10**: ordem das tarefas, limites por execução, `dry_run` sem LLM, pares recusados, eventos, provedores indisponíveis.
+3. **§12**: tipos `cron` e lista de opções; `consolidation.schedule` em UTC.
+4. **§13**: `mark_verified` (agent·write) na linha das memórias.
+5. **§17**: ações do consolidador que geram (e não geram) evento.
+6. **§20**: `engramind_consolidation_actions_total`.
+
+## Confirmações
+
+A usuária aprovou todas as recomendações de Q-001 a Q-014 e as mudanças de desenho (2026-10-31).
 
 ## Bloqueios
 
-Q-001 e Q-002 antes da migração `0009`.
+Nenhum.

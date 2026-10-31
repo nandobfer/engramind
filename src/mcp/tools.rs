@@ -28,6 +28,7 @@ use crate::{
         audit::AuditQuery,
         authz,
         channels::{CreateChannelBody, ListChannelsQuery, UpdateChannelBody},
+        consolidation::RunConsolidationBody,
         context::{ContextFormat, ContextOutcome, GetContextQuery},
         docs::{GetGuideQuery, ListOperationsQuery, SearchDocsQuery},
         embeddings::{ListEmbeddingModelsBody, TestEmbeddingBody},
@@ -299,6 +300,15 @@ pub struct ListEmbeddingModelsRequest {
     /// Chave em claro (não é gravada); vazia usa `embedding.api_key`.
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RunConsolidationRequest {
+    #[serde(flatten)]
+    pub body: RunConsolidationBody,
+    /// Mesmo efeito do cabeçalho `Idempotency-Key`.
     #[serde(default)]
     pub idempotency_key: Option<String>,
 }
@@ -1202,6 +1212,25 @@ impl EngramindServer {
     }
 
     #[tool]
+    async fn mark_verified(
+        &self,
+        Parameters(request): Parameters<MemoryMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency_key.as_deref();
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .mark_verified(&principal, &request.memory, header.as_deref(), key)
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result.map(|mutation| mutation.value))
+    }
+
+    #[tool]
     async fn unpin_memory(
         &self,
         Parameters(request): Parameters<MemoryMutationRequest>,
@@ -1451,6 +1480,21 @@ impl EngramindServer {
         reply(
             self.core
                 .reembed_all(&principal, request.idempotency_key.as_deref())
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn run_consolidation(
+        &self,
+        Parameters(request): Parameters<RunConsolidationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .run_consolidation(&principal, request.body, request.idempotency_key.as_deref())
                 .await
                 .map(|mutation| mutation.value),
         )

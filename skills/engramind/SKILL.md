@@ -80,6 +80,8 @@ engramind memories revert m_8f2a1c3d --version 2 --json
 
 Memória obsoleta: arquive em vez de excluir (`engramind memories archive m_8f2a1c3d`); ela sai do contexto e continua no histórico.
 
+Conferiu uma memória contra o código e ela continua certa? Registre: `engramind memories verify m_8f2a1c3d` grava `verified_at` sem mudar o contexto e tira a marca `stale_candidate` (memória sem uso, que o consolidador pode arquivar). Uma memória com `merged_into` foi fundida em outra: use o id de `merged_into`.
+
 ## Erros comuns
 
 Em erro, a saída é `{ "error": { "code", "message", "details" } }` e o código de saída não é 0.
@@ -97,4 +99,4 @@ Em erro, a saída é `{ "error": { "code", "message", "details" } }` e o código
 
 Mais detalhes: `engramind docs guide escrever-memorias`.
 
-Importar memórias em lote, configurar webhooks e ver uso e métricas são tarefas do gestor, com token `admin` (guia `integracao-gestor`); um token `agent` recebe `SCOPE_REQUIRED` nelas.
+Importar memórias em lote, configurar webhooks, rodar a consolidação e ver uso e métricas são tarefas do gestor, com token `admin` (guia `integracao-gestor`); um token `agent` recebe `SCOPE_REQUIRED` nelas.

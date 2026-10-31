@@ -14,6 +14,7 @@ use super::{
 };
 use crate::{
     core::{
+        consolidation::job::{MemoryMerge, StaleOutcome, StaleWrite},
         ids,
         memory_text::hash_hex,
         model::{
@@ -31,7 +32,7 @@ pub(super) const MEMORY_COLUMNS: &str = "m.id, c.slug, m.channel_id, m.category,
      m.text, m.status, m.importance, m.version, m.embedding_state, m.author_app_id, a.slug, \
      m.author_agent_id, ga.slug || '/' || g.slug, m.origin_source, m.origin_label, \
      m.retrieval_count, m.injected_count, m.last_retrieved_at, m.verified_at, m.created_at, \
-     m.updated_at, m.archived_at";
+     m.updated_at, m.archived_at, m.stale_candidate, m.merged_into";
 pub(super) const MEMORY_JOINS: &str = "JOIN channels c ON c.id = m.channel_id \
      LEFT JOIN apps a ON a.id = m.author_app_id \
      LEFT JOIN agents g ON g.id = m.author_agent_id \
@@ -85,6 +86,8 @@ pub(super) fn memory_from_row(row: &Row<'_>) -> rusqlite::Result<Memory> {
         created_at: row.get(21)?,
         updated_at: row.get(22)?,
         archived_at: row.get(23)?,
+        stale_candidate: row.get(24)?,
+        merged_into: row.get(25)?,
     })
 }
 
@@ -181,6 +184,9 @@ pub(super) fn list_memories(
             placeholders(filter.categories.len())
         ));
         values.extend(texts(filter.categories.iter().map(String::as_str)));
+    }
+    if let Some(stale) = filter.stale {
+        conditions.push(format!("m.stale_candidate = {}", i64::from(stale)));
     }
     for (column, value) in [
         ("m.author_app_id = ?", &filter.author_app_id),
@@ -342,7 +348,8 @@ pub(super) fn channel_stats(
                 COALESCE(SUM(title_state = 'pending'), 0),
                 COALESCE(SUM(embedding_state = 'pending'), 0),
                 COALESCE(SUM(retrieval_count), 0),
-                MAX(updated_at)
+                MAX(updated_at),
+                COALESCE(SUM(stale_candidate), 0)
          FROM memories WHERE channel_id = ?1",
         params![channel_id],
         |row| {
@@ -364,6 +371,7 @@ pub(super) fn channel_stats(
                 },
                 retrievals: count(6)?,
                 last_memory_at: row.get(7)?,
+                stale: count(8)?,
             })
         },
     )?;
@@ -451,10 +459,27 @@ fn ensure_channel_active(transaction: &Transaction, channel_id: &str) -> Result<
     }
 }
 
-fn bump_channel(transaction: &Transaction, channel_id: &str) -> Result<(), StoreError> {
+pub(super) fn bump_channel(transaction: &Transaction, channel_id: &str) -> Result<(), StoreError> {
     transaction
         .execute(
             "UPDATE channels SET version = version + 1 WHERE id = ?1",
+            params![channel_id],
+        )
+        .map_err(sql_error)?;
+    promote_importance(transaction, channel_id)
+}
+
+/// A nota do consolidador só passa a valer na transação que incrementa `channels.version`
+/// (009 D-001): a ordem do contexto nunca muda sem mudar a `version`. Toda escrita que
+/// incrementa `channels.version` chama esta função.
+pub(super) fn promote_importance(
+    transaction: &Transaction,
+    channel_id: &str,
+) -> Result<(), StoreError> {
+    transaction
+        .execute(
+            "UPDATE memories SET importance = importance_pending, importance_pending = NULL
+             WHERE channel_id = ?1 AND importance_pending IS NOT NULL",
             params![channel_id],
         )
         .map_err(sql_error)?;
@@ -790,7 +815,8 @@ pub(super) fn update_memory(
         transaction
             .execute(
                 "UPDATE memories SET title = ?1, text = ?2, content_hash = ?3,
-                     title_state = 'pending', embedding_state = ?5, importance = NULL
+                     title_state = 'pending', embedding_state = ?5, importance = NULL,
+                     importance_pending = NULL, stale_candidate = 0
                  WHERE id = ?4",
                 params![
                     content.title,
@@ -871,6 +897,15 @@ pub(super) fn set_memory_status(
             params![next.as_str(), archived_at, context.at, before.id],
         )
         .map_err(sql_error)?;
+    if action == StatusAction::Restore {
+        // A memória restaurada deixa de ser fundida e volta a ser usada (009 Q-002).
+        transaction
+            .execute(
+                "UPDATE memories SET merged_into = NULL, stale_candidate = 0 WHERE id = ?1",
+                params![before.id],
+            )
+            .map_err(sql_error)?;
+    }
     let after = load(transaction, &before.id)?;
     revision(transaction, &after, action.reason(), context)?;
     bump_channel(transaction, &after.channel_id)?;
@@ -1029,7 +1064,8 @@ pub(super) fn apply_redaction(
         transaction
             .execute(
                 "UPDATE memories SET text = ?1, content_hash = ?2, embedding_state = ?5,
-                     importance = NULL, version = version + 1, updated_at = ?3
+                     importance = NULL, importance_pending = NULL, version = version + 1,
+                     updated_at = ?3
                  WHERE id = ?4",
                 params![text, hash, context.at, redaction.memory_id, state],
             )
@@ -1083,4 +1119,232 @@ pub(super) fn set_title_fallback(
         params![memory_id, expected_hash],
     )?;
     Ok(changed > 0)
+}
+
+// ---------- consolidação (009) ----------
+
+/// Fusão do consolidador numa transação: confere os dois `content_hash` e o status `active`
+/// (senão `Conflict("MEMORY_CHANGED")`), grava o texto e os contadores na mantida (revisão
+/// `consolidation.merge` quando o texto muda) e arquiva a outra com `merged_into`.
+pub(super) fn merge_memories(
+    transaction: &Transaction,
+    merge: &MemoryMerge,
+    context: &WriteContext,
+) -> Result<(), StoreError> {
+    let keep = load_target(
+        transaction,
+        &MemoryTarget {
+            id: merge.keep_id.clone(),
+            channel_id: merge.channel_id.clone(),
+        },
+    )?;
+    let other = load_target(
+        transaction,
+        &MemoryTarget {
+            id: merge.archive_id.clone(),
+            channel_id: merge.channel_id.clone(),
+        },
+    )?;
+    ensure_channel_active(transaction, &merge.channel_id)?;
+    let current = |id: &str| -> Result<Vec<u8>, StoreError> {
+        content_hash(transaction, id)
+            .map_err(sql_error)?
+            .ok_or(StoreError::NotFound)
+    };
+    if keep.status != MemoryStatus::Active
+        || other.status != MemoryStatus::Active
+        || current(&keep.id)? != merge.keep_hash
+        || current(&other.id)? != merge.archive_hash
+    {
+        return Err(StoreError::Conflict("MEMORY_CHANGED"));
+    }
+    if let Some((_, hash, _)) = &merge.text {
+        let duplicate: bool = transaction
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM memories
+                     WHERE channel_id = ?1 AND content_hash = ?2 AND id NOT IN (?3, ?4))",
+                params![merge.channel_id, hash, keep.id, other.id],
+                |row| row.get(0),
+            )
+            .map_err(sql_error)?;
+        if duplicate {
+            return Err(StoreError::Conflict("MEMORY_DUPLICATE"));
+        }
+    }
+    let keep_before = audited(transaction, &keep.id)?;
+    let other_before = audited(transaction, &other.id)?;
+    // Contadores somados e o uso mais recente das duas: a mantida representa as duas.
+    let latest = |left: &Option<String>, right: &Option<String>| match (left, right) {
+        (Some(left), Some(right)) => Some(left.max(right).clone()),
+        (left, right) => left.clone().or_else(|| right.clone()),
+    };
+    let (keep_injected_at, other_injected_at): (Option<String>, Option<String>) = transaction
+        .query_row(
+            "SELECT (SELECT last_injected_at FROM memories WHERE id = ?1),
+                    (SELECT last_injected_at FROM memories WHERE id = ?2)",
+            params![keep.id, other.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(sql_error)?;
+    transaction
+        .execute(
+            "UPDATE memories SET retrieval_count = retrieval_count + ?2,
+                 injected_count = injected_count + ?3, last_retrieved_at = ?4,
+                 last_injected_at = ?5, stale_candidate = 0
+             WHERE id = ?1",
+            params![
+                keep.id,
+                other.retrieval_count,
+                other.injected_count,
+                latest(&keep.last_retrieved_at, &other.last_retrieved_at),
+                latest(&keep_injected_at, &other_injected_at)
+            ],
+        )
+        .map_err(sql_error)?;
+    if let Some((text, hash, title)) = &merge.text {
+        transaction
+            .execute(
+                "UPDATE memories SET text = ?1, content_hash = ?2, title = ?3,
+                     title_state = 'pending', embedding_state = ?4, importance = NULL,
+                     importance_pending = NULL, version = version + 1, updated_at = ?5
+                 WHERE id = ?6",
+                params![
+                    text,
+                    hash,
+                    title,
+                    embedding_state(&merge.jobs),
+                    context.at,
+                    keep.id
+                ],
+            )
+            .map_err(sql_error)?;
+        let after = load(transaction, &keep.id)?;
+        revision(transaction, &after, "consolidation.merge", context)?;
+        enqueue(transaction, &merge.jobs, &after, context)?;
+    }
+    transaction
+        .execute(
+            "UPDATE memories SET status = 'archived', archived_at = ?1, merged_into = ?2,
+                 stale_candidate = 0, version = version + 1, updated_at = ?1
+             WHERE id = ?3",
+            params![context.at, keep.id, other.id],
+        )
+        .map_err(sql_error)?;
+    let archived = load(transaction, &other.id)?;
+    revision(transaction, &archived, "consolidation.merge", context)?;
+    bump_channel(transaction, &merge.channel_id)?;
+    let mut keep_after = audited(transaction, &keep.id)?;
+    keep_after["merged"] = json!(other.id);
+    audit(
+        transaction,
+        context,
+        "memory.merge",
+        &keep.id,
+        Some(keep_before),
+        Some(keep_after),
+    )?;
+    let mut other_after = audited(transaction, &other.id)?;
+    other_after["reason"] = json!("merged");
+    other_after["merged_into"] = json!(keep.id);
+    audit(
+        transaction,
+        context,
+        "memory.archive",
+        &other.id,
+        Some(other_before),
+        Some(other_after),
+    )?;
+    journal::emit(transaction, context, &[])?;
+    Ok(())
+}
+
+/// Desuso: sinaliza e limpa sem mudar `version`; arquiva com revisão `consolidation.stale`,
+/// auditoria, `channels.version + 1` e o evento (só as que ainda estão `active` com o mesmo
+/// conteúdo).
+pub(super) fn apply_stale(
+    transaction: &Transaction,
+    write: &StaleWrite,
+    context: &WriteContext,
+) -> Result<StaleOutcome, StoreError> {
+    let mut outcome = StaleOutcome::default();
+    for (ids, value) in [(&write.flag, 1), (&write.clear, 0)] {
+        for id in ids {
+            let changed = transaction
+                .execute(
+                    "UPDATE memories SET stale_candidate = ?1
+                     WHERE id = ?2 AND channel_id = ?3 AND status = 'active'
+                       AND stale_candidate <> ?1",
+                    params![value, id, write.channel_id],
+                )
+                .map_err(sql_error)? as u64;
+            if value == 1 {
+                outcome.flagged += changed;
+            } else {
+                outcome.cleared += changed;
+            }
+        }
+    }
+    if write.archive.is_empty() {
+        return Ok(outcome);
+    }
+    ensure_channel_active(transaction, &write.channel_id)?;
+    for (id, hash) in &write.archive {
+        let before = audited(transaction, id);
+        let changed = transaction
+            .execute(
+                "UPDATE memories SET status = 'archived', archived_at = ?1, stale_candidate = 1,
+                     version = version + 1, updated_at = ?1
+                 WHERE id = ?2 AND channel_id = ?3 AND status = 'active' AND content_hash = ?4",
+                params![context.at, id, write.channel_id, hash],
+            )
+            .map_err(sql_error)?;
+        if changed == 0 {
+            continue;
+        }
+        let after = load(transaction, id)?;
+        revision(transaction, &after, "consolidation.stale", context)?;
+        let mut audit_after = audited(transaction, id)?;
+        audit_after["reason"] = json!("stale");
+        audit(
+            transaction,
+            context,
+            "memory.archive",
+            id,
+            before.ok(),
+            Some(audit_after),
+        )?;
+        outcome.archived.push(id.clone());
+    }
+    if !outcome.archived.is_empty() {
+        bump_channel(transaction, &write.channel_id)?;
+        journal::emit(transaction, context, &outcome.archived)?;
+    }
+    Ok(outcome)
+}
+
+/// `mark_verified`: `verified_at` e auditoria, limpa `stale_candidate`; sem revisão, sem
+/// `version` e sem evento (009 Q-001).
+pub(super) fn mark_verified(
+    transaction: &Transaction,
+    target: &MemoryTarget,
+    context: &WriteContext,
+) -> Result<Memory, StoreError> {
+    let before = load_target(transaction, target)?;
+    transaction
+        .execute(
+            "UPDATE memories SET verified_at = ?1, stale_candidate = 0 WHERE id = ?2",
+            params![context.at, before.id],
+        )
+        .map_err(sql_error)?;
+    let after = load(transaction, &before.id)?;
+    audit(
+        transaction,
+        context,
+        "memory.verify",
+        &after.id,
+        Some(json!({ "verified_at": before.verified_at })),
+        Some(json!({ "verified_at": after.verified_at })),
+    )?;
+    journal::remember(transaction, context, &after)?;
+    Ok(after)
 }

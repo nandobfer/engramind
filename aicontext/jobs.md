@@ -3,7 +3,7 @@
 ## Onde vive
 
 - `src/core/jobs/mod.rs`: `JobOutcome`, `list_jobs`, `retry_job`, `list_llm_calls`.
-- `src/core/jobs/runner.rs`: trait `JobHandler` (`KIND`, `lease`, `run`), `spawn` (runner em segundo plano), `drain` e `Core::spawn_workers` / `Core::run_redact_jobs(now)` / `Core::run_embed_jobs(now)`. Runners: `Redact` e `Embed` (007, `aicontext/embeddings.md`), 2 em paralelo cada, e `Webhook` (008, `aicontext/webhooks.md`), 4 em paralelo.
+- `src/core/jobs/runner.rs`: trait `JobHandler` (`KIND`, `lease`, `run`), `spawn` (runner em segundo plano), `drain` e `Core::spawn_workers` / `Core::run_redact_jobs(now)` / `Core::run_embed_jobs(now)`. Runners: `Redact` e `Embed` (007, `aicontext/embeddings.md`), 2 em paralelo cada, `Webhook` (008, `aicontext/webhooks.md`), 4 em paralelo, e `Consolidate` (009, `aicontext/consolidation.md`), 1 por vez com lease fixo de 30 min (`Core::run_consolidate_jobs(now)`).
 - `src/store/sqlite/jobs.rs`: captura, fim, superados, lista, retry, contagens, `secrets` e `llm_calls`.
 - Adaptadores: `src/rest/jobs.rs` (tag `Jobs`, admin), ferramentas MCP de mesmo nome, `engramind jobs list|retry` e `engramind llm-calls list`.
 

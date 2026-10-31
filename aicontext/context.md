@@ -22,6 +22,7 @@ Guias: `contexto-e-cache`, `integracao-consumidor`, `integracao-mcp`.
 - Nada além de uma mudança real (memória, canal, assinatura, configuração de renderização) muda a ordem, o conteúdo ou a `version`. Contadores nunca entram.
 - Toda escrita que muda o que o bloco mostra (texto, título, status, categoria, canal) precisa incrementar `channels.version` e chamar `network_changed()`; o Redator também ao aplicar só o título (`Store::apply_redaction`).
 - Chave nova que muda o bloco entra em `settings::CONTEXT_RENDER_KEYS` (hash da `version`).
+- `importance` só muda junto com `channels.version`: o consolidador grava `importance_pending` e `promote_importance` a promove em toda transação que incrementa a versão do canal (009 D-001, [`consolidation.md`](consolidation.md)).
 - A escolha das memórias é a mesma em todos os formatos; o custo é a linha `tagged`.
 - O texto vai para o bloco escapado (D-002); nunca para logs. `304` é `DEBUG`.
 - `injected_count` e `usage_log` só em respostas com conteúdo; `usage_log.at` é RFC 3339 UTC ordenável.

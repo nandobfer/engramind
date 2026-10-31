@@ -8,6 +8,7 @@ pub mod authz;
 pub mod background;
 pub mod bootstrap;
 pub mod channels;
+pub mod consolidation;
 pub mod context;
 pub mod counters;
 pub mod docs;

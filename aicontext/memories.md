@@ -14,7 +14,7 @@
 ## Operações
 
 - Qualquer token·read: `list_memories`, `get_memory`, `memory_history` (tag `Memories`); `channel_stats` (tag `Channels`). `search_memories` está na tag `Search` (0.7.0).
-- Qualquer token·write: `create_memory`, `update_memory`, `archive_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `move_memory`, `revert_memory`.
+- Qualquer token·write: `create_memory`, `update_memory`, `archive_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `move_memory`, `revert_memory` e `mark_verified` (0.9.0, sem revisão nem `version`; ver [`consolidation.md`](consolidation.md)).
 - Qualquer token·delete: `delete_memory`.
 - admin: `get_channel_settings` (read), `update_channel_settings` (write), tag `Settings`.
 
@@ -30,7 +30,8 @@ Guia: `escrever-memorias`; skill: `skills/engramind/SKILL.md`.
 - Canal arquivado: escrita → `409 CHANNEL_ARCHIVED`; leitura e `delete_memory` continuam.
 - `delete_memory` mantém só a última revisão; `delete_channel` apaga memórias e revisões do canal.
 - `memories.seq` é o rowid do `memory_fts` (triggers de insert/delete/update de `title`/`text`); nunca dependa de rowid implícito.
-- Contadores nunca mudam `version` nem `updated_at`.
+- Contadores nunca mudam `version` nem `updated_at`; `bump_injections` também avança `last_injected_at` (base do desuso).
+- `Memory` expõe `stale_candidate` e `merged_into` (consolidador); `list_memories` filtra por `stale`; `restore_memory` limpa os dois. Edição de texto zera `importance`, `importance_pending` e `stale_candidate`.
 - O texto das memórias nunca vai para logs, auditoria ou mensagens de erro.
 
 Desenho: §6, §7, §9, §12 e §13. Decisões: `0011` e `0012`.

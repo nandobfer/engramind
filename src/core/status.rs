@@ -78,7 +78,7 @@ pub struct WebhooksStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StatusView {
-    #[schema(example = "0.8.0")]
+    #[schema(example = "0.9.0")]
     pub version: String,
     /// Segundos desde a subida do processo.
     #[schema(example = 86_400)]
@@ -92,6 +92,7 @@ pub struct StatusView {
     pub webhooks: WebhooksStatus,
     /// Última execução da retenção; `null` antes da primeira.
     pub retention: Option<RetentionReport>,
+    pub consolidation: crate::core::consolidation::ConsolidationStatus,
 }
 
 /// Valores dos gauges de `/metrics`, lidos a cada scrape.
@@ -174,6 +175,7 @@ impl<S: Store> Core<S> {
                 .llm_summary(redator::JOB_KIND.to_owned(), since.clone())
                 .await?,
         };
+        let consolidation = self.consolidation_status(since.clone()).await?;
         let webhook_counts = self.store().webhook_counts(since).await?;
         let directory = self.store().webhook_directory().await?;
         let webhooks = WebhooksStatus {
@@ -206,6 +208,7 @@ impl<S: Store> Core<S> {
             embedding: self.embedding_status().await?,
             webhooks,
             retention: self.retention_report().await?,
+            consolidation,
         })
     }
 

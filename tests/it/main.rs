@@ -3,6 +3,7 @@
 
 mod channels;
 mod cli;
+mod consolidation;
 mod context;
 mod contract;
 mod docs;

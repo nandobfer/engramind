@@ -20,6 +20,7 @@ pub const ADMIN_TAGS: &[&str] = &[
     "Jobs",
     "Audit",
     "Integration",
+    "Consolidation",
 ];
 
 /// Tags sem guia próprio além da visão geral.
@@ -117,6 +118,13 @@ const GUIDES: &[GuideSource] = &[
         audience: Audience::Admin,
         tags: &["Settings", "Embeddings"],
         content: include_str!("../../../docs/guides/configuracoes.md"),
+    },
+    GuideSource {
+        id: "consolidacao",
+        file: "consolidacao.md",
+        audience: Audience::Admin,
+        tags: &["Consolidation"],
+        content: include_str!("../../../docs/guides/consolidacao.md"),
     },
     GuideSource {
         id: "operacao",

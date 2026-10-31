@@ -60,6 +60,7 @@ Todo erro usa o envelope único:
 | `PROVIDER_LISTING_UNSUPPORTED` | 400 | 2 | O provedor (`gemini` ou `off`) não oferece listagem de modelos de embedding. |
 | `EMBEDDING_DIMENSION_MISMATCH` | 502 | 8 | O provedor devolveu vetores de outra dimensão (a configurada em `embedding.dimensions` ou a do modelo); `details.expected` e `details.got`. |
 | `REEMBED_IN_PROGRESS` | 409 | 6 | Já há uma reindexação com jobs na fila; acompanhe em `get_status.embedding`. |
+| `CONSOLIDATION_DISABLED` | 409 | 6 | O canal está com `consolidation.enabled = false`; ligue a configuração no canal ou use `dry_run` para só pré-visualizar. |
 | `PAYLOAD_TOO_LARGE` | 413 | 1 | Corpo acima de MAX_BODY_BYTES. |
 | `MCP_BAD_REQUEST` | 400 | 1 | Cabeçalhos ou mensagem MCP inválidos. |
 | `MCP_HOST_FORBIDDEN` | 403 | 1 | Cabeçalho `Host` fora de MCP_ALLOWED_HOSTS. |
@@ -90,6 +91,7 @@ Todo erro usa o envelope único:
 - `502 PROVIDER_FAILED` e `504 PROVIDER_TIMEOUT`: o provedor do LLM ou de embedding falhou; confira modelo, URL e chave, ou acrescente `redator.fallback_models`. Numa troca de embedding, nada foi gravado.
 - `502 EMBEDDING_DIMENSION_MISMATCH`: ajuste ou apague `embedding.dimensions` (ou troque de modelo) e teste com `test_embedding`.
 - `409 REEMBED_IN_PROGRESS`: espere a reindexação atual terminar (`get_status.embedding.state`).
+- `409 CONSOLIDATION_DISABLED`: ligue `consolidation.enabled` no canal (`update_channel_settings`) ou rode com `dry_run` para só ver o plano.
 - `400 IDEMPOTENCY_KEY_REQUIRED`: mande `Idempotency-Key` (a CLI deriva uma do arquivo); repetir a mesma chave com o mesmo corpo devolve a resposta gravada.
 - `400 BATCH_TOO_LARGE`: divida o lote em partes de até `details.max` itens, cada uma com a sua chave.
 - `400 PROVIDER_LISTING_UNSUPPORTED`: escolha o modelo pela documentação do provedor e valide com `test_embedding`.

@@ -36,14 +36,14 @@ O corpo nunca tem textos, títulos nem valores de configuração, só identifica
 | `type` | Quando | Campos extras |
 |---|---|---|
 | `memory.created` | `create_memory`; `import_memories` (um evento com todos os ids criados) | — |
-| `memory.updated` | `update_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `revert_memory`, `move_memory` (um evento por canal envolvido) e o título ou o texto aplicado pelo Redator | — |
-| `memory.archived` | `archive_memory` | — |
+| `memory.updated` | `update_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `revert_memory`, `move_memory` (um evento por canal envolvido), o título ou o texto aplicado pelo Redator e a memória mantida numa fusão do consolidador | — |
+| `memory.archived` | `archive_memory`; a memória fundida pelo consolidador e o arquivamento por desuso (um evento com todos os ids) | — |
 | `memory.deleted` | `delete_memory` | — |
 | `channel.updated` | `create_channel`, `update_channel`, `archive_channel`, `restore_channel`, `delete_channel` | — |
 | `subscription.updated` | `subscribe`, `update_subscription`, `unsubscribe` | `subscription`, `agent` e `target` (canal ou prefixo); `channel` só com alvo exato |
 | `settings.updated` | `update_settings` e `set_secret` (`channel: null`); `update_channel_settings` (com o canal) | `keys`: as chaves alteradas |
 
-`channel_version` é a versão do canal depois da mudança (`null` em `settings.updated` global). Uma mutação que não muda nada (arquivar o que já está arquivado) e a repetição de uma chamada idempotente não geram evento.
+`channel_version` é a versão do canal depois da mudança (`null` em `settings.updated` global). Uma mutação que não muda nada (arquivar o que já está arquivado) e a repetição de uma chamada idempotente não geram evento. A nota de importância e a sinalização de desuso do consolidador e `mark_verified` também não: não mudam a `channel_version` nem o contexto (releia com `list_memories`, por exemplo `stale=true`).
 
 ## Entrega e verificação
 
@@ -98,7 +98,8 @@ A CLI aceita uma lista JSON, `{ "memories": [...] }` ou JSONL (um item por linha
 | Área | Operações |
 |---|---|
 | Canais | `list_channels`, `channel_stats`, `create_channel`, `update_channel`, `archive_channel`, `restore_channel`, `delete_channel` |
-| Memórias | `list_memories`, `search_memories`, `memory_history`, `revert_memory`, `pin_memory`, `archive_memory`, `move_memory`, `delete_memory`, `import_memories` |
+| Memórias | `list_memories`, `search_memories`, `memory_history`, `revert_memory`, `pin_memory`, `archive_memory`, `move_memory`, `delete_memory`, `mark_verified`, `import_memories` |
+| Consolidação | `run_consolidation` (com `dry_run`), `list_memories` com `stale=true`, `get_status.consolidation` |
 | Identidades | `list_apps`, `update_app` (webhook), `list_agents`, `list_tokens`, `issue_token`, `revoke_token` |
 | Assinaturas | `list_subscriptions`, `subscribe`, `update_subscription`, `unsubscribe` |
 | Configurações | `get_settings`, `update_settings`, `set_secret`, `test_redator`, `test_embedding` |

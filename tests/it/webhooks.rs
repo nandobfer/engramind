@@ -579,6 +579,8 @@ const WITHOUT_EVENTS: &[&str] = &[
     "list_embedding_models",
     "reembed_all",
     "retry_job",
+    "run_consolidation",
+    "mark_verified",
 ];
 
 /// Prepara o alvo da operação e devolve a chamada que deve gerar o evento.

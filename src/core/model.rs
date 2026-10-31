@@ -585,6 +585,11 @@ pub struct Memory {
     #[schema(example = "2026-10-30T12:00:00.000Z")]
     pub updated_at: String,
     pub archived_at: Option<String>,
+    /// Sem uso há mais de `consolidation.stale_after_days` (consolidador); continua no
+    /// contexto até ser arquivada.
+    pub stale_candidate: bool,
+    /// Memória que recebeu o texto desta numa fusão do consolidador.
+    pub merged_into: Option<String>,
 }
 
 /// Uma memória com `fields=title`.
@@ -734,6 +739,8 @@ pub struct MemoryFilter {
     pub author_agent_id: Option<String>,
     /// `updated_at >= since`.
     pub since: Option<String>,
+    /// Só as sinalizadas (`true`) ou só as não sinalizadas (`false`) pelo desuso.
+    pub stale: Option<bool>,
 }
 
 /// Busca textual: termos já normalizados, ordem por relevância.
@@ -781,6 +788,8 @@ pub struct ContextSnapshot {
 pub struct InjectionBump {
     pub memory_id: String,
     pub count: i64,
+    /// Instante do lote (`last_injected_at`).
+    pub at: String,
 }
 
 /// Uma linha de `usage_log` (desenho §6): `get_context` entregue ou `search_memories`.
@@ -830,6 +839,8 @@ pub struct ChannelStats {
     pub retrievals: u64,
     /// Última mudança de memória do canal.
     pub last_memory_at: Option<String>,
+    /// Memórias com `stale_candidate`.
+    pub stale: u64,
 }
 
 // ---------- 006: fila, segredos, chamadas ao LLM e Redator ----------

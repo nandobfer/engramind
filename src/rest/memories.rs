@@ -285,6 +285,13 @@ status_route!(
     "Exige `write` efetivo no canal. A memória `permanent` volta a `active`; nos outros status, nada muda. Aceita `Idempotency-Key`.",
     "Memória desafixada"
 );
+status_route!(
+    mark_verified,
+    "/v1/memories/{memory}/verify",
+    "Registra que a memória foi conferida",
+    "Exige `write` efetivo no canal. Grava `verified_at` (agora) e a auditoria `memory.verify` e limpa `stale_candidate`, sem nova revisão, sem mudar `version` da memória nem do canal e sem evento: o contexto não muda. Vale para qualquer status. Aceita `Idempotency-Key`.",
+    "Conferência registrada"
+);
 
 #[utoipa::path(
     post,

@@ -269,6 +269,8 @@ mod tests {
             created_at: String::new(),
             updated_at: String::new(),
             archived_at: None,
+            stale_candidate: false,
+            merged_into: None,
         }
     }
 

@@ -51,6 +51,7 @@ pub const TAG_STATUS: &str = "Status";
 pub const TAG_JOBS: &str = "Jobs";
 pub const TAG_AUDIT: &str = "Audit";
 pub const TAG_INTEGRATION: &str = "Integration";
+pub const TAG_CONSOLIDATION: &str = "Consolidation";
 pub const TAG_DOCUMENTATION: &str = "Documentation";
 
 const fn read(
@@ -546,6 +547,17 @@ pub const OPERATIONS: &[OperationSpec] = &[
         &["memories", "move"],
     ),
     any_mutation(
+        "mark_verified",
+        TAG_MEMORIES,
+        "Registra que a memória foi conferida",
+        Scope::Write,
+        false,
+        true,
+        "POST",
+        "/v1/memories/{memory}/verify",
+        &["memories", "verify"],
+    ),
+    any_mutation(
         "revert_memory",
         TAG_MEMORIES,
         "Restaura o conteúdo de uma versão anterior numa revisão nova",
@@ -670,6 +682,17 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "POST",
         "/v1/embeddings/reembed",
         &["embeddings", "reembed"],
+    ),
+    mutation(
+        "run_consolidation",
+        TAG_CONSOLIDATION,
+        "Consolida canais sob demanda ou mostra o plano (dry_run)",
+        Scope::Write,
+        false,
+        false,
+        "POST",
+        "/v1/consolidation/run",
+        &["consolidation", "run"],
     ),
     read(
         "list_jobs",

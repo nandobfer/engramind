@@ -237,26 +237,36 @@ pub fn backoff(attempts: i64) -> Duration {
         .min(Duration::from_secs(600))
 }
 
-fn short(error: &str) -> String {
+pub(crate) fn short(error: &str) -> String {
     error.chars().take(MAX_ERROR_CHARS).collect()
 }
 
 /// Resultado de uma rodada pelos modelos.
-struct Completion {
-    result: Result<(Output, String), Failure>,
-    calls: Vec<NewLlmCall>,
-    duration: Duration,
+pub(crate) struct Completion<T> {
+    pub result: Result<(T, String), Failure>,
+    pub calls: Vec<NewLlmCall>,
+    pub duration: Duration,
+}
+
+/// O que vai ao LLM numa rodada.
+pub(crate) struct Prompt {
+    pub system: String,
+    pub user: String,
+    pub schema_name: &'static str,
+    pub schema: Value,
+    pub purpose: &'static str,
+    pub attempt: i64,
 }
 
 /// Falha da rodada: a do último modelo tentado.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Failure {
+pub(crate) enum Failure {
     Llm(LlmError),
     Invalid(&'static str),
 }
 
 impl Failure {
-    fn reason(&self) -> String {
+    pub(crate) fn reason(&self) -> String {
         match self {
             Self::Llm(error) => error.to_string(),
             Self::Invalid(reason) => format!("resposta invalida: {reason}"),
@@ -273,7 +283,7 @@ struct Call<'a> {
 }
 
 impl<S: Store> Core<S> {
-    async fn redator_config(&self, channel_id: &str) -> Result<RedatorConfig, ApiError> {
+    pub(crate) async fn redator_config(&self, channel_id: &str) -> Result<RedatorConfig, ApiError> {
         let network = self.network().await?;
         let api_key = self.secret(REDATOR_API_KEY).await?;
         Ok(RedatorConfig::new(
@@ -288,25 +298,56 @@ impl<S: Store> Core<S> {
         RedatorConfig::new(&self.settings_snapshot(), None, None).lease()
     }
 
+    /// Chamada do Redator: título (e texto revisado) de uma memória.
+    async fn complete(
+        &self,
+        config: &RedatorConfig,
+        ready: &Ready,
+        call: Call<'_>,
+    ) -> Completion<Output> {
+        let prompt = Prompt {
+            system: prompt::system(
+                config.title_max,
+                call.rewrite,
+                config.instructions.as_deref(),
+            ),
+            user: prompt::user(call.text, &prompt::boundary()),
+            schema_name: SCHEMA_NAME,
+            schema: prompt::schema(call.rewrite),
+            purpose: call.purpose,
+            attempt: call.attempt,
+        };
+        self.complete_with(ready, prompt, |content| {
+            validate(
+                content,
+                call.rewrite,
+                config.title_max,
+                config.text_min,
+                config.text_max,
+            )
+        })
+        .await
+    }
+
     /// Tenta o modelo principal e os de `fallback_models` (FR-010); cada chamada vira uma
-    /// linha de `llm_calls` (FR-011).
-    async fn complete(&self, config: &RedatorConfig, ready: &Ready, call: Call<'_>) -> Completion {
+    /// linha de `llm_calls` (FR-011). Também usada pelo consolidador (009), com outro prompt,
+    /// esquema e validação.
+    pub(crate) async fn complete_with<T>(
+        &self,
+        ready: &Ready,
+        prompt: Prompt,
+        validate: impl Fn(&Value) -> Result<T, &'static str>,
+    ) -> Completion<T> {
         let started = Instant::now();
-        let system = prompt::system(
-            config.title_max,
-            call.rewrite,
-            config.instructions.as_deref(),
-        );
-        let user = prompt::user(call.text, &prompt::boundary());
         let mut calls = Vec::new();
         let mut failure = Failure::Llm(LlmError::Unavailable);
         for (index, model) in ready.models.iter().enumerate() {
             let request = LlmRequest {
                 model: model.clone(),
-                system: system.clone(),
-                user: user.clone(),
-                schema_name: SCHEMA_NAME,
-                schema: prompt::schema(call.rewrite),
+                system: prompt.system.clone(),
+                user: prompt.user.clone(),
+                schema_name: prompt.schema_name,
+                schema: prompt.schema.clone(),
                 max_output_tokens: MAX_OUTPUT_TOKENS,
             };
             let at = ids::timestamp(ids::now());
@@ -315,7 +356,7 @@ impl<S: Store> Core<S> {
             let duration_ms = i64::try_from(began.elapsed().as_millis()).unwrap_or(i64::MAX);
             let mut record = NewLlmCall {
                 at,
-                purpose: call.purpose,
+                purpose: prompt.purpose,
                 provider: ready.provider.as_str().to_owned(),
                 model: model.clone(),
                 input_tokens: None,
@@ -330,13 +371,7 @@ impl<S: Store> Core<S> {
                     record.input_tokens = response.input_tokens;
                     record.output_tokens = response.output_tokens;
                     record.cost_usd = response.cost_usd;
-                    match validate(
-                        &response.content,
-                        call.rewrite,
-                        config.title_max,
-                        config.text_min,
-                        config.text_max,
-                    ) {
+                    match validate(&response.content) {
                         Ok(output) => {
                             calls.push(record);
                             return Completion {
@@ -364,11 +399,12 @@ impl<S: Store> Core<S> {
                     {
                         tracing::warn!(
                             event = "redator.fallback",
+                            purpose = prompt.purpose,
                             provider = ready.provider.as_str(),
                             model = %model,
                             next_model = %next,
                             outcome = error.outcome(),
-                            attempt = call.attempt,
+                            attempt = prompt.attempt,
                             duration_ms,
                             "modelo do Redator falhou; tentando o proximo de fallback_models"
                         );
@@ -387,7 +423,7 @@ impl<S: Store> Core<S> {
         }
     }
 
-    async fn record_calls(&self, calls: Vec<NewLlmCall>) {
+    pub(crate) async fn record_calls(&self, calls: Vec<NewLlmCall>) {
         if calls.is_empty() {
             return;
         }

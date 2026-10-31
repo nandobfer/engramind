@@ -2,6 +2,30 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.9.0] - 2026-10-31
+
+Etapa 009 — consolidação.
+
+### Adicionado
+
+- Consolidador por canal (job `consolidate`, 1 por vez, lease de 30 min), agendado por `consolidation.schedule` (cron de 5 campos em UTC, verificado a cada minuto, um disparo por horário mesmo depois de vários perdidos) ou pedido com `run_consolidation`. Dependência `croner` 4.0.2.
+- Tarefa `duplicates`: pares `active` com cosseno ≥ `consolidation.duplicate_threshold` (vetores do modelo vigente) vão ao Redator, que decide fundir; o texto passa pela guarda de sentido contra cada original; a mais antiga recebe o texto (revisão `system/consolidador`, `consolidation.merge`) e os contadores, e a outra vira `archived` com `merged_into`. Eventos `memory.updated` e `memory.archived`. Pares recusados não voltam ao Redator enquanto os textos forem os mesmos.
+- Tarefa `importance`: nota de 0 a 1 em lotes de 20 às memórias não classificadas, gravada em `importance_pending` e promovida a `importance` só na próxima transação que incrementa `channels.version` do canal (a ordem do contexto nunca muda sem mudar a `version`).
+- Tarefa `stale`: `stale_candidate` para memórias `active` sem edição, recuperação, injeção nem conferência há mais de `consolidation.stale_after_days`, limpa quando voltam a ser usadas; com `consolidation.auto_archive_stale`, arquivamento com revisão `consolidation.stale` e evento.
+- `run_consolidation` (`POST /v1/consolidation/run`, `engramind consolidation run`, ferramenta MCP; tag nova `Consolidation`, admin·write): `dry_run` síncrono sem LLM com o plano por canal (`200`), ou um job por canal (`202`, `already_queued` para o pendente). Chamadas em `llm_calls` com `purpose = consolidation`.
+- `mark_verified` (`POST /v1/memories/{memory}/verify`, `engramind memories verify`, ferramenta MCP; any·write): grava `verified_at` e a auditoria `memory.verify` e limpa `stale_candidate`, sem revisão, sem `version` e sem evento.
+- `Memory` ganha `stale_candidate` e `merged_into`; `list_memories` aceita `stale` (`engramind memories list --stale`); `channel_stats` conta `stale`.
+- `get_status.consolidation` (canais habilitados, `schedule`, próximo e último disparo, fila, ações e chamadas ao LLM em 24 h) e a métrica `engramind_consolidation_actions_total{task,action}`.
+- Configurações `consolidation.enabled` (por canal), `consolidation.schedule`, `consolidation.tasks`, `consolidation.duplicate_threshold`, `consolidation.stale_after_days` e `consolidation.auto_archive_stale`; tipos de configuração `cron` e lista de opções.
+- Código de erro `CONSOLIDATION_DISABLED` (409).
+- Migração `0009_consolidation.sql` (`memories.importance_pending`, `memories.last_injected_at`, `consolidation_pairs`); guia `consolidacao`; decisões `docs/decisions/0025` e `0026`.
+
+### Alterado
+
+- O lote de injeções do contexto avança `last_injected_at`; edição de texto, `revert` e texto do Redator zeram também `importance_pending`, e a edição limpa `stale_candidate`; `restore_memory` limpa `merged_into` e `stale_candidate`.
+- A chamada ao LLM do Redator virou `Core::complete_with` (prompt, esquema e validação por chamada), compartilhada com o consolidador.
+- Guias `escrever-memorias`, `integracao-gestor`, `operacao`, `configuracoes`, `erros`, `cli` e `overview` e a skill atualizados.
+
 ## [0.8.0] - 2026-10-31
 
 Etapa 008 — integração (marco: migração de consumidor e gestor).
