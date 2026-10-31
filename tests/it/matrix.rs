@@ -162,6 +162,7 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
             "/v1/channels/matrix%2Fcanal/settings".into(),
             Some(json!({ "memory.text_max": 4000 })),
         ),
+        "get_context" => ("GET", "/v1/context".into(), None),
         "list_memories" => ("GET", "/v1/memories".into(), None),
         "get_memory" => ("GET", "/v1/memories/m_ffffffff".into(), None),
         "search_memories" => (

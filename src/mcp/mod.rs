@@ -2,6 +2,7 @@
 //! de operação e de documentação do `core`, filtradas pelo token (D-004).
 
 pub mod contract;
+pub mod resources;
 pub mod tools;
 
 use rmcp::transport::streamable_http_server::{

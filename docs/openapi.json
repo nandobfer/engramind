@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.4.1"
+    "version": "0.5.0"
   },
   "servers": [
     {
@@ -5188,6 +5188,240 @@
           },
           "404": {
             "description": "`CHANNEL_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/context": {
+      "get": {
+        "tags": [
+          "Context"
+        ],
+        "summary": "Bloco de memórias pronto para o prompt",
+        "description": "Memórias `active` e `permanent` dos canais alcançados em modo `inject` (token `admin`: todos os canais ativos), restritas por `channels` e pelo cabeçalho `Engramind-Channels`, em ordem determinística e em duas faixas: texto completo até `context.budget_tokens`, depois `#id: título` até `context.titles_budget_tokens`; o resto é contado em `counts.overflow`. `format`: `tagged` (padrão `context.default_format`), `markdown` (sem ids) ou `json` (`content` é um objeto). O `ETag` é a `version`; com `If-None-Match` igual, responde `304` sem corpo e sem ler o banco.",
+        "operationId": "get_context",
+        "parameters": [
+          {
+            "name": "channels",
+            "in": "query",
+            "description": "Slugs e prefixos (`eng/global,eng/projeto-*`) separados por vírgula; restringe dentro do\nque o token alcança e do cabeçalho `Engramind-Channels`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "`tagged`, `markdown` ou `json`; padrão `context.default_format`.",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ContextFormat"
+            }
+          },
+          {
+            "name": "Engramind-Channels",
+            "in": "header",
+            "description": "Filtro de canais da conexão: slugs e prefixos separados por vírgula",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "description": "`version` (ou ETag) já em uso; igual à atual → `304`",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contexto renderizado",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "A `version` entre aspas"
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextView"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Sem mudança desde a `version` em `If-None-Match`",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "A `version` entre aspas"
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -12548,6 +12782,209 @@
           }
         }
       },
+      "ContextCategory": {
+        "type": "object",
+        "required": [
+          "key",
+          "memories"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "example": "CONSTRAINTS"
+          },
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextLine"
+            }
+          }
+        }
+      },
+      "ContextChannel": {
+        "type": "object",
+        "required": [
+          "slug",
+          "categories"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextCategory"
+            }
+          },
+          "slug": {
+            "type": "string",
+            "example": "eng/global"
+          }
+        }
+      },
+      "ContextContent": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/components/schemas/ContextDocument"
+          }
+        ],
+        "description": "Texto (`tagged`, `markdown`) ou objeto (`json`)."
+      },
+      "ContextCounts": {
+        "type": "object",
+        "description": "Quantas memórias entraram em cada faixa.",
+        "required": [
+          "full",
+          "titles",
+          "overflow"
+        ],
+        "properties": {
+          "full": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Com texto completo (faixa 1).",
+            "example": 4,
+            "minimum": 0
+          },
+          "overflow": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Fora das duas faixas (alcançáveis por `search_memories`).",
+            "example": 12,
+            "minimum": 0
+          },
+          "titles": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Só `#id: título` (faixa 2).",
+            "example": 2,
+            "minimum": 0
+          }
+        }
+      },
+      "ContextDocument": {
+        "type": "object",
+        "description": "O bloco no formato `json`.",
+        "required": [
+          "channels",
+          "titles",
+          "overflow"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextChannel"
+            }
+          },
+          "overflow": {
+            "type": "integer",
+            "format": "int32",
+            "example": 12,
+            "minimum": 0
+          },
+          "titles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextTitle"
+            }
+          }
+        }
+      },
+      "ContextFormat": {
+        "type": "string",
+        "description": "Formato do bloco.",
+        "enum": [
+          "tagged",
+          "markdown",
+          "json"
+        ]
+      },
+      "ContextLine": {
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "m_8f2a1c3d"
+          },
+          "text": {
+            "type": "string",
+            "description": "Texto da memória, sem alteração."
+          }
+        }
+      },
+      "ContextNotModified": {
+        "type": "object",
+        "description": "Resposta do MCP e da CLI quando `if_none_match` é igual à `version` (o REST responde\n`304` sem corpo).",
+        "required": [
+          "not_modified",
+          "version"
+        ],
+        "properties": {
+          "not_modified": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string",
+            "example": "cv_3f9e1a7c0b2d"
+          }
+        }
+      },
+      "ContextTitle": {
+        "type": "object",
+        "required": [
+          "id",
+          "title"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "m_77aa0100"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "ContextView": {
+        "type": "object",
+        "description": "O contexto renderizado.",
+        "required": [
+          "content",
+          "version",
+          "counts",
+          "rendered_tokens",
+          "format"
+        ],
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/ContextContent"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/ContextCounts"
+          },
+          "format": {
+            "$ref": "#/components/schemas/ContextFormat"
+          },
+          "rendered_tokens": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Tokens estimados do `content` (`context.token_estimator`).",
+            "example": 612,
+            "minimum": 0
+          },
+          "version": {
+            "type": "string",
+            "description": "Igual ao `ETag`; muda só com mudança real de memória, canal, assinatura ou\nconfiguração de renderização.",
+            "example": "cv_3f9e1a7c0b2d"
+          }
+        }
+      },
       "CreateAgentBody": {
         "type": "object",
         "required": [
@@ -13518,6 +13955,13 @@
               "eng/global"
             ]
           },
+          "exclude_context": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Exclui as memórias com texto completo no contexto do mesmo token e seleção (faixa 1\nde `get_context` sem `format`); somado a `exclude_ids`."
+          },
           "exclude_ids": {
             "type": [
               "array",
@@ -13566,9 +14010,15 @@
       "SearchResults": {
         "type": "object",
         "required": [
-          "results"
+          "results",
+          "context_version"
         ],
         "properties": {
+          "context_version": {
+            "type": "string",
+            "description": "`version` de `get_context` sem `format` para o mesmo token e seleção.",
+            "example": "cv_3f9e1a7c0b2d"
+          },
           "results": {
             "type": "array",
             "items": {
@@ -13593,6 +14043,21 @@
           "channel_override": {
             "type": "boolean",
             "description": "Se aceita sobreposição por canal (a partir da 003)."
+          },
+          "choices": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Valores aceitos (tipo `enum`).",
+            "example": [
+              "tagged",
+              "markdown",
+              "json"
+            ]
           },
           "default": {
             "type": "object"
@@ -14220,6 +14685,10 @@
     {
       "name": "Network",
       "description": "Criação e manutenção de canais e assinaturas (token admin)"
+    },
+    {
+      "name": "Context",
+      "description": "Contexto determinístico para o prompt, com `version`/ETag e `304`"
     },
     {
       "name": "Memories",

@@ -2,7 +2,7 @@
 
 O Engramind é uma rede de memórias para agentes de IA: guarda fatos duráveis e curtos em **canais** e os entrega por **REST, MCP e CLI**. Cada agente se identifica por um **token** com escopos. Uma memória pertence ao canal, não ao agente que a escreveu; o autor é proveniência.
 
-Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as memórias (escrita, edição versionada, status, busca textual e histórico), as configurações, a auditoria, o status básico e esta documentação. O contexto montado (`get_context`) chega na próxima versão.
+Nesta versão existem as identidades (apps, agentes e tokens), os canais e as assinaturas, as memórias (escrita, edição versionada, status, busca textual e histórico), o contexto pronto para o prompt (`get_context`, com `version`/ETag e `304`), as configurações, a auditoria, o status básico e esta documentação. No MCP também há resources (`engramind://context`, `engramind://channels/{slug}`, `engramind://guides/{id}`) e o prompt `memory-writing`.
 
 ## Três vias, um contrato
 
@@ -29,6 +29,10 @@ Rotas públicas, sem token: `GET /health/live`, `GET /health/ready`, `GET /opena
 ## Memórias
 
 Memórias são fatos duráveis e curtos gravados num canal, com revisões, auditoria e busca textual. Como escrever bem, editar com `expected_version`, reverter e buscar está no guia `escrever-memorias`.
+
+## Contexto
+
+`get_context` devolve o bloco de memórias dos canais em modo `inject`, em ordem determinística e com orçamento de tokens, para a parte estável do prompt. A `version` só muda com mudança real; com `If-None-Match`, a resposta é `304`. Como usar está nos guias `contexto-e-cache` e `integracao-consumidor`.
 
 ## Envelope de erro
 

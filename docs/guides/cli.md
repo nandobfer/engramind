@@ -57,6 +57,8 @@ engramind channels list --include-archived
 engramind subscriptions add --agent app-a/curador --target "eng/*" --mode manage --access read,write
 engramind subscriptions update sub_7c2e9a10 --token-access
 engramind memories create --channel eng/global --category CONSTRAINTS --text "…"
+engramind context
+engramind context --format markdown --if-none-match cv_3f9e1a7c0b2d
 engramind memories search testes locais
 engramind memories list --fields title --channels eng/global
 engramind channels stats eng/global
@@ -69,7 +71,7 @@ engramind docs guide tokens-e-escopos --section Escopos
 engramind docs search idempotencia
 ```
 
-Mutações aceitam `--idempotency-key`. Em `settings set` e `channels settings set`, o valor é lido como JSON (`600`, `true`); `null` volta ao padrão. Em `memories create` e `memories update`, `--text -` lê o texto da entrada padrão. O `--channels` global vira o cabeçalho `Engramind-Channels`: nenhum subcomando tem argumento próprio de canais.
+Mutações aceitam `--idempotency-key`. Em `settings set` e `channels settings set`, o valor é lido como JSON (`600`, `true`); `null` volta ao padrão. Em `memories create` e `memories update`, `--text -` lê o texto da entrada padrão. `context` sem `--json` imprime só o `content` cru, pronto para colar no prompt (o `json` sai formatado); com `--if-none-match` e sem mudança, não imprime nada e sai com 0 (com `--json`, `{ "not_modified": true, "version" }`). O `--channels` global vira o cabeçalho `Engramind-Channels`: nenhum subcomando tem argumento próprio de canais.
 
 ## Códigos de saída
 

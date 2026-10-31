@@ -2,6 +2,7 @@
 //! WAL, FTS5 e `sqlite-vec`.
 
 mod channels;
+mod context;
 mod identities;
 mod journal;
 mod memories;
@@ -23,11 +24,11 @@ use super::{ChannelSettingsMap, DoctorReport, MigrationStatus, ReadyReport, Stor
 use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
-        Channel, ChannelPatch, ChannelStats, IdemRow, IdentityCounts, Lookup, Memory, MemoryFilter,
-        MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent, NewApp,
-        NewChannel, NewMemory, NewSubscription, NewToken, RetrievalBump, SettingChange, SettingRow,
-        StatusAction, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
-        WriteContext,
+        Channel, ChannelPatch, ChannelStats, ContextSnapshot, IdemRow, IdentityCounts,
+        InjectionBump, Lookup, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget,
+        MemoryWrite, Network, NewAgent, NewApp, NewChannel, NewMemory, NewSubscription, NewToken,
+        RetrievalBump, SettingChange, SettingRow, StatusAction, Subscription, SubscriptionPatch,
+        TextQuery, Token, TokenFilter, TokenPatch, UsageEntry, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -602,6 +603,30 @@ impl Store for SqliteStore {
 
     async fn channel_stats(&self, channel_id: String) -> Result<Option<ChannelStats>, StoreError> {
         self.read(move |connection| memories::channel_stats(connection, &channel_id))
+            .await
+    }
+
+    async fn context_memories(
+        &self,
+        channel_ids: Vec<String>,
+    ) -> Result<ContextSnapshot, StoreError> {
+        self.read(move |connection| context::context_memories(connection, &channel_ids))
+            .await
+    }
+
+    async fn bump_injections(&self, batch: Vec<InjectionBump>) -> Result<(), StoreError> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        self.write(move |transaction| context::bump_injections(transaction, &batch))
+            .await
+    }
+
+    async fn append_usage(&self, batch: Vec<UsageEntry>) -> Result<(), StoreError> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        self.write(move |transaction| context::append_usage(transaction, &batch))
             .await
     }
 

@@ -20,14 +20,24 @@ engramind channels list --json
 
 Cada canal traz `reach.mode` (`inject`, `search` ou `manage`) e `reach.access` (o que você pode fazer nele: `read`, `write`, `delete`).
 
+Para ler de uma vez as memórias que valem para você (os canais em modo `inject`), peça o contexto. Sem `--json`, sai o bloco pronto, `#id: texto` por canal e categoria, seguido de `#id: título` das que não couberam:
+
+```bash
+engramind context
+engramind context --json
+```
+
 ## Quando buscar
 
 Ao ter dúvida sobre uma regra, uma convenção ou um valor, busque antes de decidir:
 
 ```bash
 engramind memories search testes locais --json
+engramind memories search testes locais --exclude-context --json
 engramind memories get m_8f2a1c3d --json
 ```
+
+`--exclude-context` deixa de fora o que você já leu com texto completo no contexto.
 
 A busca ignora acentos e caixa. Para ver só os títulos de um canal:
 

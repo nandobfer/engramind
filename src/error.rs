@@ -164,6 +164,18 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         description: "Tag OpenAPI inexistente ou oculta para o token; `details.valid` lista as visíveis.",
     },
     ErrorCodeDoc {
+        code: "RESOURCE_NOT_FOUND",
+        status: 404,
+        exit_code: 5,
+        description: "URI de resource MCP desconhecida (só no MCP, como erro `-32002`).",
+    },
+    ErrorCodeDoc {
+        code: "PROMPT_NOT_FOUND",
+        status: 404,
+        exit_code: 5,
+        description: "Prompt MCP inexistente (só no MCP, como `-32002`).",
+    },
+    ErrorCodeDoc {
         code: "METHOD_NOT_ALLOWED",
         status: 405,
         exit_code: 1,

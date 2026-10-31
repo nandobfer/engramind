@@ -8,6 +8,7 @@ pub mod authz;
 pub mod background;
 pub mod bootstrap;
 pub mod channels;
+pub mod context;
 pub mod counters;
 pub mod docs;
 pub mod idempotency;
@@ -37,8 +38,9 @@ use crate::{
 };
 
 use self::{
-    access::NetworkCache, counters::Counters, docs::Docs, model::Actor, operations::OperationSpec,
-    principal::Principal, settings::SettingsSnapshot, usage::Usage,
+    access::NetworkCache, context::cache::ContextCache, counters::Counters, docs::Docs,
+    model::Actor, operations::OperationSpec, principal::Principal, settings::SettingsSnapshot,
+    usage::Usage,
 };
 
 /// Ponto de entrada das operações. Barato de clonar.
@@ -55,6 +57,7 @@ struct Inner<S> {
     usage: Usage,
     counters: Counters,
     network: NetworkCache,
+    context: ContextCache,
     database: DatabaseSettings,
 }
 
@@ -70,6 +73,7 @@ impl<S: Store> Core<S> {
                 usage: Usage::default(),
                 counters: Counters::default(),
                 network: NetworkCache::default(),
+                context: ContextCache::default(),
                 database,
             }),
         }
@@ -104,6 +108,10 @@ impl<S: Store> Core<S> {
 
     pub(crate) fn network_cache(&self) -> &NetworkCache {
         &self.inner.network
+    }
+
+    pub(crate) fn context_cache(&self) -> &ContextCache {
+        &self.inner.context
     }
 
     /// Invalida o cache da rede depois de mudar canais, assinaturas ou agentes.

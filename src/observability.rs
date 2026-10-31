@@ -133,7 +133,8 @@ pub async fn log_request(request: Request, next: Next) -> Response {
     let latency_ms = started.elapsed().as_millis() as u64;
     let status = response.status().as_u16();
 
-    if noisy && status < 500 {
+    // `get_context` com `304` é o poll de cada turno (005 FR-010).
+    if (noisy && status < 500) || status == 304 {
         tracing::debug!(parent: &span, event = "http.request.completed", status, latency_ms, "requisicao concluida");
     } else if status >= 500 {
         tracing::error!(parent: &span, event = "http.request.completed", status, latency_ms, "requisicao concluida com falha");

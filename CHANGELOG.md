@@ -2,6 +2,30 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.5.0] - 2026-10-30
+
+Etapa 005 — contexto. **Marco: MVP do primeiro consumidor.**
+
+### Adicionado
+
+- `get_context` nas três vias (`GET /v1/context`, ferramenta MCP `get_context`, `engramind context`; tag OpenAPI `Context`, qualquer token·read): memórias `active` e `permanent` dos canais em modo `inject` (token `admin`: todos os canais ativos), restritas por `channels` e `Engramind-Channels`.
+- Ordem determinística (prioridade da assinatura ou do canal, `permanent`, prioridade da categoria, `importance` classificada, `created_at`, `id`) e duas faixas: texto completo até `context.budget_tokens`, `#id: título` até `context.titles_budget_tokens`, o resto em `counts.overflow` e na linha `<overflow>`. A primeira memória que não cabe fecha a faixa; a sobreposição por canal é o teto da parte do canal.
+- Formatos `tagged` (o exemplo do §8 do desenho), `markdown` (sem ids) e `json` (`content` objeto). A escolha das memórias é a mesma nos três. Texto de memória não forja as tags do bloco.
+- `version` (`cv_` + 12 hex) sobre o formato, os canais alcançados (id, versão, modo, prioridade) e as configurações de renderização; `ETag`, `Cache-Control: private, no-cache`, `Vary` e `304` com `If-None-Match` sem ler o banco. Cache LRU de 1024 blocos. Contadores nunca mudam a `version`.
+- MCP: `if_none_match` em `get_context` (`{ not_modified: true, version }`); resources `engramind://context`, `engramind://channels/{slug}` e `engramind://guides/{id}`; prompt `memory-writing` (`docs/prompts/memory-writing.md`).
+- CLI: `engramind context [--format] [--if-none-match]` imprime o `content` cru; sem mudança, nada e saída 0. `memories search --exclude-context`.
+- `search_memories` aceita `exclude_context` (tira a faixa de texto completo do contexto) e devolve `context_version`.
+- `injected_count` em lote e a tabela `usage_log` (instante, app, agente, token, operação, canais, ids, `rendered_tokens`) para `get_context` entregue e `search_memories`, com índices por `at`, `(agent_id, at)` e `(op, at)` para consultas por período.
+- Configurações `context.budget_tokens` e `context.titles_budget_tokens` (por canal), `context.default_format`, `context.token_estimator` (`o200k`/`cl100k`) e `context.overflow_line`; novo tipo de configuração `enum`, com `choices` em `get_settings`.
+- Guias `contexto-e-cache` e `integracao-consumidor` (primeira versão); `integracao-mcp`, `configuracoes`, `cli`, `escrever-memorias`, `overview` e a skill atualizados.
+- Novos códigos de erro `RESOURCE_NOT_FOUND` e `PROMPT_NOT_FOUND` (404, saída 5; só no MCP).
+- Migração `0005_usage.sql`. Decisões `docs/decisions/0013` e `0014`. Nova dependência `tiktoken-rs`.
+
+### Alterado
+
+- `get_context` com `304` é logado em `DEBUG`.
+- O MCP anuncia as capacidades `resources` e `prompts`.
+
 ## [0.4.1] - 2026-10-30
 
 ### Corrigido

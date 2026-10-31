@@ -117,6 +117,16 @@ pub enum Command {
     /// Assinaturas (leitura: qualquer token; mudanças: token admin).
     #[command(subcommand)]
     Subscriptions(SubscriptionsCommand),
+    /// Imprime o bloco de memórias para o prompt (`--json`: o objeto completo com `version`).
+    Context {
+        /// `tagged`, `markdown` ou `json` (padrão `context.default_format`).
+        #[arg(long)]
+        format: Option<String>,
+        /// `version` já em uso: sem mudança, nada é impresso (`--json`: `not_modified: true`)
+        /// e a saída é 0.
+        #[arg(long)]
+        if_none_match: Option<String>,
+    },
     /// Memórias dos canais alcançados (`--channels` restringe).
     #[command(subcommand)]
     Memories(MemoriesCommand),
@@ -434,6 +444,9 @@ pub enum MemoriesCommand {
         /// Ids a deixar de fora, separados por vírgula.
         #[arg(long)]
         exclude_ids: Option<String>,
+        /// Deixa de fora as memórias com texto completo no contexto (`engramind context`).
+        #[arg(long)]
+        exclude_context: bool,
         #[command(flatten)]
         fields: FieldsArgs,
     },
@@ -738,6 +751,11 @@ async fn serve() -> anyhow::Result<()> {
         BootstrapOutcome::NotConfigured => {}
     }
     let background = core::background::spawn(core.clone());
+    // Carrega a tabela BPE do estimador fora do caminho da primeira requisição (decisão 0014).
+    let estimator = core::context::estimator::Tiktoken::from_setting(
+        &core.settings_snapshot().token_estimator(),
+    );
+    tokio::task::spawn_blocking(move || estimator.warm());
 
     let mcp_settings = McpSettings {
         allowed_hosts: settings.mcp_allowed_hosts.clone(),

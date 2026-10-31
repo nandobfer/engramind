@@ -42,6 +42,7 @@ pub const TAG_AUTHENTICATION: &str = "Authentication";
 pub const TAG_IDENTITIES: &str = "Identities";
 pub const TAG_CHANNELS: &str = "Channels";
 pub const TAG_NETWORK: &str = "Network";
+pub const TAG_CONTEXT: &str = "Context";
 pub const TAG_MEMORIES: &str = "Memories";
 pub const TAG_SETTINGS: &str = "Settings";
 pub const TAG_STATUS: &str = "Status";
@@ -408,6 +409,14 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "DELETE",
         "/v1/subscriptions/{subscription}",
         &["subscriptions", "remove"],
+    ),
+    read(
+        "get_context",
+        TAG_CONTEXT,
+        "Bloco de memórias pronto para o prompt",
+        RequiredKind::Any,
+        "/v1/context",
+        &["context"],
     ),
     read(
         "list_memories",
