@@ -96,3 +96,5 @@ Em erro, a saída é `{ "error": { "code", "message", "details" } }` e o código
 | `MEMORY_NOT_FOUND` | O id não existe ou está num canal que você não alcança. |
 
 Mais detalhes: `engramind docs guide escrever-memorias`.
+
+Importar memórias em lote, configurar webhooks e ver uso e métricas são tarefas do gestor, com token `admin` (guia `integracao-gestor`); um token `agent` recebe `SCOPE_REQUIRED` nelas.

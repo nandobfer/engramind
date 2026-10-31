@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.7.0"
+    "version": "0.8.0"
   },
   "servers": [
     {
@@ -521,6 +521,155 @@
           },
           "503": {
             "description": "`DATABASE_UNAVAILABLE` durante a autenticação",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Operations"
+        ],
+        "summary": "Expõe as métricas Prometheus",
+        "description": "Formato de exposição de texto do Prometheus. Exige token admin com `read` (o Prometheus usa `authorization.credentials`). Rótulos sem slugs, ids nem URLs; nomes e consultas no guia `operacao`.",
+        "operationId": "get_metrics",
+        "parameters": [
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Exposição de texto do Prometheus",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -1953,7 +2102,7 @@
           "Identities"
         ],
         "summary": "Cria um app",
-        "description": "O slug é único na rede. Aceita `Idempotency-Key`. Exige token admin com `write`.",
+        "description": "O slug é único na rede. `webhook_url` (http/https, sem credenciais) exige `webhook_secret` (32 a 256 caracteres, só gravado e cifrado). Aceita `Idempotency-Key`. Exige token admin com `write`.",
         "operationId": "create_app",
         "parameters": [
           {
@@ -2562,7 +2711,7 @@
           "Identities"
         ],
         "summary": "Altera ou desativa um app",
-        "description": "Campos omitidos não mudam. `disabled: true` desativa o app e os tokens dele deixam de autenticar. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`.",
+        "description": "Campos omitidos não mudam; `null` limpa `description`, `webhook_url` e `webhook_secret`. `disabled: true` desativa o app: os tokens dele deixam de autenticar e ele não recebe eventos. `webhook_url` (http/https, sem credenciais) exige um `webhook_secret` (32 a 256 caracteres, só gravado e cifrado; a leitura mostra `webhook.secret.configured`). Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`.",
         "operationId": "update_app",
         "parameters": [
           {
@@ -2601,7 +2750,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UpdateBody"
+                "$ref": "#/components/schemas/UpdateAppBody"
               }
             }
           },
@@ -8027,6 +8176,250 @@
         ]
       }
     },
+    "/v1/memories/import": {
+      "post": {
+        "tags": [
+          "Integration"
+        ],
+        "summary": "Importa memórias em lote preservando data, autoria e origem",
+        "description": "Grava até `limits.max_batch` memórias num canal ativo, numa transação: tudo é validado antes (um item inválido recusa o lote, com `details.index`). Preserva `created_at` (não futuro), o autor (`author: { app, agent? }`, que precisa existir; omitido, o token) e `origin`; cria a revisão 1, enfileira o Redator e os embeddings e um único evento `memory.created` com os ids criados. Textos iguais a uma memória do canal (ou a um item anterior do lote) ficam em `duplicates`. Exige `Idempotency-Key` e token admin com `write`.",
+        "operationId": "import_memories",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Obrigatória: repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportMemoriesBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Lote importado",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`, `IDEMPOTENCY_KEY_REQUIRED`, `BATCH_TOO_LARGE` ou `CATEGORY_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`CHANNEL_NOT_FOUND`, `APP_NOT_FOUND` ou `AGENT_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`CHANNEL_ARCHIVED` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/memories/search": {
       "post": {
         "tags": [
@@ -12055,8 +12448,8 @@
         "tags": [
           "Status"
         ],
-        "summary": "Mostra versão, banco, backup e contagens",
-        "description": "Versão em execução, estado do banco e das migrações, idade da última réplica do Litestream (quando habilitado) e contagens de apps, agentes e tokens. Exige token admin com `read`.",
+        "summary": "Mostra versão, uptime, banco, backup, fila, Redator, embeddings e webhooks",
+        "description": "Versão em execução, uptime, banco (migrações e tamanho), idade da última réplica do Litestream (medida a cada 60 s), contagens de apps, agentes e tokens, fila por tipo e estado, Redator (configuração, últimos resultados e as últimas 24 h), embeddings, webhooks (apps, pendentes, entregues e falhas em 24 h) e a última retenção. Exige token admin com `read`.",
         "operationId": "get_status",
         "parameters": [
           {
@@ -14065,6 +14458,201 @@
         ]
       }
     },
+    "/v1/usage": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Agrega o uso (contexto, busca e dicas) por dia, agente, operação ou canal",
+        "description": "Soma `usage_log` (`get_context` entregue, `search_memories` e `get_hints`) em `[since, until)`: requisições, memórias e tokens renderizados. Padrão: os últimos 7 dias por `day` (UTC); no máximo 366 dias. Por `channel`, uma requisição conta em cada canal que alcançou e as memórias no canal atual delas; o `total` conta cada requisição uma vez. Exige token admin com `read`.",
+        "operationId": "get_usage",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Início (RFC 3339, inclusivo); padrão: 7 dias antes de `until`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Fim (RFC 3339, exclusivo); padrão: agora.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "description": "`day` (padrão, UTC), `agent`, `operation` ou `channel`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Uso agregado",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/whoami": {
       "get": {
         "tags": [
@@ -14324,6 +14912,17 @@
           "slug": {
             "type": "string",
             "example": "app-a"
+          },
+          "webhook": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppWebhook",
+                "description": "Destino dos eventos do app (desenho §17); `null` sem `webhook_url`."
+              }
+            ]
           }
         }
       },
@@ -14362,6 +14961,23 @@
           "slug": {
             "type": "string",
             "example": "app-a"
+          }
+        }
+      },
+      "AppWebhook": {
+        "type": "object",
+        "description": "Webhook de um app: a URL e o estado do segredo, nunca o valor.",
+        "required": [
+          "url",
+          "secret"
+        ],
+        "properties": {
+          "secret": {
+            "$ref": "#/components/schemas/WebhookSecretState"
+          },
+          "url": {
+            "type": "string",
+            "example": "https://gestor.interno/engramind/events"
           }
         }
       },
@@ -14489,9 +15105,15 @@
         "required": [
           "enabled",
           "status",
-          "detail"
+          "detail",
+          "checked_at"
         ],
         "properties": {
+          "checked_at": {
+            "type": "string",
+            "description": "Quando a réplica foi medida (a cada 60 s).",
+            "example": "2026-10-30T12:00:04.000Z"
+          },
           "detail": {
             "type": "string",
             "example": "ultima replica ha 4s (2026-10-30T12:00:00+00:00)"
@@ -14499,6 +15121,22 @@
           "enabled": {
             "type": "boolean",
             "description": "`LITESTREAM_ENABLED`."
+          },
+          "last_replica_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "2026-10-30T12:00:00.000Z"
+          },
+          "replica_age_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Segundos desde a réplica mais recente, em `checked_at`; `null` sem réplica.",
+            "example": 4
           },
           "status": {
             "type": "string",
@@ -15060,6 +15698,21 @@
             "type": "string",
             "description": "Minúsculas, dígitos e hífens (1 a 64), único na rede.",
             "example": "app-a"
+          },
+          "webhook_secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Segredo do HMAC dos eventos (32 a 256 caracteres); só gravado, nunca devolvido."
+          },
+          "webhook_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Destino dos eventos (`http://` ou `https://`, sem credenciais); exige `webhook_secret`.",
+            "example": "https://gestor.interno/engramind/events"
           }
         },
         "additionalProperties": false
@@ -15152,11 +15805,19 @@
         "type": "object",
         "required": [
           "status",
-          "migrations"
+          "migrations",
+          "size_bytes"
         ],
         "properties": {
           "migrations": {
             "$ref": "#/components/schemas/MigrationStatus"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tamanho do arquivo do banco (`page_count × page_size`).",
+            "example": 10485760,
+            "minimum": 0
           },
           "status": {
             "type": "string",
@@ -15475,6 +16136,171 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "ImportAuthor": {
+        "type": "object",
+        "required": [
+          "app"
+        ],
+        "properties": {
+          "agent": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Agente do app (id, `app/agente` ou só o slug do agente).",
+            "example": "curador"
+          },
+          "app": {
+            "type": "string",
+            "description": "App autor (id ou slug); precisa existir, mesmo desativado.",
+            "example": "legado"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportCreated": {
+        "type": "object",
+        "required": [
+          "index",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "m_8f2a1c3d"
+          },
+          "index": {
+            "type": "integer",
+            "example": 0,
+            "minimum": 0
+          }
+        }
+      },
+      "ImportDuplicate": {
+        "type": "object",
+        "required": [
+          "index",
+          "existing_id"
+        ],
+        "properties": {
+          "existing_id": {
+            "type": "string",
+            "description": "Memória do canal (ou item anterior do lote) com o mesmo texto.",
+            "example": "m_1b7d0e44"
+          },
+          "index": {
+            "type": "integer",
+            "example": 3,
+            "minimum": 0
+          }
+        }
+      },
+      "ImportItem": {
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "author": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ImportAuthor",
+                "description": "Autor original; omitido, o token que importa."
+              }
+            ]
+          },
+          "category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Uma chave de `categories.list`; omitida, vale a primeira.",
+            "example": "CONSTRAINTS"
+          },
+          "created_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Instante original (RFC 3339, não futuro); omitido, agora.",
+            "example": "2026-01-10T12:00:00Z"
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Origin"
+              }
+            ]
+          },
+          "status": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MemoryStatus",
+                "description": "`active` (padrão) ou `permanent`."
+              }
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "Um fato durável e curto, entre `memory.text_min` e `memory.text_max` caracteres.",
+            "example": "Rode só os testes afetados com cargo nextest."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportMemoriesBody": {
+        "type": "object",
+        "required": [
+          "channel",
+          "memories"
+        ],
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Canal de destino (id `ch_…` ou slug), ativo.",
+            "example": "eng/global"
+          },
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportItem"
+            },
+            "description": "De 1 a `limits.max_batch` memórias."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ImportResult": {
+        "type": "object",
+        "description": "Resultado de `import_memories`.",
+        "required": [
+          "created",
+          "duplicates"
+        ],
+        "properties": {
+          "created": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportCreated"
+            }
+          },
+          "duplicates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportDuplicate"
+            }
           }
         }
       },
@@ -15830,6 +16656,35 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "LlmSummary": {
+        "type": "object",
+        "description": "Chamadas do LLM de uma finalidade num período.",
+        "required": [
+          "calls",
+          "failures",
+          "cost_usd"
+        ],
+        "properties": {
+          "calls": {
+            "type": "integer",
+            "format": "int64",
+            "example": 40,
+            "minimum": 0
+          },
+          "cost_usd": {
+            "type": "number",
+            "format": "double",
+            "description": "Soma de `cost_usd` das chamadas com custo conhecido.",
+            "example": 0.0123
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int64",
+            "example": 1,
+            "minimum": 0
           }
         }
       },
@@ -16405,7 +17260,8 @@
           "enabled",
           "configured",
           "missing",
-          "activity"
+          "activity",
+          "last_24h"
         ],
         "properties": {
           "activity": {
@@ -16419,6 +17275,10 @@
           "enabled": {
             "type": "boolean",
             "description": "`redator.enabled`."
+          },
+          "last_24h": {
+            "$ref": "#/components/schemas/LlmSummary",
+            "description": "Chamadas do job `redact` nas últimas 24 h."
           },
           "missing": {
             "type": "array",
@@ -16470,6 +17330,60 @@
             "description": "Memórias enfileiradas.",
             "example": 1234,
             "minimum": 0
+          }
+        }
+      },
+      "RetentionRemoved": {
+        "type": "object",
+        "description": "Linhas removidas por tabela numa execução.",
+        "required": [
+          "usage_log",
+          "llm_calls",
+          "audit_log",
+          "jobs",
+          "idempotency"
+        ],
+        "properties": {
+          "audit_log": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "idempotency": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "jobs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "llm_calls": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "usage_log": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "RetentionReport": {
+        "type": "object",
+        "required": [
+          "last_run_at",
+          "removed"
+        ],
+        "properties": {
+          "last_run_at": {
+            "type": "string",
+            "example": "2026-10-31T11:00:00.000Z"
+          },
+          "removed": {
+            "$ref": "#/components/schemas/RetentionRemoved"
           }
         }
       },
@@ -16816,12 +17730,14 @@
         "type": "object",
         "required": [
           "version",
+          "uptime_seconds",
           "database",
           "backup",
           "counts",
           "queue",
           "redator",
-          "embedding"
+          "embedding",
+          "webhooks"
         ],
         "properties": {
           "backup": {
@@ -16842,9 +17758,30 @@
           "redator": {
             "$ref": "#/components/schemas/RedatorStatus"
           },
+          "retention": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RetentionReport",
+                "description": "Última execução da retenção; `null` antes da primeira."
+              }
+            ]
+          },
+          "uptime_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Segundos desde a subida do processo.",
+            "example": 86400,
+            "minimum": 0
+          },
           "version": {
             "type": "string",
-            "example": "0.2.0"
+            "example": "0.8.0"
+          },
+          "webhooks": {
+            "$ref": "#/components/schemas/WebhooksStatus"
           }
         }
       },
@@ -17221,6 +18158,47 @@
           "revoked"
         ]
       },
+      "UpdateAppBody": {
+        "type": "object",
+        "description": "Campos omitidos não mudam; `null` limpa `description`, `webhook_url` e `webhook_secret`;\n`disabled` desativa ou reativa.",
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` desativa (os tokens deixam de autenticar e o app não recebe eventos); `false`\nreativa."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "webhook_secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Segredo do HMAC dos eventos (32 a 256 caracteres); só gravado, nunca devolvido."
+          },
+          "webhook_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Destino dos eventos (`http://` ou `https://`, sem credenciais); exige um segredo.",
+            "example": "https://gestor.interno/engramind/events"
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateBody": {
         "type": "object",
         "description": "Campos omitidos não mudam; `description: null` limpa; `disabled` desativa ou reativa.",
@@ -17390,6 +18368,169 @@
         },
         "additionalProperties": false
       },
+      "UsageGroup": {
+        "type": "string",
+        "description": "Agrupamento de `get_usage`.",
+        "enum": [
+          "day",
+          "agent",
+          "operation",
+          "channel"
+        ]
+      },
+      "UsageReport": {
+        "type": "object",
+        "required": [
+          "since",
+          "until",
+          "group_by",
+          "rows",
+          "total"
+        ],
+        "properties": {
+          "group_by": {
+            "$ref": "#/components/schemas/UsageGroup"
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageRow"
+            }
+          },
+          "since": {
+            "type": "string",
+            "example": "2026-10-24T00:00:00.000Z"
+          },
+          "total": {
+            "$ref": "#/components/schemas/UsageTotals",
+            "description": "Soma do período (no agrupamento por canal, uma requisição conta em cada canal das\nlinhas, mas uma vez só aqui)."
+          },
+          "until": {
+            "type": "string",
+            "example": "2026-10-31T00:00:00.000Z"
+          }
+        }
+      },
+      "UsageRow": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/UsageTotals"
+          },
+          {
+            "type": "object",
+            "required": [
+              "key"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "Dia (`AAAA-MM-DD`), id do agente (ou do app, para token sem agente), operação ou id do\ncanal.",
+                "example": "ag_3f9e1a7c"
+              },
+              "label": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "`app/agente`, slug do app ou do canal; `null` quando já não existe.",
+                "example": "app-a/desenvolvedor"
+              }
+            }
+          }
+        ]
+      },
+      "UsageTotals": {
+        "type": "object",
+        "required": [
+          "requests",
+          "memories",
+          "rendered_tokens"
+        ],
+        "properties": {
+          "memories": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memórias devolvidas ou injetadas.",
+            "example": 2400,
+            "minimum": 0
+          },
+          "rendered_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Tokens do bloco renderizado (`get_context`).",
+            "example": 380000,
+            "minimum": 0
+          },
+          "requests": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Requisições registradas (`get_context` entregue, `search_memories`, `get_hints`).",
+            "example": 120,
+            "minimum": 0
+          }
+        }
+      },
+      "WebhookSecretState": {
+        "type": "object",
+        "required": [
+          "configured"
+        ],
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Última gravação; `null` sem segredo."
+          }
+        }
+      },
+      "WebhooksStatus": {
+        "type": "object",
+        "description": "Entregas de eventos (008 FR-012).",
+        "required": [
+          "enabled",
+          "apps",
+          "pending",
+          "delivered_24h",
+          "failed_24h"
+        ],
+        "properties": {
+          "apps": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Apps ativos com URL e segredo configurados.",
+            "example": 2,
+            "minimum": 0
+          },
+          "delivered_24h": {
+            "type": "integer",
+            "format": "int64",
+            "example": 310,
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "`webhooks.enabled`."
+          },
+          "failed_24h": {
+            "type": "integer",
+            "format": "int64",
+            "example": 0,
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Jobs `webhook` `queued` ou `running`.",
+            "example": 0,
+            "minimum": 0
+          }
+        }
+      },
       "WhoAmI": {
         "type": "object",
         "required": [
@@ -17450,7 +18591,7 @@
     },
     {
       "name": "Operations",
-      "description": "Rotas operacionais públicas (OpenAPI e Swagger UI)"
+      "description": "Rotas operacionais (OpenAPI, Swagger UI e métricas Prometheus)"
     },
     {
       "name": "Authentication",
@@ -17490,7 +18631,11 @@
     },
     {
       "name": "Status",
-      "description": "Estado do serviço (token admin)"
+      "description": "Estado e uso do serviço (token admin)"
+    },
+    {
+      "name": "Integration",
+      "description": "Importação de memórias de outros sistemas (token admin)"
     },
     {
       "name": "Jobs",

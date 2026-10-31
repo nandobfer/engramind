@@ -24,6 +24,8 @@
 - `LAST_ADMIN_TOKEN`: nenhuma mutação pode zerar os tokens `admin` ativos com `write` (checado na transação).
 - Toda mutação passa por `Core::mutate`: auditoria e idempotência na mesma transação; a repetição é conferida antes de resolver os alvos.
 - Exclusão remove em cascata (agentes, tokens); a auditoria não tem chave estrangeira e guarda o estado anterior.
+- `create_app`/`update_app` aceitam `webhook_url` (http/https, sem credenciais) e `webhook_secret` (32 a 256, só gravado, cifrado com AAD `webhook:<slug>`); URL sem segredo é recusada; a leitura e a auditoria só mostram `webhook: { url, secret: { configured, updated_at } }`.
+- Toda mutação de app, agente ou token chama `network_changed()` (o diretório dos webhooks vive na mesma geração da rede).
 - Rate limit e `last_used_at` são em memória (uma instância por banco); `last_used_at` é gravado a cada 10 s e no encerramento.
 
 Desenho: §4, §6 e §13. Decisões: `0007`, `0008`, `0009`.

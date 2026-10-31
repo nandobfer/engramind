@@ -4,6 +4,7 @@
 mod channels;
 mod context;
 mod identities;
+mod integration;
 mod jobs;
 mod journal;
 mod memories;
@@ -27,14 +28,15 @@ use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
         Channel, ChannelPatch, ChannelStats, ContextSnapshot, EmbedSource, EmbeddingState,
-        EmbeddingSwitch, IdemRow, IdentityCounts, InjectionBump, Job, JobCount, JobFilter,
-        JobFinish, LlmActivity, LlmCall, LlmCallFilter, Lookup, META_EMBEDDING_MODEL, Memory,
-        MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent,
-        NewApp, NewChannel, NewLlmCall, NewMemory, NewSubscription, NewToken, Redaction,
-        ReindexJobs, ReindexPlan, ReindexState, RetrievalBump, SecretView, SettingChange,
-        SettingRow, StatusAction, StoredSecret, Subscription, SubscriptionPatch, TextQuery, Token,
-        TokenFilter, TokenPatch, UsageEntry, VectorBatch, VectorCounts, VectorHit, VectorQuery,
-        WriteContext,
+        EmbeddingSwitch, IdemRow, IdentityCounts, ImportResult, InjectionBump, Job, JobCount,
+        JobFilter, JobFinish, LlmActivity, LlmCall, LlmCallFilter, LlmSummary, Lookup,
+        META_EMBEDDING_MODEL, Memory, MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget,
+        MemoryWrite, Network, NewAgent, NewApp, NewChannel, NewImportedMemory, NewLlmCall,
+        NewMemory, NewSubscription, NewToken, Redaction, ReindexJobs, ReindexPlan, ReindexState,
+        RetentionTable, RetrievalBump, SecretView, SettingChange, SettingRow, StatusAction,
+        StoredSecret, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
+        UsageAggregate, UsageEntry, UsageQuery, VectorBatch, VectorCounts, VectorHit, VectorQuery,
+        WebhookCounts, WebhookDirectory, WebhookTarget, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -674,18 +676,6 @@ impl Store for SqliteStore {
             .await
     }
 
-    async fn purge_idempotency(&self, before: String) -> Result<u64, StoreError> {
-        self.write(move |transaction| {
-            transaction
-                .execute(
-                    "DELETE FROM idempotency WHERE created_at < ?1",
-                    params![before],
-                )
-                .map(|count| count as u64)
-        })
-        .await
-    }
-
     async fn list_audit(
         &self,
         filter: AuditFilter,
@@ -891,6 +881,57 @@ impl Store for SqliteStore {
             vectors::finish_reindex(transaction, &model_id, started_at.as_deref())
         })
         .await
+    }
+
+    async fn webhook_directory(&self) -> Result<WebhookDirectory, StoreError> {
+        self.read(identities::webhook_directory).await
+    }
+
+    async fn webhook_target(&self, app_id: String) -> Result<Option<WebhookTarget>, StoreError> {
+        self.read(move |connection| identities::webhook_target(connection, &app_id))
+            .await
+    }
+
+    async fn import_memories(
+        &self,
+        channel_id: String,
+        items: Vec<NewImportedMemory>,
+        dedupe: bool,
+        context: WriteContext,
+    ) -> Result<ImportResult, StoreError> {
+        self.mutate(move |transaction| {
+            memories::import_memories(transaction, &channel_id, &items, dedupe, &context)
+        })
+        .await
+    }
+
+    async fn usage_report(&self, query: UsageQuery) -> Result<Vec<UsageAggregate>, StoreError> {
+        self.read(move |connection| integration::usage_report(connection, &query))
+            .await
+    }
+
+    async fn llm_summary(&self, purpose: String, since: String) -> Result<LlmSummary, StoreError> {
+        self.read(move |connection| integration::llm_summary(connection, &purpose, &since))
+            .await
+    }
+
+    async fn webhook_counts(&self, since: String) -> Result<WebhookCounts, StoreError> {
+        self.read(move |connection| integration::webhook_counts(connection, &since))
+            .await
+    }
+
+    async fn database_size(&self) -> Result<u64, StoreError> {
+        self.read(integration::database_size).await
+    }
+
+    async fn purge_before(
+        &self,
+        table: RetentionTable,
+        before: String,
+        limit: u32,
+    ) -> Result<u64, StoreError> {
+        self.write(move |transaction| integration::purge_before(transaction, table, &before, limit))
+            .await
     }
 }
 

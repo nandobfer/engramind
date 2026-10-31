@@ -65,6 +65,13 @@ No REST, `PUT /v1/settings` com `{ "limits.rate_per_minute": 1200 }`; no MCP, `u
 | `search.default_limit` | integer | 10 | 1 a 50 | não | Resultados de `search_memories` quando `limit` não é informado. |
 | `search.hint_threshold` | number | 0.8 | 0 a 1 | não | Similaridade de cosseno mínima de uma dica (`get_hints`). Modelos e5 comprimem os cossenos: valores perto de 0,88 filtram melhor. |
 | `search.hint_limit` | integer | 3 | 1 a 20 | não | Dicas devolvidas por `get_hints` quando `limit` não é informado. |
+| `webhooks.enabled` | boolean | true | — | não | Liga os webhooks: desligado, as mutações não enfileiram eventos e as entregas pendentes terminam como `skipped`. |
+| `webhooks.timeout_ms` | integer | 5000 | 500 a 30000 | não | Prazo de cada tentativa de entrega de um webhook. |
+| `webhooks.max_attempts` | integer | 5 | 1 a 10 | não | Tentativas de entrega de um evento antes de o job ficar `failed`. |
+| `retention.usage_days` | integer | 90 | 1 a 3650 | não | Dias de `usage_log` guardados (base de `get_usage`). |
+| `retention.llm_calls_days` | integer | 90 | 1 a 3650 | não | Dias de `llm_calls` guardados. |
+| `retention.audit_days` | integer | — | 1 a 3650 | não | Dias de `audit_log` guardados; vazio guarda para sempre. |
+| `retention.jobs_days` | integer | 30 | 1 a 3650 | não | Dias que jobs `done` e `failed` ficam na fila depois de terminar; `queued` e `running` nunca saem. |
 
 As categorias padrão são `PROJECT_RULES` (prioridade 50), `ARCHITECTURE` (40), `CONSTRAINTS` (30), `CONFIG_VALUES` (20) e `NAMING` (10). Mudar `label` e `priority` é livre; uma `key` nova vale na hora. Retirar uma `key` usada por alguma memória é recusado com `409 CATEGORY_IN_USE` e a contagem em `details.in_use`.
 
@@ -75,7 +82,7 @@ engramind settings set categories.list '[{"key":"RULES","label":"Regras","priori
 
 As chaves `context.*` e `categories.list` mudam o bloco de `get_context`, então mudá-las muda a `version` do contexto (guia `contexto-e-cache`); `context.default_format` só vale para quem não passa `format`. Valores `enum` são texto JSON: `engramind settings set context.default_format markdown`.
 
-Os demais grupos do desenho (consolidação, webhooks e retenção) entram junto com as capacidades que eles controlam.
+Os grupos `webhooks.*` (entrega dos eventos, guia `integracao-gestor`) e `retention.*` (limpeza horária, guia `operacao`) valem na hora, sem reinício. A consolidação entra junto com a capacidade que ela controla.
 
 Chaves sem padrão (—) valem `null` até serem definidas; `null` volta a elas. Um texto, uma URL ou uma lista são JSON: `engramind settings set redator.model gpt-4o-mini` e `engramind settings set redator.fallback_models '["gpt-4o"]'`.
 

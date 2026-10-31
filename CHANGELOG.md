@@ -2,6 +2,31 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.8.0] - 2026-10-31
+
+Etapa 008 — integração (marco: migração de consumidor e gestor).
+
+### Adicionado
+
+- Eventos `memory.created`, `memory.updated`, `memory.archived`, `memory.deleted`, `channel.updated`, `subscription.updated` e `settings.updated` em toda mutação de memória, canal, assinatura, configuração e segredo, inclusive o título e o texto aplicados pelo Redator; `move_memory` gera um evento por canal. Payload `{ id, type, channel, channel_version, memory_ids, at }` sem textos, com `subscription`/`agent`/`target` e `keys` como extras.
+- Webhooks por app: `create_app`/`update_app` aceitam `webhook_url` (http/https, sem credenciais) e `webhook_secret` (32 a 256 caracteres, só gravado, cifrado com `SECRETS_KEY`); a leitura mostra `webhook: { url, secret: { configured, updated_at } }`. Destinatários: apps com agente cuja assinatura alcança o canal e apps com token `admin` ativo; um job `webhook` por destinatário na transação da mutação.
+- Job `webhook` (4 em paralelo): `POST` com `Engramind-Event-Id`, `Engramind-Event-Type` e `Engramind-Signature: t=<unix>,v1=<hex(HMAC-SHA256(segredo, t.corpo))>`, sem seguir redirecionamentos; backoff 10 s × 4ⁿ (teto 1 h) até `webhooks.max_attempts`; `skipped` para app removido, desativado ou sem URL.
+- `import_memories` (`POST /v1/memories/import`, `engramind memories import`, ferramenta MCP; tag nova `Integration`): até `limits.max_batch` memórias numa transação, com `created_at`, autor e origem preservados, duplicatas reportadas, revisão 1 (`reason = import`), um único `memory.created` e `Idempotency-Key` obrigatória (a CLI deriva uma do arquivo; aceita JSON e JSONL).
+- `get_usage` (`GET /v1/usage`, `engramind usage`, ferramenta MCP): `usage_log` agregado por `day`, `agent`, `operation` ou `channel`, com total.
+- `get_status` completo: `uptime_seconds`, `database.size_bytes`, `backup.replica_age_seconds`/`last_replica_at`/`checked_at` (amostrador de 60 s), `redator.last_24h` (chamadas, falhas, custo), `webhooks` e `retention`.
+- `GET /metrics` (formato Prometheus, token `admin`·`read`): `http_requests_total` e `http_request_duration_seconds` com o rótulo `operation` (inclusive por ferramenta MCP), fila, falhas de jobs, chamadas, tokens e custo do LLM, embeddings, entregas de webhook, falhas de autenticação, tamanho do banco, idade da réplica, retenção, prontidão e versão. Dependências `metrics` 0.24 e `metrics-exporter-prometheus` 0.18.3.
+- Retenção horária em lotes de `usage_log`, `llm_calls`, `audit_log`, jobs terminados e `idempotency`, com o relatório em `schema_meta`.
+- Configurações `webhooks.enabled`, `webhooks.timeout_ms`, `webhooks.max_attempts`, `retention.usage_days`, `retention.llm_calls_days`, `retention.audit_days` e `retention.jobs_days`.
+- Códigos de erro `IDEMPOTENCY_KEY_REQUIRED` (400) e `BATCH_TOO_LARGE` (400).
+- Migração `0008_integration.sql`; guia `integracao-gestor`; decisões `docs/decisions/0022` a `0024`.
+
+### Alterado
+
+- `update_app` usa o corpo `UpdateAppBody` (com os campos do webhook); `App` ganha `webhook`.
+- A limpeza horária da idempotência passou para a retenção; `doctor::backup_check` compartilha a medição com o amostrador.
+- Mutações de apps, agentes e tokens invalidam a rede em cache (o diretório dos webhooks).
+- Guias `integracao-consumidor`, `operacao`, `configuracoes`, `erros`, `tokens-e-escopos`, `cli` e `overview` e a skill atualizados.
+
 ## [0.7.0] - 2026-10-31
 
 Etapa 007 — embeddings e busca híbrida.

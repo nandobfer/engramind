@@ -4,13 +4,72 @@ Ferramentas para quem opera o Engramind. Todas exigem um token `admin` com `read
 
 ## Status
 
-`get_status` mostra a versão em execução, o estado do banco e das migrações, a idade da última réplica do Litestream (quando `LITESTREAM_ENABLED=true`), as contagens de apps, agentes e tokens, a fila (`queue`: pendentes, falhos e jobs por tipo e estado) e o Redator (`redator`: ligado, configurado, chaves que faltam em `missing`, provedor, modelo e o último sucesso e a última falha das chamadas do job `redact`).
+`get_status` resume tudo o que a tela do gestor precisa:
+
+| Bloco | Conteúdo |
+|---|---|
+| `version`, `uptime_seconds` | Versão em execução e segundos desde a subida. |
+| `database` | `status` (`ok` ou `migrations_pending`), migrações aplicadas e esperadas e `size_bytes`. |
+| `backup` | `enabled`, `status` (`ok`, `fail` ou `skip`), `detail`, `replica_age_seconds`, `last_replica_at` e `checked_at`. |
+| `counts` | Apps, agentes e tokens. |
+| `queue` | Jobs pendentes, falhos e por tipo e estado. |
+| `redator` | Ligado, configurado, chaves que faltam, provedor, modelo, último sucesso e última falha e `last_24h` (`calls`, `failures`, `cost_usd`) do job `redact`. |
+| `embedding` | Provedor, modelo, `model_id`, dimensão e estado da reindexação. |
+| `webhooks` | `enabled`, `apps` com webhook, `pending`, `delivered_24h` e `failed_24h`. |
+| `retention` | Última execução da retenção (`last_run_at`) e as linhas removidas por tabela; `null` antes da primeira. |
 
 ```bash
 engramind status --json
 ```
 
-`backup.status` vale `ok`, `fail` ou `skip` (sem backup configurado ou sem o binário `litestream`).
+A réplica do Litestream é medida a cada 60 s por uma tarefa do servidor (`litestream ltx`), e `get_status` e `/metrics` leem essa medição; `engramind doctor` mede na hora. `backup.status = skip` quando o backup está desligado ou o binário `litestream` não existe.
+
+## Uso
+
+`get_usage` agrega `usage_log` (cada `get_context` entregue, `search_memories` e `get_hints`) em `[since, until)`: requisições, memórias devolvidas ou injetadas e tokens renderizados do contexto. `group_by` é `day` (padrão, UTC), `agent` (`key` é o id do agente, ou do app para tokens sem agente, e `label` o `app/agente`), `operation` ou `channel`. Sem `since`, os últimos 7 dias; no máximo 366 dias por consulta. No agrupamento por canal, uma requisição conta em cada canal que alcançou e as memórias no canal atual delas; o `total` conta cada requisição uma vez. Os `304` do contexto não entram (veja `/metrics`).
+
+```bash
+engramind usage --group-by agent --since 2026-10-01T00:00:00Z --json
+```
+
+## Métricas
+
+`GET /metrics` expõe o formato de texto do Prometheus e exige um token `admin` com `read` (sem token, `401`; token `agent`, `403 SCOPE_REQUIRED`). No Prometheus:
+
+```yaml
+scrape_configs:
+  - job_name: engramind
+    metrics_path: /metrics
+    authorization:
+      credentials_file: /etc/prometheus/engramind.token
+    static_configs:
+      - targets: ["engramind-api:8000"]
+```
+
+| Métrica | Tipo | Rótulos |
+|---|---|---|
+| `http_requests_total` | counter | `method`, `route`, `status`, `operation` |
+| `http_request_duration_seconds` | histogram | `method`, `route`, `operation` |
+| `service_ready` | gauge | — |
+| `engramind_build_info` | gauge | `version` |
+| `engramind_jobs` | gauge | `kind`, `state` |
+| `engramind_jobs_failed_total` | counter | `kind` |
+| `engramind_llm_calls_total` | counter | `purpose`, `provider`, `outcome` |
+| `engramind_llm_tokens_total` | counter | `purpose`, `direction` |
+| `engramind_llm_cost_microusd_total` | counter | `purpose`, `provider` |
+| `engramind_embedding_duration_seconds` | histogram | `provider`, `kind` |
+| `engramind_embedding_failures_total` | counter | `provider`, `kind` |
+| `engramind_webhook_deliveries_total` | counter | `outcome` |
+| `engramind_auth_failures_total` | counter | `reason` |
+| `engramind_backup_replica_age_seconds` | gauge | — |
+| `engramind_database_size_bytes` | gauge | — |
+| `engramind_retention_removed_total` | counter | `table` |
+
+`operation` é o nome da operação do catálogo, inclusive em cada ferramenta MCP (todas passam pela rota `/mcp`); fica vazio nas rotas técnicas. Os rótulos nunca têm slugs, ids, URLs nem textos. A taxa de `304` do contexto sai de `http_requests_total{operation="get_context",status="304"}` sobre o total de `get_context`; as falhas de autenticação, de `engramind_auth_failures_total` (`missing`, `invalid`, `inactive`). O custo do LLM é contado em micro-dólares (`/ 1e6` para dólares). As métricas são do processo: reiniciar zera os contadores.
+
+## Retenção
+
+A cada hora uma tarefa do servidor remove, em lotes de 5.000 linhas por transação, o que passou do prazo: `usage_log` (`retention.usage_days`, 90), `llm_calls` (`retention.llm_calls_days`, 90), `audit_log` (`retention.audit_days`; vazio, nunca), jobs `done` e `failed` terminados há mais de `retention.jobs_days` (30; `queued` e `running` nunca saem) e chaves de idempotência com mais de 24 h. O último resultado fica em `get_status.retention` e sobrevive a reinícios; removendo algo, o log registra `INFO retention.purged` com as contagens.
 
 ## Auditoria
 
@@ -31,14 +90,17 @@ engramind audit list --entity token --action token.revoke
 | `secret.set`, `secret.delete` | `secret` (com a chave em `entity_id`; só `configured` e `updated_at`) |
 | `job.retry` | `job` |
 | `memory.redact` | `memory` (autor `system/redator`) |
+| `memory.import` | `channel` (com os ids criados e o número de duplicatas, sem textos) |
+
+A auditoria de `app.create` e `app.update` mostra o webhook só como `webhook: { url, secret: { configured, updated_at } }`; o segredo nunca entra.
 
 ## Fila de jobs
 
-O trabalho assíncrono roda numa fila em tabela (`jobs`), sem broker. A escrita de uma memória grava os jobs na mesma transação e responde na hora; um runner por tipo os executa depois do commit. Há dois runners, cada um com 2 jobs em paralelo: `redact` (Redator) e `embed` (vetores da busca por sentido).
+O trabalho assíncrono roda numa fila em tabela (`jobs`), sem broker. A escrita de uma memória grava os jobs na mesma transação e responde na hora; um runner por tipo os executa depois do commit. Há três runners: `redact` (Redator) e `embed` (vetores da busca por sentido), com 2 jobs em paralelo cada, e `webhook` (entrega dos eventos aos apps), com 4.
 
 - **Captura**: o runner pega o job pronto mais antigo do tipo com um único `UPDATE … RETURNING`, marca `running`, conta a tentativa e reserva um lease (`locked_until`). Ele acorda a cada commit que enfileira e, sem aviso, a cada segundo.
 - **Lease vencido**: um job `running` cujo lease venceu (o processo caiu no meio) volta a ser capturável.
-- **Falha temporária**: o job volta para `queued` com backoff de 2 s × 2ⁿ (teto de 10 min) e `last_error`, até `redator.max_attempts` no `redact` e 5 tentativas no `embed`. Esgotadas as tentativas, fica `failed`, com um único `ERROR` `jobs.failed`.
+- **Falha temporária**: o job volta para `queued` com backoff e `last_error`: 2 s × 2ⁿ (teto de 10 min) até `redator.max_attempts` no `redact` e 5 tentativas no `embed`; 10 s × 4ⁿ (teto de 1 h) até `webhooks.max_attempts` no `webhook`. Esgotadas as tentativas, fica `failed`, com um único `ERROR` `jobs.failed`.
 - **Superado**: um job de uma memória excluída, ou com um job do mesmo tipo mais novo para a mesma memória (o texto mudou de novo), termina `done` com `outcome = superseded`, sem efeito.
 
 `list_jobs` lista do mais recente ao mais antigo, filtra por `state` e `kind` e pagina por `cursor`; o `payload` só tem ids e versões. `retry_job` recoloca um job `failed` na fila, com as tentativas zeradas; outro estado dá `409 JOB_NOT_RETRYABLE` e um id inexistente, `404 JOB_NOT_FOUND`. Exigem `read` e `write`.
@@ -54,6 +116,19 @@ engramind jobs retry 42
 | `title_only` | Só o título (sem revisão de texto, texto igual, duplicata no canal ou guarda de sentido). |
 | `superseded` | Memória excluída ou conteúdo mudou depois do job. |
 | `skipped` | Redator desligado ou sem configuração: `title_state = fallback`. |
+
+## Webhooks
+
+Cada mutação de memória, canal, assinatura ou configuração cria, na mesma transação, um job `webhook` por app destinatário (guia `integracao-gestor`). O `payload` do job é `{ app_id, event }`; a URL e o segredo são lidos na hora de cada tentativa. `last_error` traz só o status HTTP (`http 500`) ou a classe da falha (`timeout`, `connect`, `redirect`, `request`), nunca a URL; os logs `webhooks.retry` (`WARN`) e `webhooks.delivered` (`DEBUG`) trazem o host. Lease de `webhooks.timeout_ms` + 30 s.
+
+| `outcome` do `webhook` | Quando |
+|---|---|
+| `delivered` | O app respondeu `2xx`. |
+| `skipped` | App removido, desativado, sem URL ou segredo, ou `webhooks.enabled = false` na hora da entrega. |
+
+```bash
+engramind jobs list --kind webhook --state failed
+```
 
 ## Embeddings
 

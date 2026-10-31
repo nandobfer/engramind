@@ -1,6 +1,6 @@
 # Integração de um sistema consumidor
 
-Um sistema consumidor coloca as memórias do Engramind no prompt dos seus agentes. Este guia cobre o contexto, as dicas por turno, a busca e as ferramentas. Webhooks e importação chegam em versões seguintes.
+Um sistema consumidor coloca as memórias do Engramind no prompt dos seus agentes. Este guia cobre o contexto, as dicas por turno, a busca, as ferramentas, os avisos de mudança e a importação das memórias que já existem.
 
 ## Preparação (gestor, token `admin`)
 
@@ -9,6 +9,8 @@ Um sistema consumidor coloca as memórias do Engramind no prompt dos seus agente
 3. Assine os canais: `inject` para o que entra no prompt, `search` para o que só se busca, `manage` para curadoria (`subscribe`). Ajuste `priority` na assinatura para decidir a ordem entre canais.
 
 O detalhe das assinaturas está no guia `canais-e-assinaturas`.
+
+Para trazer memórias que já existem, o gestor usa `import_memories` (token `admin`): um canal por lista de origem, preservando datas, autoria e origem, com `Idempotency-Key` obrigatória (guia `integracao-gestor`).
 
 ## Por turno
 
@@ -24,6 +26,11 @@ curl -s -H "Authorization: Bearer $TOKEN" -H "If-None-Match: \"$VERSION\"" \
 O bloco é determinístico: a mesma rede, as mesmas memórias e as mesmas configurações dão o mesmo texto e a mesma `version`, em qualquer réplica do seu sistema e depois de reinícios do Engramind. Ordem, faixas e formatos estão no guia `contexto-e-cache`.
 
 4. Opcional: antes do turno, chame `get_hints { text }` com a mensagem do usuário e acrescente as dicas (`#id · título · canal`) **junto da mensagem do turno**, nunca na parte estável. São baratas (sem LLM), só trazem o que passa do limiar `search.hint_threshold` e nunca repetem o que já está no contexto; o agente busca o texto completo com `get_memory` se quiser. Sem embeddings, a lista vem vazia (guia `busca-e-dicas`).
+
+## Quando reconstruir o prompt
+
+- **Com webhook**: configure `webhook_url` e `webhook_secret` no app (`update_app`). Os eventos `memory.*`, `channel.updated` e `subscription.updated` dos canais que os seus agentes assinam chegam assinados com HMAC-SHA256; ao receber um, marque o contexto do canal como sujo e chame `get_context` no próximo turno. Verificação, tipos e retentativas estão no guia `integracao-gestor` (para tokens `admin`).
+- **Sem webhook**: o `get_context` com `If-None-Match` no início de cada turno já é o aviso: um `304` de poucos bytes quando nada mudou.
 
 ## Ferramentas do agente
 

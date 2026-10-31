@@ -111,6 +111,7 @@ mod catalog {
         "get_openapi_document",
         "open_swagger_ui",
         "get_swagger_ui",
+        "get_metrics",
         "mcp",
     ];
 
@@ -419,6 +420,15 @@ mod catalog {
         for (code, exit, _) in LOCAL_ERRORS {
             let row = format!("| `{code}` | {exit} |");
             assert!(cli.contains(&row), "cli.md sem {row}");
+        }
+    }
+
+    #[test]
+    fn every_event_type_is_documented_in_the_manager_guide() {
+        let manager = guide("integracao-gestor.md");
+        for kind in engramind::core::events::EventType::ALL {
+            let row = format!("| `{}` |", kind.as_str());
+            assert!(manager.contains(&row), "integracao-gestor.md sem {row}");
         }
     }
 

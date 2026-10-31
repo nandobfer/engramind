@@ -72,6 +72,9 @@ engramind settings test-embedding --text "Use cargo nextest localmente"
 engramind settings embedding-models --provider local
 engramind embeddings reembed
 engramind status
+engramind usage --group-by agent
+engramind memories import --channel eng/global --file memorias.json
+openssl rand -base64 48 | engramind apps update gestor --webhook-url https://gestor.interno/engramind/events --webhook-secret-stdin
 engramind jobs list --state failed
 engramind jobs retry 42
 engramind llm-calls list --purpose redact

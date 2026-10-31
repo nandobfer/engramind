@@ -9,8 +9,8 @@ use crate::{
     core::{
         identities::{
             AgentList, AppList, CreateAgentBody, CreateAppBody, IssueTokenBody, IssuedToken,
-            ListAgentsQuery, ListQuery, ListTokensQuery, TokenList, UpdateBody, UpdateTokenBody,
-            WhoAmI,
+            ListAgentsQuery, ListQuery, ListTokensQuery, TokenList, UpdateAppBody, UpdateBody,
+            UpdateTokenBody, WhoAmI,
         },
         model::{Agent, App, Token},
     },
@@ -101,7 +101,7 @@ pub async fn get_app(
     operation_id = "create_app",
     tag = "Identities",
     summary = "Cria um app",
-    description = "O slug é único na rede. Aceita `Idempotency-Key`. Exige token admin com `write`.",
+    description = "O slug é único na rede. `webhook_url` (http/https, sem credenciais) exige `webhook_secret` (32 a 256 caracteres, só gravado e cifrado). Aceita `Idempotency-Key`. Exige token admin com `write`.",
     params(("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")),
     request_body = CreateAppBody,
     security(("bearerAuth" = [])),
@@ -136,12 +136,12 @@ pub async fn create_app(
     operation_id = "update_app",
     tag = "Identities",
     summary = "Altera ou desativa um app",
-    description = "Campos omitidos não mudam. `disabled: true` desativa o app e os tokens dele deixam de autenticar. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`.",
+    description = "Campos omitidos não mudam; `null` limpa `description`, `webhook_url` e `webhook_secret`. `disabled: true` desativa o app: os tokens dele deixam de autenticar e ele não recebe eventos. `webhook_url` (http/https, sem credenciais) exige um `webhook_secret` (32 a 256 caracteres, só gravado e cifrado; a leitura mostra `webhook.secret.configured`). Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`.",
     params(
         ("app" = String, Path, description = "Id (`app_…`) ou slug do app"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")
     ),
-    request_body = UpdateBody,
+    request_body = UpdateAppBody,
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "App alterado", body = App),
@@ -161,7 +161,7 @@ pub async fn update_app(
     Auth(principal): Auth,
     key: IdempotencyKey,
     ApiPath(app): ApiPath<String>,
-    ApiJson(body): ApiJson<UpdateBody>,
+    ApiJson(body): ApiJson<UpdateAppBody>,
 ) -> Result<Response, ApiError> {
     let result = state
         .core

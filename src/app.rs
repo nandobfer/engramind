@@ -58,11 +58,11 @@ fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
     ]
 }
 
-/// Rotas `/v1`, protegidas por `require_auth`. Uma entrada por operação do catálogo.
+/// Rotas protegidas por `require_auth`: uma entrada por operação do catálogo e `/metrics`.
 fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
     use rest::{
-        audit, channels, context, docs, embeddings, identities, jobs, memories, search, settings,
-        status, subscriptions,
+        audit, channels, context, docs, embeddings, identities, integration, jobs, memories,
+        search, settings, status, subscriptions,
     };
     vec![
         ("/v1/whoami", get(identities::whoami)),
@@ -121,6 +121,7 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
             get(memories::list_memories).post(memories::create_memory),
         ),
         ("/v1/memories/search", post(search::search_memories)),
+        ("/v1/memories/import", post(integration::import_memories)),
         ("/v1/hints", post(search::get_hints)),
         (
             "/v1/memories/{memory}",
@@ -175,6 +176,7 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         ("/v1/llm-calls", get(jobs::list_llm_calls)),
         ("/v1/status", get(status::get_status)),
         ("/v1/audit", get(audit::get_audit)),
+        ("/v1/usage", get(status::get_usage)),
         ("/v1/docs/overview", get(docs::get_overview)),
         ("/v1/docs/guides", get(docs::list_guides)),
         ("/v1/docs/guides/{guide}", get(docs::get_guide)),
@@ -182,6 +184,8 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         ("/v1/docs/operations", get(docs::list_operations)),
         ("/v1/docs/operations/{operation}", get(docs::get_operation)),
         ("/v1/docs/schemas/{schema}", get(docs::get_schema)),
+        // Rota técnica fora de `/v1` e do catálogo (008 D-002), com token `admin`·`read`.
+        ("/metrics", get(crate::metrics::render)),
     ]
 }
 
@@ -197,6 +201,9 @@ pub fn route_paths() -> Vec<&'static str> {
 }
 
 pub fn build_app(core: Core<AppStore>, http: HttpSettings, mcp_settings: &McpSettings) -> Router {
+    if let Err(error) = crate::metrics::init() {
+        tracing::warn!(event = "metrics.init_failed", error = %error, "metricas indisponiveis");
+    }
     let state = AppState {
         store: core.store().clone(),
         core: core.clone(),

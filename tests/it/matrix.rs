@@ -77,12 +77,14 @@ async fn callers(context: &TestContext) -> Vec<Caller> {
     callers
 }
 
-/// Erro esperado de quem pode chamar: `test_redator` sem Redator configurado e `reembed_all`
-/// com a reindexação de outro chamador ainda na fila.
+/// Erro esperado de quem pode chamar: `test_redator` sem Redator configurado, `reembed_all`
+/// com a reindexação de outro chamador ainda na fila e `import_memories` sem `Idempotency-Key`
+/// (REST e MCP; a CLI deriva a chave).
 fn expected_error(name: &str) -> Option<&'static str> {
     match name {
         "test_redator" => Some("PROVIDER_NOT_CONFIGURED"),
         "reembed_all" => Some("REEMBED_IN_PROGRESS"),
+        "import_memories" => Some("IDEMPOTENCY_KEY_REQUIRED"),
         _ => None,
     }
 }
@@ -237,6 +239,12 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
         "list_llm_calls" => ("GET", "/v1/llm-calls".into(), None),
         "get_status" => ("GET", "/v1/status".into(), None),
         "get_audit" => ("GET", "/v1/audit".into(), None),
+        "get_usage" => ("GET", "/v1/usage".into(), None),
+        "import_memories" => (
+            "POST",
+            "/v1/memories/import".into(),
+            Some(json!({ "channel": "matrix/canal", "memories": [{ "text": "importada" }] })),
+        ),
         "get_overview" => ("GET", "/v1/docs/overview".into(), None),
         "list_guides" => ("GET", "/v1/docs/guides".into(), None),
         "get_guide" => ("GET", "/v1/docs/guides/overview".into(), None),
@@ -279,6 +287,9 @@ fn mcp_arguments(name: &str) -> Value {
         "list_embedding_models" => json!({ "provider": "local" }),
         "get_hints" => json!({ "text": "matriz" }),
         "retry_job" => json!({ "job": "999999" }),
+        "import_memories" => {
+            json!({ "channel": "matrix/canal", "memories": [{ "text": "importada" }] })
+        }
         "channel_stats" | "get_channel_settings" => json!({ "channel": "matrix/canal" }),
         "update_channel_settings" => {
             json!({ "channel": "matrix/canal", "settings": { "memory.text_max": 4000 } })
@@ -298,6 +309,20 @@ fn mcp_arguments(name: &str) -> Value {
         "get_schema" => json!({ "schema": "WhoAmI" }),
         _ => json!({}),
     }
+}
+
+/// Arquivo de importação da CLI (um item), criado uma vez por processo.
+fn import_file() -> String {
+    static FILE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    FILE.get_or_init(|| {
+        let path = std::env::temp_dir().join(format!(
+            "engramind-matrix-import-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, r#"[{ "text": "importada pela cli" }]"#).expect("arquivo");
+        path.display().to_string()
+    })
+    .clone()
 }
 
 fn cli_arguments(name: &str) -> Vec<String> {
@@ -490,6 +515,14 @@ fn cli_arguments(name: &str) -> Vec<String> {
             "texto da matriz".into(),
         ],
         "retry_job" => vec!["jobs".into(), "retry".into(), "999999".into()],
+        "import_memories" => vec![
+            "memories".into(),
+            "import".into(),
+            "--channel".into(),
+            "matrix/canal".into(),
+            "--file".into(),
+            import_file(),
+        ],
         "get_guide" => vec!["docs".into(), "guide".into(), "overview".into()],
         "search_docs" => vec!["docs".into(), "search".into(), "token".into()],
         "get_operation" => vec!["docs".into(), "operation".into(), "whoami".into()],

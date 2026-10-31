@@ -17,6 +17,8 @@ Todo erro usa o envelope único:
 | Código | HTTP | Saída da CLI | Quando |
 |---|---|---|---|
 | `VALIDATION_ERROR` | 400 | 2 | Path, query, header ou body inválido. |
+| `IDEMPOTENCY_KEY_REQUIRED` | 400 | 2 | A operação (`import_memories`) só roda com `Idempotency-Key` (`idempotency_key` no MCP). |
+| `BATCH_TOO_LARGE` | 400 | 2 | O lote passa de `limits.max_batch` itens; `details` traz `max` e `received`. |
 | `AUTH_INVALID` | 401 | 3 | Token ausente, malformado, desconhecido, expirado, revogado ou de app/agente desativado. |
 | `SCOPE_REQUIRED` | 403 | 4 | O tipo ou os escopos do token (ou o acesso efetivo no canal) não permitem a operação; `details` traz `required_kind`, `required_scope` e, no canal, `channel`. |
 | `CHANNEL_NOT_SUBSCRIBED` | 403 | 4 | O token não alcança o canal (sem assinatura ou fora da seleção `channels`/`Engramind-Channels`); `details.channel` traz o slug. |
@@ -88,6 +90,8 @@ Todo erro usa o envelope único:
 - `502 PROVIDER_FAILED` e `504 PROVIDER_TIMEOUT`: o provedor do LLM ou de embedding falhou; confira modelo, URL e chave, ou acrescente `redator.fallback_models`. Numa troca de embedding, nada foi gravado.
 - `502 EMBEDDING_DIMENSION_MISMATCH`: ajuste ou apague `embedding.dimensions` (ou troque de modelo) e teste com `test_embedding`.
 - `409 REEMBED_IN_PROGRESS`: espere a reindexação atual terminar (`get_status.embedding.state`).
+- `400 IDEMPOTENCY_KEY_REQUIRED`: mande `Idempotency-Key` (a CLI deriva uma do arquivo); repetir a mesma chave com o mesmo corpo devolve a resposta gravada.
+- `400 BATCH_TOO_LARGE`: divida o lote em partes de até `details.max` itens, cada uma com a sua chave.
 - `400 PROVIDER_LISTING_UNSUPPORTED`: escolha o modelo pela documentação do provedor e valide com `test_embedding`.
 - `429 RATE_LIMITED`: espere os segundos de `Retry-After`.
 - `503` e `504`: falhas transitórias; repita com backoff, usando `Idempotency-Key` nas mutações.

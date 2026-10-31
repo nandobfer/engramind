@@ -190,6 +190,7 @@ impl<S: Store> Core<S> {
         let core = self.clone();
         let agent = body.agent.clone();
         let mode = body.mode;
+        let body_target = body.target.clone();
         let result = self
             .mutate(
                 principal,
@@ -197,9 +198,12 @@ impl<S: Store> Core<S> {
                 key,
                 &body,
                 201,
-                |context| async move {
+                |mut context| async move {
                     let agent = core.find_agent(&agent).await?;
                     let (stored, is_prefix) = target.stored();
+                    context.events = core
+                        .subscription_event(&agent.id, body_target.trim(), None)
+                        .await?;
                     let new = NewSubscription {
                         agent_id: agent.id,
                         target: stored.to_owned(),
@@ -238,7 +242,8 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
+                |mut context| async move {
+                    context.events = core.existing_subscription_event(&id).await?;
                     core.store()
                         .update_subscription(id, patch, context)
                         .await
@@ -267,7 +272,8 @@ impl<S: Store> Core<S> {
                 key,
                 &input,
                 200,
-                |context| async move {
+                |mut context| async move {
+                    context.events = core.existing_subscription_event(&id).await?;
                     core.store()
                         .delete_subscription(id, context)
                         .await

@@ -34,8 +34,9 @@ use crate::{
         hints::HintsBody,
         identities::{
             CreateAgentBody, CreateAppBody, IssueTokenBody, ListAgentsQuery, ListQuery,
-            ListTokensQuery, UpdateBody, UpdateTokenBody,
+            ListTokensQuery, UpdateAppBody, UpdateBody, UpdateTokenBody,
         },
+        import::ImportMemoriesBody,
         jobs::{ListJobsQuery, ListLlmCallsQuery},
         memories::{
             CreateMemoryBody, HistoryQuery, ListMemoriesQuery, MoveMemoryBody, RevertMemoryBody,
@@ -49,8 +50,10 @@ use crate::{
         secrets::SetSecretBody,
         settings::{GetSettingsQuery, UpdateChannelSettingsBody, UpdateSettingsBody},
         subscriptions::{ListSubscriptionsQuery, SubscribeBody, UpdateSubscriptionBody},
+        usage_report::GetUsageQuery,
     },
     error::ApiError,
+    metrics::OperationSlot,
     rest::ChannelsHeader,
     store::AppStore,
 };
@@ -108,7 +111,7 @@ pub struct UpdateAppRequest {
     /// Id (`app_…`) ou slug do app.
     pub app: String,
     #[serde(flatten)]
-    pub body: UpdateBody,
+    pub body: UpdateAppBody,
     #[serde(flatten)]
     pub idempotency: Idempotency,
 }
@@ -296,6 +299,15 @@ pub struct ListEmbeddingModelsRequest {
     /// Chave em claro (não é gravada); vazia usa `embedding.api_key`.
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ImportMemoriesRequest {
+    #[serde(flatten)]
+    pub body: ImportMemoriesBody,
+    /// Obrigatória (`IDEMPOTENCY_KEY_REQUIRED`): mesmo efeito do cabeçalho `Idempotency-Key`.
     #[serde(default)]
     pub idempotency_key: Option<String>,
 }
@@ -1489,6 +1501,31 @@ impl EngramindServer {
     }
 
     #[tool]
+    async fn get_usage(
+        &self,
+        Parameters(query): Parameters<GetUsageQuery>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(self.core.get_usage(&principal, query).await)
+    }
+
+    #[tool]
+    async fn import_memories(
+        &self,
+        Parameters(request): Parameters<ImportMemoriesRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .import_memories(&principal, request.body, request.idempotency_key.as_deref())
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
     async fn get_audit(
         &self,
         Parameters(query): Parameters<AuditQuery>,
@@ -1693,6 +1730,15 @@ impl ServerHandler for EngramindServer {
         // Só nomes do catálogo vão para o log; os argumentos nunca.
         let operation = operations::find(&request.name);
         let tool = operation.map_or("unknown", |operation| operation.name);
+        if let (Some(operation), Some(slot)) = (
+            operation,
+            context
+                .extensions
+                .get::<axum::http::request::Parts>()
+                .and_then(|parts| parts.extensions.get::<OperationSlot>()),
+        ) {
+            slot.set(operation.name);
+        }
         let principal = principal(&context)?;
         let result = match operation {
             // Ferramenta oculta: o mesmo erro do REST (FR-011).

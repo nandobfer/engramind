@@ -261,7 +261,73 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             idempotency,
         } => ApiRequest::new(Method::DELETE, memory_path(&memory, ""))
             .idempotency(idempotency.idempotency_key),
+        MemoriesCommand::Import {
+            channel,
+            items,
+            idempotency,
+            ..
+        } => ApiRequest::new(Method::POST, "/v1/memories/import".to_owned())
+            .body(json!({ "channel": channel, "memories": items.unwrap_or(Value::Null) }))
+            .idempotency(idempotency.idempotency_key),
     }
+}
+
+/// Itens de um arquivo de importação: lista JSON, `{ "memories": [...] }` ou JSONL.
+fn import_items(content: &str) -> Result<Value, String> {
+    let trimmed = content.trim();
+    if (trimmed.starts_with('[') || trimmed.starts_with('{'))
+        && let Ok(value) = serde_json::from_str::<Value>(trimmed)
+    {
+        return match value {
+            Value::Array(_) => Ok(value),
+            Value::Object(mut object) => match object.remove("memories") {
+                Some(items @ Value::Array(_)) => Ok(items),
+                Some(_) => Err("memories precisa ser uma lista".to_owned()),
+                // JSONL de uma linha só.
+                None => Ok(Value::Array(vec![Value::Object(object)])),
+            },
+            _ => Err("o arquivo precisa ser uma lista JSON ou JSONL".to_owned()),
+        };
+    }
+    trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .enumerate()
+        .map(|(index, line)| {
+            serde_json::from_str::<Value>(line)
+                .map_err(|error| format!("linha {} do arquivo invalida: {error}", index + 1))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Value::Array)
+}
+
+/// Chave estável da importação: o mesmo canal e o mesmo arquivo repetem a resposta gravada.
+fn import_key(channel: &str, content: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::new()
+        .chain_update(channel.trim().as_bytes())
+        .chain_update(b"\n")
+        .chain_update(content.as_bytes())
+        .finalize();
+    let hex: String = digest
+        .iter()
+        .take(16)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("import-{hex}")
+}
+
+fn read_secret_stdin() -> Result<String, String> {
+    let mut buffer = String::new();
+    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+        .map_err(|error| format!("falha ao ler a entrada padrao: {error}"))?;
+    let secret = buffer.trim().to_owned();
+    buffer.zeroize();
+    if secret.is_empty() {
+        return Err("informe o segredo do webhook pela entrada padrao".to_owned());
+    }
+    Ok(secret)
 }
 
 /// `--text -` lê o texto da entrada padrão (multilinha, sem escapes).
@@ -296,6 +362,38 @@ fn read_stdin_text(command: Command) -> Result<Command, String> {
             buffer.zeroize();
             if !secret.is_empty() {
                 *api_key = Some(secret);
+            }
+        }
+        Command::Apps(
+            AppsCommand::Create {
+                webhook_secret_stdin: true,
+                webhook_secret,
+                ..
+            }
+            | AppsCommand::Update {
+                webhook_secret_stdin: true,
+                webhook_secret,
+                ..
+            },
+        ) => *webhook_secret = Some(read_secret_stdin()?),
+        Command::Memories(MemoriesCommand::Import {
+            channel,
+            file,
+            items,
+            idempotency,
+        }) => {
+            let content = if file == "-" {
+                let mut buffer = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+                    .map_err(|error| format!("falha ao ler a entrada padrao: {error}"))?;
+                buffer
+            } else {
+                std::fs::read_to_string(&*file)
+                    .map_err(|error| format!("falha ao ler {file}: {error}"))?
+            };
+            *items = Some(import_items(&content)?);
+            if idempotency.idempotency_key.is_none() {
+                idempotency.idempotency_key = Some(import_key(channel, &content));
             }
         }
         Command::Secrets(SecretsCommand::Set {
@@ -342,17 +440,48 @@ pub fn request(command: Command) -> ApiRequest {
                 slug,
                 name,
                 description,
+                webhook_url,
+                webhook_secret,
                 idempotency,
-            } => ApiRequest::new(Method::POST, "/v1/apps".to_owned())
-                .body(json!({ "slug": slug, "name": name, "description": description }))
-                .idempotency(idempotency.idempotency_key),
+                ..
+            } => {
+                let mut body = json!({ "slug": slug, "name": name, "description": description });
+                if let Some(url) = webhook_url {
+                    body["webhook_url"] = json!(url);
+                }
+                if let Some(secret) = webhook_secret {
+                    body["webhook_secret"] = json!(secret);
+                }
+                ApiRequest::new(Method::POST, "/v1/apps".to_owned())
+                    .body(body)
+                    .idempotency(idempotency.idempotency_key)
+            }
             AppsCommand::Update {
                 app,
                 changes,
+                webhook_url,
+                clear_webhook_secret,
+                webhook_secret,
                 idempotency,
-            } => ApiRequest::new(Method::PATCH, format!("/v1/apps/{}", segment(&app)))
-                .body(update_body(changes))
-                .idempotency(idempotency.idempotency_key),
+                ..
+            } => {
+                let mut body = update_body(changes);
+                if let Some(url) = webhook_url {
+                    body["webhook_url"] = if url.is_empty() {
+                        Value::Null
+                    } else {
+                        json!(url)
+                    };
+                }
+                if clear_webhook_secret {
+                    body["webhook_secret"] = Value::Null;
+                } else if let Some(secret) = webhook_secret {
+                    body["webhook_secret"] = json!(secret);
+                }
+                ApiRequest::new(Method::PATCH, format!("/v1/apps/{}", segment(&app)))
+                    .body(body)
+                    .idempotency(idempotency.idempotency_key)
+            }
             AppsCommand::Delete { app, idempotency } => {
                 ApiRequest::new(Method::DELETE, format!("/v1/apps/{}", segment(&app)))
                     .idempotency(idempotency.idempotency_key)
@@ -701,6 +830,14 @@ pub fn request(command: Command) -> ApiRequest {
             .body(json!({ "value": value }))
             .idempotency(idempotency.idempotency_key),
         Command::Status => ApiRequest::new(Method::GET, "/v1/status".to_owned()),
+        Command::Usage {
+            since,
+            until,
+            group_by,
+        } => ApiRequest::new(Method::GET, "/v1/usage".to_owned())
+            .query("since", since)
+            .query("until", until)
+            .query("group_by", group_by),
         Command::Jobs(JobsCommand::List { state, kind, page }) => {
             ApiRequest::new(Method::GET, "/v1/jobs".to_owned())
                 .query("state", state)

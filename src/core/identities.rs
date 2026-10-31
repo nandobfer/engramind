@@ -18,6 +18,8 @@ use super::{
     principal::{AgentRef, AppRef, Principal, Scope, ScopeSet, TokenKind},
     store_error,
 };
+use zeroize::Zeroizing;
+
 use crate::{auth::token::TokenService, error::ApiError, store::Store};
 
 const MAX_SLUG: usize = 64;
@@ -69,6 +71,31 @@ pub struct CreateAppBody {
     #[schema(example = "App A")]
     pub name: String,
     pub description: Option<String>,
+    /// Destino dos eventos (`http://` ou `https://`, sem credenciais); exige `webhook_secret`.
+    #[schema(example = "https://gestor.interno/engramind/events")]
+    pub webhook_url: Option<String>,
+    /// Segredo do HMAC dos eventos (32 a 256 caracteres); só gravado, nunca devolvido.
+    pub webhook_secret: Option<String>,
+}
+
+/// Campos omitidos não mudam; `null` limpa `description`, `webhook_url` e `webhook_secret`;
+/// `disabled` desativa ou reativa.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateAppBody {
+    pub name: Option<String>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub description: Option<Option<String>>,
+    /// `true` desativa (os tokens deixam de autenticar e o app não recebe eventos); `false`
+    /// reativa.
+    pub disabled: Option<bool>,
+    /// Destino dos eventos (`http://` ou `https://`, sem credenciais); exige um segredo.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schema(example = "https://gestor.interno/engramind/events")]
+    pub webhook_url: Option<Option<String>>,
+    /// Segredo do HMAC dos eventos (32 a 256 caracteres); só gravado, nunca devolvido.
+    #[serde(default, deserialize_with = "double_option")]
+    pub webhook_secret: Option<Option<String>>,
 }
 
 /// Campos omitidos não mudam; `description: null` limpa; `disabled` desativa ou reativa.
@@ -248,7 +275,76 @@ fn ensure_grantable(principal: &Principal, granted: ScopeSet) -> Result<(), ApiE
     .with_details(json!({ "required_kind": "admin", "required_scope": missing.as_str() })))
 }
 
-fn app_patch(body: &UpdateBody) -> Result<AppPatch, ApiError> {
+const MAX_WEBHOOK_URL: usize = 2048;
+const MIN_WEBHOOK_SECRET: usize = 32;
+const MAX_WEBHOOK_SECRET: usize = 256;
+
+/// `http://` ou `https://` com host, sem usuário nem senha (008 FR-008).
+pub(crate) fn webhook_url(value: &str) -> Result<String, ApiError> {
+    let value = value.trim();
+    let invalid = || {
+        ApiError::validation(
+            "webhook_url deve ser uma URL http:// ou https:// com host e sem credenciais",
+        )
+        .with_details(json!({ "field": "webhook_url" }))
+    };
+    if value.is_empty() || value.chars().count() > MAX_WEBHOOK_URL {
+        return Err(invalid());
+    }
+    let url = reqwest::Url::parse(value).map_err(|_| invalid())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none_or(str::is_empty)
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(invalid());
+    }
+    Ok(value.to_owned())
+}
+
+pub(crate) fn webhook_secret(value: &str) -> Result<Zeroizing<String>, ApiError> {
+    let value = Zeroizing::new(value.trim().to_owned());
+    let length = value.chars().count();
+    if !(MIN_WEBHOOK_SECRET..=MAX_WEBHOOK_SECRET).contains(&length) {
+        return Err(ApiError::validation(format!(
+            "webhook_secret deve ter de {MIN_WEBHOOK_SECRET} a {MAX_WEBHOOK_SECRET} caracteres"
+        ))
+        .with_details(json!({ "field": "webhook_secret" })));
+    }
+    Ok(value)
+}
+
+/// Nome do segredo do webhook no `Vault` (AAD): o slug do app, que não muda.
+pub(crate) fn webhook_secret_name(app_slug: &str) -> String {
+    format!("webhook:{app_slug}")
+}
+
+fn webhook_without_secret() -> ApiError {
+    ApiError::validation("webhook_url exige webhook_secret").with_details(json!({
+        "field": "webhook_secret"
+    }))
+}
+
+fn app_patch(body: &UpdateAppBody) -> Result<AppPatch, ApiError> {
+    let patch = basic_patch(&UpdateBody {
+        name: body.name.clone(),
+        description: body.description.clone(),
+        disabled: body.disabled,
+    });
+    if body.webhook_url.is_none() && body.webhook_secret.is_none() {
+        return patch;
+    }
+    // Só campos do webhook: o resto fica como está.
+    let mut patch = patch.unwrap_or_default();
+    patch.webhook_url = body
+        .webhook_url
+        .as_ref()
+        .map(|url| url.as_deref().map(webhook_url).transpose())
+        .transpose()?;
+    Ok(patch)
+}
+
+fn basic_patch(body: &UpdateBody) -> Result<AppPatch, ApiError> {
     if body.name.is_none() && body.description.is_none() && body.disabled.is_none() {
         return Err(ApiError::validation(
             "Informe ao menos um campo para alterar",
@@ -268,6 +364,7 @@ fn app_patch(body: &UpdateBody) -> Result<AppPatch, ApiError> {
             })
             .transpose()?,
         disabled: body.disabled,
+        ..AppPatch::default()
     })
 }
 
@@ -339,7 +436,7 @@ impl<S: Store> Core<S> {
         })
     }
 
-    async fn find_app(&self, value: &str) -> Result<App, ApiError> {
+    pub(crate) async fn find_app(&self, value: &str) -> Result<App, ApiError> {
         self.store()
             .get_app(app_lookup(value))
             .await?
@@ -381,14 +478,26 @@ impl<S: Store> Core<S> {
         let operation = self.authorize(principal, "create_app")?;
         let slug = body.slug.trim().to_owned();
         validate_slug(&slug)?;
+        let url = body.webhook_url.as_deref().map(webhook_url).transpose()?;
+        let secret = body
+            .webhook_secret
+            .as_deref()
+            .map(webhook_secret)
+            .transpose()?;
+        if url.is_some() && secret.is_none() {
+            return Err(webhook_without_secret());
+        }
         let new = NewApp {
-            slug,
             name: text("name", &body.name, MAX_NAME)?,
             description: optional_text(
                 "description",
                 body.description.as_deref(),
                 MAX_DESCRIPTION,
             )?,
+            webhook_url: url,
+            webhook_secret: secret
+                .map(|secret| self.vault().seal(&webhook_secret_name(&slug), &secret)),
+            slug,
         };
         let core = self.clone();
         self.mutate(
@@ -405,17 +514,23 @@ impl<S: Store> Core<S> {
             },
         )
         .await
+        .inspect(|_| self.network_changed())
     }
 
     pub async fn update_app(
         &self,
         principal: &Principal,
         app: &str,
-        body: UpdateBody,
+        body: UpdateAppBody,
         key: Option<&str>,
     ) -> Result<Mutation<App>, ApiError> {
         let operation = self.authorize(principal, "update_app")?;
-        let patch = app_patch(&body)?;
+        let mut patch = app_patch(&body)?;
+        let secret = match &body.webhook_secret {
+            Some(Some(value)) => Some(Some(webhook_secret(value)?)),
+            Some(None) => Some(None),
+            None => None,
+        };
         let input = json!({ "app": app, "body": body });
         let core = self.clone();
         let app = app.to_owned();
@@ -426,14 +541,38 @@ impl<S: Store> Core<S> {
             &input,
             200,
             |context| async move {
-                let id = core.find_app(&app).await?.id;
+                let found = core.find_app(&app).await?;
+                patch.webhook_secret = secret.map(|secret| {
+                    secret.map(|secret| {
+                        core.vault()
+                            .seal(&webhook_secret_name(&found.slug), &secret)
+                    })
+                });
+                // Estado final: URL só com segredo (FR-008).
+                let url = match &patch.webhook_url {
+                    Some(url) => url.is_some(),
+                    None => found.webhook.is_some(),
+                };
+                let configured = match &patch.webhook_secret {
+                    Some(secret) => secret.is_some(),
+                    // O segredo pode estar gravado sem URL (aí `found.webhook` é `null`).
+                    None => core
+                        .store()
+                        .webhook_target(found.id.clone())
+                        .await?
+                        .is_some_and(|target| target.secret_enc.is_some()),
+                };
+                if url && !configured {
+                    return Err(webhook_without_secret());
+                }
                 core.store()
-                    .update_app(id, patch, context)
+                    .update_app(found.id, patch, context)
                     .await
                     .map_err(|error| store_error(error, app_not_found))
             },
         )
         .await
+        .inspect(|_| self.network_changed())
     }
 
     pub async fn delete_app(
@@ -526,6 +665,7 @@ impl<S: Store> Core<S> {
             },
         )
         .await
+        .inspect(|_| self.network_changed())
     }
 
     pub async fn update_agent(
@@ -536,7 +676,7 @@ impl<S: Store> Core<S> {
         key: Option<&str>,
     ) -> Result<Mutation<Agent>, ApiError> {
         let operation = self.authorize(principal, "update_agent")?;
-        let patch = app_patch(&body)?;
+        let patch = basic_patch(&body)?;
         agent_lookup(agent)?;
         let input = json!({ "agent": agent, "body": body });
         let core = self.clone();
@@ -556,6 +696,7 @@ impl<S: Store> Core<S> {
             },
         )
         .await
+        .inspect(|_| self.network_changed())
     }
 
     pub async fn delete_agent(
@@ -682,6 +823,7 @@ impl<S: Store> Core<S> {
                 },
             )
             .await?;
+        self.network_changed();
         let secret = (!mutation.replayed).then(|| {
             TokenService::plaintext(&mutation.value.id, &generated.secret)
                 .expose()
@@ -743,6 +885,7 @@ impl<S: Store> Core<S> {
             },
         )
         .await
+        .inspect(|_| self.network_changed())
     }
 
     pub async fn revoke_token(
@@ -769,6 +912,7 @@ impl<S: Store> Core<S> {
             },
         )
         .await
+        .inspect(|_| self.network_changed())
     }
 }
 

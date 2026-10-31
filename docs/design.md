@@ -264,7 +264,7 @@ O autor registrado é o curador, mas a memória pertence ao canal.
 
 ```sql
 apps          (id, slug, name, description, webhook_url, webhook_secret_enc,
-               created_at, disabled_at)
+               webhook_secret_updated_at, created_at, disabled_at)
 agents        (id, app_id, slug, name, description, created_at, disabled_at)
 tokens        (id, app_id, agent_id NULL, kind, scopes, label, secret_hash,
                expires_at NULL, created_at, last_used_at, revoked_at)
@@ -310,7 +310,10 @@ Regras gerais:
   `UPDATE … RETURNING` e `locked_until`, com backoff exponencial.
 - Os contadores (`retrieval_count`, `injected_count`, `last_used_at`) são acumulados em memória e
   gravados em lote a cada poucos segundos, para não disputar o escritor.
-- Retenção configurável: `usage_log` e `llm_calls` (padrão de 90 dias), `idempotency` (24 h).
+- Retenção configurável, aplicada a cada hora em lotes (008, decisão 0024): `usage_log` e
+  `llm_calls` (padrão de 90 dias), `audit_log` (padrão: sempre), jobs `done`/`failed` terminados
+  (`retention.jobs_days`, 30 dias) e `idempotency` (24 h). Índices `audit_log (at)` e
+  `jobs (state, finished_at)`.
 
 ---
 
@@ -602,7 +605,7 @@ global e, quando indicado, sobreposição **por canal**.
 | `search` | `vector_weight` (1.0), `text_weight` (1.0), `rrf_k` (60), `default_limit` (10), `hint_threshold` (0.80), `hint_limit` (3) | — |
 | `consolidation` | `enabled` (false), `schedule` (cron, `0 3 * * *`), `tasks[]`, `duplicate_threshold` (0.92), `stale_after_days` (90), `auto_archive_stale` (false) | enabled |
 | `webhooks` | `enabled` (true), `timeout_ms` (5000), `max_attempts` (5) | — |
-| `retention` | `usage_days` (90), `llm_calls_days` (90), `audit_days` (null = sempre) | — |
+| `retention` | `usage_days` (90), `llm_calls_days` (90), `audit_days` (null = sempre), `jobs_days` (30) | — |
 | `limits` | `rate_per_minute` por token (600), `max_batch` (100) | — |
 
 - Os segredos (🔒) só são gravados. A leitura mostra `{ configured: true, updated_at }`.
@@ -823,8 +826,17 @@ TZ=America/Sao_Paulo
   `{ id, type, channel, channel_version, memory_ids, at }`, com tipos `memory.created`,
   `memory.updated`, `memory.archived`, `memory.deleted`, `channel.updated`, `subscription.updated`
   e `settings.updated`.
-- O envio é feito com retentativas e backoff (`webhooks.max_attempts`), e o `id` permite descartar
-  repetições. O sistema gestor repassa os eventos à tela pelo mecanismo de tempo real dele.
+- Campos extras, só identificadores (008 Q-004): `subscription.updated` leva `subscription`, `agent`
+  e `target` (e `channel` só com alvo exato); `settings.updated` leva `keys` (`channel: null` e
+  `channel_version: null` no global). `move_memory` gera um `memory.updated` por canal envolvido; as
+  revisões do Redator também geram `memory.updated`.
+- Destinatários calculados no enfileiramento, um job `webhook` por app na transação da mutação
+  (decisão 0023); `subscription.updated` vai ao app do agente; `settings.updated` global, só aos apps
+  admin. Mutações de apps, agentes e tokens não geram eventos.
+- O envio é feito com retentativas e backoff próprio (10 s × 4ⁿ, teto de 1 h) até
+  `webhooks.max_attempts`, e o `id` permite descartar repetições; a ordem entre retentativas não é
+  garantida (desempate por `channel_version`). App removido, desativado ou sem URL na entrega:
+  `skipped`. O sistema gestor repassa os eventos à tela pelo mecanismo de tempo real dele.
 - Clientes sem webhook usam `get_context` com `If-None-Match` no início do turno, um pull de poucos
   bytes.
 
@@ -893,7 +905,8 @@ TZ=America/Sao_Paulo
 
 - Logs `tracing` estruturados, com `request_id`, `app`, `agent`, operação e duração. Nunca o texto
   das memórias em nível `info`.
-- Métricas Prometheus em `/metrics`, protegido por token `admin`·read ou por rede interna:
+- Métricas Prometheus em `/metrics`, sempre protegido por token `admin`·read (008 Q-002; nomes no
+  guia `operacao`, decisão 0022):
   - latência por operação;
   - taxa de `304` do contexto;
   - tamanho da fila de jobs e falhas por tipo;

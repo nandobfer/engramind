@@ -17,10 +17,10 @@ use crate::{
         ids,
         memory_text::hash_hex,
         model::{
-            Author, ChannelStats, EmbeddingState, Memory, MemoryCounts, MemoryFilter, MemoryPatch,
-            MemoryRevision, MemoryStatus, MemoryTarget, MemoryWrite, NewJob, NewMemory, Origin,
-            PendingCounts, Redaction, RetrievalBump, StatusAction, TextQuery, TitleState,
-            WriteContext,
+            Author, ChannelStats, EmbeddingState, ImportCreated, ImportDuplicate, ImportResult,
+            Memory, MemoryCounts, MemoryFilter, MemoryPatch, MemoryRevision, MemoryStatus,
+            MemoryTarget, MemoryWrite, NewImportedMemory, NewJob, NewMemory, Origin, PendingCounts,
+            Redaction, RetrievalBump, StatusAction, TextQuery, TitleState, WriteContext,
         },
         pagination::{Cursor, Page, PageRequest},
     },
@@ -627,6 +627,7 @@ pub(super) fn create_memory(
         Some(audited(transaction, &id)?),
     )?;
     enqueue(transaction, &new.jobs, &memory, context)?;
+    journal::emit(transaction, context, std::slice::from_ref(&memory.id))?;
     let write = MemoryWrite {
         memory,
         duplicate: false,
@@ -634,6 +635,110 @@ pub(super) fn create_memory(
     };
     journal::remember(transaction, context, &write)?;
     Ok(write)
+}
+
+/// Importação em lote (008 FR-009): `created_at`, autor e origem preservados; a revisão 1 tem
+/// o mesmo autor e instante. Uma auditoria `memory.import` com os ids (sem textos) e um
+/// evento com todos os ids criados.
+pub(super) fn import_memories(
+    transaction: &Transaction,
+    channel_id: &str,
+    items: &[NewImportedMemory],
+    dedupe: bool,
+    context: &WriteContext,
+) -> Result<ImportResult, StoreError> {
+    ensure_channel_active(transaction, channel_id)?;
+    let mut result = ImportResult {
+        created: Vec::new(),
+        duplicates: Vec::new(),
+    };
+    for item in items {
+        if dedupe
+            && let Some(existing) = find_by_hash(transaction, channel_id, &item.content_hash, None)
+                .map_err(sql_error)?
+        {
+            result.duplicates.push(ImportDuplicate {
+                index: item.index,
+                existing_id: existing,
+            });
+            continue;
+        }
+        let id = free_id(transaction, "memories", ids::MEMORY_PREFIX)?;
+        let (origin_source, origin_label) = match &item.origin {
+            Some(origin) => (Some(origin.source.as_str()), origin.label.as_deref()),
+            None => (None, None),
+        };
+        transaction
+            .execute(
+                "INSERT INTO memories
+                     (id, channel_id, category, title, text, status, content_hash, version,
+                      title_state, embedding_state, author_app_id, author_agent_id,
+                      origin_source, origin_label, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 'pending', ?13, ?8, ?9, ?10, ?11,
+                         ?12, ?12)",
+                params![
+                    id,
+                    channel_id,
+                    item.category,
+                    item.title,
+                    item.text,
+                    item.status.as_str(),
+                    item.content_hash,
+                    item.author_app_id,
+                    item.author_agent_id,
+                    origin_source,
+                    origin_label,
+                    item.created_at,
+                    embedding_state(&item.jobs)
+                ],
+            )
+            .map_err(sql_error)?;
+        let memory = load(transaction, &id)?;
+        transaction
+            .execute(
+                "INSERT INTO memory_revisions
+                     (memory_id, version, title, text, category, status, app_id, agent_id,
+                      reason, created_at)
+                 VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, 'import', ?8)",
+                params![
+                    memory.id,
+                    memory.title,
+                    memory.text,
+                    memory.category,
+                    memory.status.as_str(),
+                    item.author_app_id,
+                    item.author_agent_id,
+                    item.created_at
+                ],
+            )
+            .map_err(sql_error)?;
+        enqueue(transaction, &item.jobs, &memory, context)?;
+        result.created.push(ImportCreated {
+            index: item.index,
+            id,
+        });
+    }
+    let created: Vec<String> = result.created.iter().map(|item| item.id.clone()).collect();
+    if !created.is_empty() {
+        bump_channel(transaction, channel_id)?;
+        journal::audit(
+            transaction,
+            context,
+            Entry {
+                action: "memory.import",
+                entity: "channel",
+                entity_id: Some(channel_id),
+                before: None,
+                after: Some(json!({
+                    "created": created,
+                    "duplicates": result.duplicates.len(),
+                })),
+            },
+        )?;
+        journal::emit(transaction, context, &created)?;
+    }
+    journal::remember(transaction, context, &result)?;
+    Ok(result)
 }
 
 pub(super) fn update_memory(
@@ -725,6 +830,7 @@ pub(super) fn update_memory(
     if content.is_some() {
         enqueue(transaction, &patch.jobs, &after, context)?;
     }
+    journal::emit(transaction, context, std::slice::from_ref(&after.id))?;
     let write = MemoryWrite {
         memory: after,
         duplicate: false,
@@ -776,6 +882,7 @@ pub(super) fn set_memory_status(
         Some(audit_before),
         Some(audited(transaction, &after.id)?),
     )?;
+    journal::emit(transaction, context, std::slice::from_ref(&after.id))?;
     journal::remember(transaction, context, &after)?;
     Ok(after)
 }
@@ -828,6 +935,7 @@ pub(super) fn move_memory(
         Some(audit_before),
         Some(audited(transaction, &after.id)?),
     )?;
+    journal::emit(transaction, context, std::slice::from_ref(&after.id))?;
     journal::remember(transaction, context, &after)?;
     Ok(after)
 }
@@ -859,6 +967,7 @@ pub(super) fn delete_memory(
         Some(audit_before),
         None,
     )?;
+    journal::emit(transaction, context, std::slice::from_ref(&before.id))?;
     journal::remember(transaction, context, &before)?;
     Ok(before)
 }
@@ -958,6 +1067,7 @@ pub(super) fn apply_redaction(
         Some(audit_before),
         Some(audited(transaction, &after.id)?),
     )?;
+    journal::emit(transaction, context, std::slice::from_ref(&after.id))?;
     Ok(after)
 }
 

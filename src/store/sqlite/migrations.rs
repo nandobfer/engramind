@@ -12,6 +12,7 @@ const SOURCES: &[&str] = &[
     include_str!("../../../migrations/0005_usage.sql"),
     include_str!("../../../migrations/0006_redator.sql"),
     include_str!("../../../migrations/0007_vectors.sql"),
+    include_str!("../../../migrations/0008_integration.sql"),
 ];
 
 static MIGRATIONS: LazyLock<Migrations<'static>> =

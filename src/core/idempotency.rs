@@ -15,10 +15,7 @@ use super::{
     operations::OperationSpec,
     principal::Principal,
 };
-use crate::{
-    error::ApiError,
-    store::{Store, StoreError},
-};
+use crate::{error::ApiError, store::Store};
 
 pub(crate) fn key_taken() -> ApiError {
     conflict()
@@ -112,8 +109,12 @@ impl<S: Store> Core<S> {
                 actor: actor(principal),
                 at,
                 idempotency: None,
+                events: Vec::new(),
             };
-            return run(context).await.map(|value| Mutation {
+            let value = run(context).await?;
+            // A mutação pode ter enfileirado jobs (eventos, Redator, embeddings).
+            self.jobs_enqueued();
+            return Ok(Mutation {
                 value,
                 replayed: false,
             });
@@ -138,12 +139,16 @@ impl<S: Store> Core<S> {
                 status,
                 expired_before: expired_before.clone(),
             }),
+            events: Vec::new(),
         };
         match run(context).await {
-            Ok(value) => Ok(Mutation {
-                value,
-                replayed: false,
-            }),
+            Ok(value) => {
+                self.jobs_enqueued();
+                Ok(Mutation {
+                    value,
+                    replayed: false,
+                })
+            }
             // Outra requisição com a mesma chave gravou primeiro.
             Err(error) if error.code == "IDEMPOTENCY_KEY_CONFLICT" => self
                 .replay(&principal.token_id, key, &hash, &expired_before)
@@ -172,12 +177,6 @@ impl<S: Store> Core<S> {
             value,
             replayed: true,
         }))
-    }
-
-    /// Remove registros de idempotência com mais de 24 h.
-    pub async fn purge_idempotency(&self) -> Result<u64, StoreError> {
-        let before = ids::timestamp(ids::now() - Duration::hours(RETENTION_HOURS));
-        self.store().purge_idempotency(before).await
     }
 }
 

@@ -53,6 +53,8 @@ impl<S: Store> Core<S> {
             slug: BOOTSTRAP_APP_SLUG.to_owned(),
             name: "Bootstrap".to_owned(),
             description: Some("Criado pelo BOOTSTRAP_ADMIN_TOKEN".to_owned()),
+            webhook_url: None,
+            webhook_secret: None,
         };
         let new = NewToken {
             id: Some(parsed.id.to_owned()),
@@ -68,6 +70,7 @@ impl<S: Store> Core<S> {
             actor: Actor::default(),
             at: ids::timestamp(ids::now()),
             idempotency: None,
+            events: Vec::new(),
         };
         Ok(match self.store().bootstrap(app, new, context).await? {
             Some(token) => BootstrapOutcome::Created(token.id),

@@ -12,10 +12,12 @@ pub mod context;
 pub mod counters;
 pub mod docs;
 pub mod embeddings;
+pub mod events;
 pub mod hints;
 pub mod idempotency;
 pub mod identities;
 pub mod ids;
+pub mod import;
 pub mod jobs;
 pub mod memories;
 pub mod memory_text;
@@ -25,6 +27,7 @@ pub mod pagination;
 pub mod pepper;
 pub mod principal;
 pub mod redator;
+pub mod retention;
 pub mod search;
 pub mod secrets;
 pub mod selection;
@@ -32,8 +35,13 @@ pub mod settings;
 pub mod status;
 pub mod subscriptions;
 pub mod usage;
+pub mod usage_report;
+pub mod webhooks;
 
-use std::sync::{Arc, RwLock};
+use std::{
+    sync::{Arc, RwLock},
+    time::Instant,
+};
 
 use tokio::sync::Notify;
 
@@ -47,8 +55,9 @@ use crate::{
 
 use self::{
     access::NetworkCache, context::cache::ContextCache, counters::Counters, docs::Docs,
-    model::Actor, operations::OperationSpec, principal::Principal, redator::guard::MeaningGuard,
-    secrets::Vault, settings::SettingsSnapshot, usage::Usage,
+    events::DirectoryCache, model::Actor, operations::OperationSpec, principal::Principal,
+    redator::guard::MeaningGuard, secrets::Vault, settings::SettingsSnapshot, status::BackupSample,
+    usage::Usage,
 };
 
 /// Ponto de entrada das operações. Barato de clonar.
@@ -77,6 +86,12 @@ struct Inner<S> {
     local: LocalEmbedder,
     /// Substituto do provedor `local` nos testes (embeddings por hash).
     local_override: RwLock<Option<Arc<dyn Embedder>>>,
+    /// Destinatários dos webhooks, na mesma geração da rede.
+    directory: DirectoryCache,
+    /// Instante de subida (uptime de `get_status`).
+    started: Instant,
+    /// Última medição da réplica do Litestream (amostrador de `background`, 008 Q-009).
+    backup: RwLock<Option<BackupSample>>,
 }
 
 impl<S: Store> Core<S> {
@@ -105,6 +120,9 @@ impl<S: Store> Core<S> {
                 guard: RwLock::new(None),
                 local: LocalEmbedder::new(models.path, models.onnx_runtime),
                 local_override: RwLock::new(None),
+                directory: DirectoryCache::default(),
+                started: Instant::now(),
+                backup: RwLock::new(None),
             }),
         }
     }
@@ -144,7 +162,30 @@ impl<S: Store> Core<S> {
         &self.inner.context
     }
 
-    /// Invalida o cache da rede depois de mudar canais, assinaturas ou agentes.
+    pub(crate) fn directory_cache(&self) -> &DirectoryCache {
+        &self.inner.directory
+    }
+
+    pub(crate) fn started(&self) -> Instant {
+        self.inner.started
+    }
+
+    pub(crate) fn backup_sample(&self) -> Option<BackupSample> {
+        self.inner
+            .backup
+            .read()
+            .ok()
+            .and_then(|sample| sample.clone())
+    }
+
+    pub(crate) fn set_backup_sample(&self, sample: BackupSample) {
+        if let Ok(mut current) = self.inner.backup.write() {
+            *current = Some(sample);
+        }
+    }
+
+    /// Invalida o cache da rede (e o diretório dos webhooks) depois de mudar canais,
+    /// assinaturas, apps, agentes ou tokens.
     pub(crate) fn network_changed(&self) {
         self.inner.network.invalidate();
     }

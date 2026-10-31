@@ -148,8 +148,20 @@ pub enum Command {
     /// Embeddings: reindexação (token admin).
     #[command(subcommand)]
     Embeddings(EmbeddingsCommand),
-    /// Mostra versão, banco, backup, contagens, fila, Redator e embeddings (token admin).
+    /// Mostra versão, uptime, banco, backup, fila, Redator, embeddings e webhooks (token admin).
     Status,
+    /// Agrega o uso (contexto, busca e dicas) por dia, agente, operação ou canal (token admin).
+    Usage {
+        /// Início (RFC 3339); padrão: 7 dias antes de `--until`.
+        #[arg(long)]
+        since: Option<String>,
+        /// Fim (RFC 3339, exclusivo); padrão: agora.
+        #[arg(long)]
+        until: Option<String>,
+        /// `day` (padrão), `agent`, `operation` ou `channel`.
+        #[arg(long)]
+        group_by: Option<String>,
+    },
     /// Fila de jobs (token admin).
     #[command(subcommand)]
     Jobs(JobsCommand),
@@ -198,14 +210,35 @@ pub enum AppsCommand {
         name: String,
         #[arg(long)]
         description: Option<String>,
+        /// Destino dos eventos (http/https); exige `--webhook-secret-stdin`.
+        #[arg(long, requires = "webhook_secret_stdin")]
+        webhook_url: Option<String>,
+        /// Lê o segredo do webhook (32 a 256 caracteres) da entrada padrão.
+        #[arg(long)]
+        webhook_secret_stdin: bool,
+        /// Segredo lido da entrada padrão.
+        #[arg(skip)]
+        webhook_secret: Option<String>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Altera ou desativa um app.
+    /// Altera ou desativa um app; configura o webhook dele.
     Update {
         app: String,
         #[command(flatten)]
         changes: UpdateArgs,
+        /// Destino dos eventos (http/https); `""` remove.
+        #[arg(long)]
+        webhook_url: Option<String>,
+        /// Lê o segredo novo do webhook (32 a 256 caracteres) da entrada padrão.
+        #[arg(long, conflicts_with = "clear_webhook_secret")]
+        webhook_secret_stdin: bool,
+        /// Remove o segredo do webhook (só sem URL).
+        #[arg(long)]
+        clear_webhook_secret: bool,
+        /// Segredo lido da entrada padrão.
+        #[arg(skip)]
+        webhook_secret: Option<String>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -498,6 +531,22 @@ pub enum MemoriesCommand {
         /// Referência da origem, por exemplo o caso que gerou a memória.
         #[arg(long, requires = "origin_source")]
         origin_label: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Importa memórias em lote (token admin), preservando data, autoria e origem.
+    Import {
+        /// Canal de destino (id ou slug).
+        #[arg(long)]
+        channel: String,
+        /// Arquivo JSON (lista de itens ou `{ "memories": [...] }`) ou JSONL; `-` lê da entrada
+        /// padrão.
+        #[arg(long)]
+        file: String,
+        /// Itens lidos do arquivo.
+        #[arg(skip)]
+        items: Option<serde_json::Value>,
+        /// Sem chave, deriva uma do canal e do conteúdo do arquivo (repetir é seguro).
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },

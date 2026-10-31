@@ -13,13 +13,15 @@ use crate::core::{
     model::{
         Agent, AgentLookup, AgentPatch, App, AppPatch, AuditEvent, AuditFilter, AuthTokenRow,
         Channel, ChannelPatch, ChannelStats, ContextSnapshot, EmbedSource, EmbeddingState,
-        EmbeddingSwitch, IdemRow, IdentityCounts, InjectionBump, Job, JobCount, JobFilter,
-        JobFinish, LlmActivity, LlmCall, LlmCallFilter, Lookup, Memory, MemoryFilter, MemoryPatch,
-        MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent, NewApp, NewChannel,
-        NewLlmCall, NewMemory, NewSubscription, NewToken, Redaction, ReindexJobs, ReindexPlan,
-        ReindexState, RetrievalBump, SecretView, SettingChange, SettingRow, StatusAction,
-        StoredSecret, Subscription, SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch,
-        UsageEntry, VectorBatch, VectorCounts, VectorHit, VectorQuery, WriteContext,
+        EmbeddingSwitch, IdemRow, IdentityCounts, ImportResult, InjectionBump, Job, JobCount,
+        JobFilter, JobFinish, LlmActivity, LlmCall, LlmCallFilter, LlmSummary, Lookup, Memory,
+        MemoryFilter, MemoryPatch, MemoryRevision, MemoryTarget, MemoryWrite, Network, NewAgent,
+        NewApp, NewChannel, NewImportedMemory, NewLlmCall, NewMemory, NewSubscription, NewToken,
+        Redaction, ReindexJobs, ReindexPlan, ReindexState, RetentionTable, RetrievalBump,
+        SecretView, SettingChange, SettingRow, StatusAction, StoredSecret, Subscription,
+        SubscriptionPatch, TextQuery, Token, TokenFilter, TokenPatch, UsageAggregate, UsageEntry,
+        UsageQuery, VectorBatch, VectorCounts, VectorHit, VectorQuery, WebhookCounts,
+        WebhookDirectory, WebhookTarget, WriteContext,
     },
     pagination::{Page, PageRequest},
 };
@@ -330,11 +332,6 @@ pub trait Store: Clone + Send + Sync + 'static {
         token_id: &str,
         key: &str,
     ) -> impl Future<Output = Result<Option<IdemRow>, StoreError>> + Send;
-    /// Remove registros de idempotência criados antes de `before`; devolve quantos.
-    fn purge_idempotency(
-        &self,
-        before: String,
-    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
     fn list_audit(
         &self,
         filter: AuditFilter,
@@ -492,6 +489,52 @@ pub trait Store: Clone + Send + Sync + 'static {
         model_id: String,
         started_at: Option<String>,
     ) -> impl Future<Output = Result<bool, StoreError>> + Send;
+
+    // Integração (008).
+    /// Apps, agentes e tokens `admin` não revogados (destinatários dos eventos).
+    fn webhook_directory(
+        &self,
+    ) -> impl Future<Output = Result<WebhookDirectory, StoreError>> + Send;
+    /// URL, segredo cifrado e estado do app, lidos na entrega.
+    fn webhook_target(
+        &self,
+        app_id: String,
+    ) -> impl Future<Output = Result<Option<WebhookTarget>, StoreError>> + Send;
+    /// Grava o lote numa transação: duplicatas exatas (no canal ou no próprio lote) ficam de
+    /// fora e são reportadas; cada memória criada ganha a revisão 1 e os jobs; o evento do
+    /// contexto leva todos os ids criados. Canal arquivado → `Conflict("CHANNEL_ARCHIVED")`.
+    fn import_memories(
+        &self,
+        channel_id: String,
+        items: Vec<NewImportedMemory>,
+        dedupe: bool,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<ImportResult, StoreError>> + Send;
+    /// `usage_log` agregado no período `[since, until)`.
+    fn usage_report(
+        &self,
+        query: UsageQuery,
+    ) -> impl Future<Output = Result<Vec<UsageAggregate>, StoreError>> + Send;
+    /// Chamadas do LLM da finalidade desde `since`.
+    fn llm_summary(
+        &self,
+        purpose: String,
+        since: String,
+    ) -> impl Future<Output = Result<LlmSummary, StoreError>> + Send;
+    /// Jobs `webhook` pendentes e terminados desde `since`.
+    fn webhook_counts(
+        &self,
+        since: String,
+    ) -> impl Future<Output = Result<WebhookCounts, StoreError>> + Send;
+    /// Tamanho do arquivo do banco (`page_count × page_size`).
+    fn database_size(&self) -> impl Future<Output = Result<u64, StoreError>> + Send;
+    /// Remove até `limit` linhas anteriores a `before`; devolve quantas.
+    fn purge_before(
+        &self,
+        table: RetentionTable,
+        before: String,
+        limit: u32,
+    ) -> impl Future<Output = Result<u64, StoreError>> + Send;
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

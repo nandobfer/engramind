@@ -6,14 +6,21 @@ use super::{Core, ids, model::TokenStatus, principal::Principal};
 use crate::{
     auth::token,
     error::ApiError,
+    metrics,
     store::{Store, StoreError},
 };
 
 impl<S: Store> Core<S> {
     /// Confere o token e aplica o rate limit. Qualquer falha de identidade → `401 AUTH_INVALID`.
     pub async fn authenticate(&self, bearer: Option<&str>) -> Result<Principal, ApiError> {
-        let bearer = bearer.ok_or_else(ApiError::unauthorized)?;
-        let parsed = token::parse(bearer).map_err(|_| ApiError::unauthorized())?;
+        let Some(bearer) = bearer else {
+            metrics::auth_failure("missing");
+            return Err(ApiError::unauthorized());
+        };
+        let Ok(parsed) = token::parse(bearer) else {
+            metrics::auth_failure("invalid");
+            return Err(ApiError::unauthorized());
+        };
         let row = self
             .store()
             .find_auth_token(parsed.id)
@@ -22,14 +29,18 @@ impl<S: Store> Core<S> {
                 StoreError::Unavailable => ApiError::database_unavailable(),
                 other => ApiError::from(other),
             })?
-            .ok_or_else(ApiError::unauthorized)?;
+            .ok_or_else(|| {
+                metrics::auth_failure("invalid");
+                ApiError::unauthorized()
+            })?;
         // Verifica sempre o HMAC, mesmo para tokens inativos, para não revelar o estado.
         let verified = self.tokens().verify(parsed.secret, &row.digest).is_ok();
-        if !verified
-            || row.token.status != TokenStatus::Active
-            || row.app_disabled
-            || row.agent_disabled
-        {
+        if !verified {
+            metrics::auth_failure("invalid");
+            return Err(ApiError::unauthorized());
+        }
+        if row.token.status != TokenStatus::Active || row.app_disabled || row.agent_disabled {
+            metrics::auth_failure("inactive");
             return Err(ApiError::unauthorized());
         }
         let token = row.token;
