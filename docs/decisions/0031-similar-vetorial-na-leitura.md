@@ -15,10 +15,12 @@ o vetor da memória já existe, e o Jaccard não acha paráfrases.
   `active`/`permanent` do mesmo canal com cosseno ≥ `memory.vector_similar_threshold` (`method:
   vector`, `duplicate` a partir de `memory.vector_duplicate_threshold`); sem vetor, o textual.
 - As chaves seguem o prefixo `memory.*` do projeto (a especificação da tarefa dizia `memories.*`).
-- Cada dica de `get_hints` traz `score`, `method` e `duplicate`. Sem embeddings, as dicas caem para o
-  textual (candidatos do FTS com Jaccard ≥ `memory.similar_threshold`) em vez de vir vazias.
+- Cada dica de `get_hints` traz `score`, `method` e `duplicate`. Sem embeddings, a lista continua
+  vazia, como antes da 0.11.0: o consumidor que chama `get_hints` a cada turno nunca passa a receber
+  dicas textuais sem pedir (item 19 da tarefa: nenhuma mudança sem parâmetro novo).
 
 ## Consequências
 
 - `duplicate` é só aviso: nada é recusado nem fundido.
-- `get_hints` sem embeddings deixa de responder lista vazia (mudança de comportamento no CHANGELOG).
+- O `similar` textual existe só na escrita e em `get_memory` sem vetor; nas dicas, `method` é sempre
+  `vector` hoje e o campo fica para uma variante futura.

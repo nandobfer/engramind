@@ -182,6 +182,7 @@ impl<S: Store> Core<S> {
                 tags: tags.clone(),
                 statuses: statuses.clone(),
                 exclude_ids: exclude_ids.clone(),
+                only_ids: Vec::new(),
                 limit,
             })
             .await?;

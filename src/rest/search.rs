@@ -56,7 +56,7 @@ pub async fn search_memories(
     operation_id = "get_hints",
     tag = "Search",
     summary = "Dicas baratas (id, título e canal) para um texto, sem LLM",
-    description = "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel, score, method, duplicate }`: `method: vector` com o cosseno, e `duplicate` a partir de `memory.vector_duplicate_threshold`; o agente busca o texto completo se quiser. Sem embeddings, cai para o textual (`method: text`): candidatos do FTS com Jaccard dos termos ≥ `memory.similar_threshold`. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`.",
+    description = "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel, score, method, duplicate }`: `method: vector` com o cosseno, e `duplicate` a partir de `memory.vector_duplicate_threshold`; o agente busca o texto completo se quiser. Sem embeddings, lista vazia. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`.",
     params(
         ("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão: slugs e prefixos separados por vírgula")
     ),

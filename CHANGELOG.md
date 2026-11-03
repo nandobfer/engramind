@@ -22,8 +22,7 @@ Apps consumidores sem token admin, foco no contexto e campos novos de memória (
 
 - **Quebra de contrato:** a faixa de títulos do contexto passa a `#id [CATEGORIA] @canal: título` (`- [CATEGORIA] @canal: título` no `markdown`; `category` e `channel` em cada título do `json`), e o domínio do hash da `version` muda: todo consumidor recarrega o bloco uma vez, e uma `version` da 0.10 nunca recebe `304`.
 - `create_agent`, `subscribe` e `create_category` repetidos com os mesmos campos devolvem o existente com `200` e `created: false`; com campos diferentes, o `409` de antes com `details.existing`.
-- `create_memory` responde `created`; com `key`, o dedupe exato por texto não se aplica.
-- `get_hints` sem embeddings deixa de devolver lista vazia e cai para o critério textual (`method: text`).
+- `create_memory` responde `created`; com `key`, o dedupe exato por texto não se aplica; o upsert (criação ou importação) reativa a memória arquivada; `move_memory` responde `409 MEMORY_KEY_EXISTS` quando o destino já tem a mesma `key`.
 - `get_memory` devolve também `similar`; `list_memories` com `fields=title` traz `tags`.
 - O prompt `memory-writing`, o guia `escrever-memorias` e a skill deixam de proibir códigos de tarefa e URLs: a política de memória do app consumidor prevalece.
 - `list_channels`/`get_channel` mostram ao token de app todos os canais, com `reach` onde os agentes dele chegam. Guias com público admin também aparecem para o token de app.

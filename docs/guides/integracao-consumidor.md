@@ -39,7 +39,7 @@ curl -s -H "Authorization: Bearer $TOKEN" -H "If-None-Match: \"$VERSION\"" \
 
 O bloco é determinístico: a mesma rede, as mesmas memórias e as mesmas configurações dão o mesmo texto e a mesma `version`, em qualquer réplica do seu sistema e depois de reinícios do Engramind. Ordem, faixas e formatos estão no guia `contexto-e-cache`.
 
-4. Opcional: antes do turno, chame `get_hints { text }` com a mensagem do usuário e acrescente as dicas (`#id · título · canal`; `duplicate: true` indica que o turno repete a memória) **junto da mensagem do turno**, nunca na parte estável. São baratas (sem LLM), só trazem o que passa do limiar `search.hint_threshold` e nunca repetem o que já está no contexto; o agente busca o texto completo com `get_memory` se quiser. Sem embeddings, as dicas vêm pelo critério textual, só com textos muito parecidos (guia `busca-e-dicas`).
+4. Opcional: antes do turno, chame `get_hints { text }` com a mensagem do usuário e acrescente as dicas (`#id · título · canal`; `duplicate: true` indica que o turno repete a memória) **junto da mensagem do turno**, nunca na parte estável. São baratas (sem LLM), só trazem o que passa do limiar `search.hint_threshold` e nunca repetem o que já está no contexto; o agente busca o texto completo com `get_memory` se quiser. Sem embeddings, a lista vem vazia (guia `busca-e-dicas`).
 
 ## Quando reconstruir o prompt
 

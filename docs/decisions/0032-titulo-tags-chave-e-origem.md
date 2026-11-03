@@ -17,7 +17,9 @@
   `UNIQUE (channel_id, key) WHERE key IS NOT NULL`) e imutável. Sem `upsert`, repetida →
   `409 MEMORY_KEY_EXISTS`; com `upsert`, a mesma transação aplica a edição (revisão só se algo mudou,
   `created: false`, `200`). Com `key`, o dedupe exato por texto não se aplica: a chave é a identidade.
-  O escritor único serializa upserts concorrentes. Na importação, um item com chave existente vai
+  O escritor único serializa upserts concorrentes. Upsert (criação ou importação) sobre memória
+  arquivada a reativa no status pedido; `move_memory` com a `key` já usada no destino →
+  `409 MEMORY_KEY_EXISTS`. Na importação, um item com chave existente vai
   para `updated[]`.
 - **Origem**: cada revisão guarda a origem informada; `memories.last_origin_*` muda só quando uma
   origem é informada (criação, edição, importação ou `revert` de revisão com origem). Sem backfill:

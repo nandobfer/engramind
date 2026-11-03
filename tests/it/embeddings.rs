@@ -1068,7 +1068,7 @@ async fn get_memory_computes_vector_similar_at_read_time() {
 }
 
 #[tokio::test]
-async fn hints_fall_back_to_text_similarity_without_embeddings() {
+async fn hints_stay_empty_without_embeddings_even_for_near_duplicates() {
     let context = TestContext::new().await;
     let token = setup(&context).await;
     let (status, _) = context
@@ -1080,13 +1080,14 @@ async fn hints_fall_back_to_text_similarity_without_embeddings() {
         )
         .await;
     assert_eq!(status, StatusCode::OK);
-    let id = memory(
+    memory(
         &context,
         &token,
         "eng/busca",
         "rodar testes afetados com nextest",
     )
     .await;
+    // Um texto que o `similar` textual acharia: a dica continua vazia (contrato anterior à 0.11).
     let (status, result) = context
         .call(
             "POST",
@@ -1096,16 +1097,5 @@ async fn hints_fall_back_to_text_similarity_without_embeddings() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{result}");
-    assert_eq!(result["hints"][0]["id"], json!(id));
-    assert_eq!(result["hints"][0]["method"], "text");
-    assert_eq!(result["hints"][0]["duplicate"], false);
-    let (_, unrelated) = context
-        .call(
-            "POST",
-            "/v1/hints",
-            Some(&token),
-            Some(json!({ "text": "deploy de imagem" })),
-        )
-        .await;
-    assert_eq!(unrelated["hints"], json!([]));
+    assert_eq!(result["hints"], json!([]));
 }

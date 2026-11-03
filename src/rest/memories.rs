@@ -302,7 +302,7 @@ status_route!(
     operation_id = "move_memory",
     tag = "Memories",
     summary = "Move uma memória para outro canal",
-    description = "Exige `write` efetivo na origem e no destino. Texto igual a outra memória do destino responde `409 MEMORY_DUPLICATE` com `details.existing_id`. Incrementa a versão da memória e dos dois canais. Aceita `Idempotency-Key`.",
+    description = "Exige `write` efetivo na origem e no destino. Texto igual a outra memória do destino responde `409 MEMORY_DUPLICATE` e uma `key` já usada no destino, `409 MEMORY_KEY_EXISTS`, ambos com `details.existing_id`. Incrementa a versão da memória e dos dois canais. Aceita `Idempotency-Key`.",
     params(
         ("memory" = String, Path, description = "Id da memória (`m_…`)"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h"),
@@ -316,7 +316,7 @@ status_route!(
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
         (status = 403, description = "`SCOPE_REQUIRED` ou `CHANNEL_NOT_SUBSCRIBED`", body = ErrorResponse),
         (status = 404, description = "`MEMORY_NOT_FOUND` ou `CHANNEL_NOT_FOUND`", body = ErrorResponse),
-        (status = 409, description = "`MEMORY_DUPLICATE`, `CHANNEL_ARCHIVED` ou `IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
+        (status = 409, description = "`MEMORY_DUPLICATE`, `MEMORY_KEY_EXISTS`, `CHANNEL_ARCHIVED` ou `IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),

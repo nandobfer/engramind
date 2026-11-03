@@ -1,9 +1,8 @@
 //! `get_hints` (desenho §9): a "lembrança vaga". A mesma busca vetorial com o limiar alto
 //! `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`,
 //! nem citado), sem o que já está no contexto; devolve `id`, título, canal e a nota
-//! (`score`, `method`, `duplicate`). Sem embeddings (0.11.0, decisão 0031), cai para o
-//! `similar` textual: candidatos do FTS com Jaccard ≥ `memory.similar_threshold`, um limiar
-//! alto para a dica não virar ruído.
+//! (`score`, `method`, `duplicate`). Sem embeddings, lista vazia: uma dica nunca é ruído
+//! textual (o `similar` textual fica com `get_memory`, decisão 0031).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,8 +12,7 @@ use super::{
     Core,
     access::Purpose,
     ids,
-    memory_text::{jaccard, query_terms},
-    model::{MemoryStatus, Mode, SimilarMethod, TextQuery, UsageEntry, VectorQuery},
+    model::{MemoryStatus, Mode, SimilarMethod, UsageEntry, VectorQuery},
     principal::Principal,
     selection::Selection,
     settings::{SEARCH_HINT_LIMIT, SEARCH_HINT_THRESHOLD, VECTOR_DUPLICATE_THRESHOLD},
@@ -137,38 +135,8 @@ impl<S: Store> Core<S> {
                     })
                     .collect()
             }
-            None => {
-                let threshold = snapshot.similar_threshold();
-                let mut scored: Vec<(f64, crate::core::model::Memory)> = self
-                    .store()
-                    .search_text(TextQuery {
-                        terms: query_terms(text),
-                        channel_ids: channel_ids.clone(),
-                        categories: Vec::new(),
-                        tags: Vec::new(),
-                        statuses,
-                        exclude_ids: in_context,
-                        limit: (limit * CANDIDATES_PER_HINT).max(MIN_CANDIDATES),
-                    })
-                    .await?
-                    .into_iter()
-                    .map(|memory| (jaccard(text, &memory.text), memory))
-                    .filter(|(score, _)| *score >= threshold)
-                    .collect();
-                scored.sort_by(|(a, x), (b, y)| b.total_cmp(a).then_with(|| x.id.cmp(&y.id)));
-                scored
-                    .into_iter()
-                    .take(limit as usize)
-                    .map(|(score, memory)| Hint {
-                        id: memory.id,
-                        title: memory.title,
-                        channel: memory.channel,
-                        score: round3(score),
-                        method: SimilarMethod::Text,
-                        duplicate: false,
-                    })
-                    .collect()
-            }
+            // Sem embeddings, lista vazia: uma dica nunca é ruído textual.
+            None => Vec::new(),
         };
         let at = ids::timestamp(ids::now());
         self.counters()

@@ -32,7 +32,7 @@ Memórias recém-escritas entram no ramo vetorial alguns instantes depois (`embe
 `get_hints { text, channels?, limit? }` é a "lembrança vaga": feita para o sistema consumidor chamar antes do turno, barata e sem LLM. Busca pelo vetor do `text` (por exemplo, a mensagem do usuário) com o limiar alto `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), e deixa de fora o que já está com texto completo no contexto do mesmo token e seleção.
 
 - Devolve `{ id, title, channel, score, method, duplicate }`, até `limit` (padrão `search.hint_limit`, máximo 20). `method: vector` traz o cosseno em `score`, e `duplicate: true` quando ele passa de `memory.vector_duplicate_threshold` (o texto do turno praticamente repete a memória). O agente busca o texto completo com `get_memory` se quiser.
-- Sem embeddings (desligados, sem configuração, falha ou acima de 2 s), cai para o critério textual do `similar` da escrita: candidatos do FTS com Jaccard dos termos ≥ `memory.similar_threshold`, com `method: text` e `duplicate: false`. O limiar textual é alto, então só textos muito parecidos viram dica.
+- Sem embeddings (desligados, sem configuração, falha ou acima de 2 s), devolve lista vazia: uma dica nunca é ruído textual.
 - Conta uma recuperação de cada dica e grava `usage_log` com `op = get_hints`.
 - Leitura por `POST` (o corpo leva o texto): não aceita `Idempotency-Key`.
 

@@ -1032,3 +1032,60 @@ async fn channel_category_priorities_and_the_text_preview_change_the_block_and_t
     let (status, error) = set(json!({ "context.text_max_chars": 4001 })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
 }
+
+/// Regressão: candidatos do foco por canal (um canal com mais de 50 acertos não tira os do
+/// outro) e posição comparável entre canais de mesma prioridade (a mais relevante vem primeiro,
+/// não um empate por canal resolvido pela data).
+#[tokio::test]
+async fn focus_ranks_candidates_of_every_channel_together() {
+    let context = TestContext::new().await;
+    let (status, _) = context
+        .call(
+            "PUT",
+            "/v1/settings",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "embedding.provider": "off", "context.budget_tokens": 40 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    context.create_app("app-f").await;
+    context.create_agent("app-f", "leitor").await;
+    for slug in ["eng/muitos", "eng/poucos"] {
+        context.create_channel(slug).await;
+        context
+            .subscribe("app-f/leitor", slug, "inject", None)
+            .await;
+    }
+    let token = context
+        .issue("app-f", Some("app-f/leitor"), "agent", &["read"])
+        .await;
+    let filler = "texto de preenchimento sobre outro assunto qualquer da campanha ".repeat(4);
+    for index in 0..60 {
+        context
+            .create_memory(
+                ADMIN_TOKEN,
+                "eng/muitos",
+                &format!("Registro {index} cita o dragao uma vez. {filler}"),
+            )
+            .await;
+    }
+    let older = context
+        .create_memory(ADMIN_TOKEN, "eng/poucos", "A vila fica no norte.")
+        .await["memory"]["id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    let relevant = context
+        .create_memory(ADMIN_TOKEN, "eng/poucos", "Dragao: o dragao teme gelo.")
+        .await["memory"]["id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    let (status, body, mode, _) = focused(&context, &token, "dragao", None).await;
+    assert_eq!((status, mode.as_str()), (StatusCode::OK, "text"), "{body}");
+    let block = content(&body);
+    // A relevante do canal com poucos acertos fica com o texto completo, antes de todas as do
+    // canal com 60 acertos fracos (o orçamento só cabe a primeira).
+    assert!(block.contains(&format!("#{relevant}: ")), "{block}");
+    assert!(!block.contains(&format!("#{older}: ")), "{block}");
+}

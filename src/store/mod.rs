@@ -298,7 +298,7 @@ pub trait Store: Clone + Send + Sync + 'static {
         context: WriteContext,
     ) -> impl Future<Output = Result<Memory, StoreError>> + Send;
     /// Incrementa a versão dos dois canais; duplicata no destino →
-    /// `Conflict("MEMORY_DUPLICATE")`.
+    /// `Conflict("MEMORY_DUPLICATE")`; chave já usada no destino → `Conflict("MEMORY_KEY_EXISTS")`.
     fn move_memory(
         &self,
         target: MemoryTarget,

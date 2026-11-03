@@ -390,6 +390,10 @@ pub(super) fn search_text(
         ));
         values.extend(texts(query.exclude_ids.iter().map(String::as_str)));
     }
+    if !query.only_ids.is_empty() {
+        conditions.push(format!("m.id IN ({})", placeholders(query.only_ids.len())));
+        values.extend(texts(query.only_ids.iter().map(String::as_str)));
+    }
     push_tags(&mut conditions, &mut values, &query.tags);
     let mut statement = connection.prepare(&format!(
         "SELECT {MEMORY_COLUMNS} FROM memory_fts JOIN memories m ON m.seq = memory_fts.rowid
@@ -730,6 +734,8 @@ pub(super) fn create_memory(
             tags: new.tags.clone(),
             origin: new.origin.clone(),
             dedupe: new.dedupe,
+            // Upsert reafirma o fato: a memória arquivada volta ao status pedido (decisão 0032).
+            restore: Some(new.status),
             reason: "update",
             jobs: new.jobs.clone(),
             similar,
@@ -850,6 +856,8 @@ pub(super) fn import_memories(
                 tags: item.tags.clone(),
                 origin: item.origin.clone(),
                 dedupe,
+                // Como o upsert de `create_memory`: a arquivada volta ao status do item.
+                restore: (item.status != MemoryStatus::Archived).then_some(item.status),
                 reason: "update",
                 jobs: item.jobs.clone(),
                 similar: Vec::new(),
@@ -1015,7 +1023,15 @@ fn patch_memory(
                 .is_some_and(|title| *title != before.title)
     });
     let tags = patch.tags.as_ref().filter(|tags| **tags != before.tags);
-    if content.is_none() && category.is_none() && title.is_none() && tags.is_none() {
+    let restore = patch
+        .restore
+        .filter(|_| before.status == MemoryStatus::Archived);
+    if content.is_none()
+        && category.is_none()
+        && title.is_none()
+        && tags.is_none()
+        && restore.is_none()
+    {
         return Ok(MemoryWrite {
             memory: before,
             created: false,
@@ -1089,6 +1105,17 @@ fn patch_memory(
     }
     if let Some(tags) = tags {
         write_tags(transaction, &before.id, tags)?;
+    }
+    if let Some(status) = restore {
+        // Como `restore_memory`: deixa de ser fundida e volta a ser usada.
+        transaction
+            .execute(
+                "UPDATE memories SET status = ?1, archived_at = NULL, merged_into = NULL,
+                     stale_candidate = 0
+                 WHERE id = ?2",
+                params![status.as_str(), before.id],
+            )
+            .map_err(sql_error)?;
     }
     if let Some(origin) = &patch.origin {
         set_last_origin(transaction, &before.id, origin)?;
@@ -1231,6 +1258,14 @@ pub(super) fn move_memory(
             return Err(StoreError::Conflict("MEMORY_DUPLICATE"));
         }
     }
+    // A chave é única por canal: a memória leva a chave e colide com a do destino.
+    if let Some(key) = &before.key
+        && find_by_key(transaction, to_channel_id, key)
+            .map_err(sql_error)?
+            .is_some()
+    {
+        return Err(StoreError::Conflict("MEMORY_KEY_EXISTS"));
+    }
     let audit_before = audited(transaction, &before.id)?;
     transaction
         .execute(
@@ -1238,7 +1273,7 @@ pub(super) fn move_memory(
              WHERE id = ?3",
             params![to_channel_id, context.at, before.id],
         )
-        .map_err(sql_error)?;
+        .map_err(|error| super::unique_conflict(error, "MEMORY_KEY_EXISTS"))?;
     let after = load(transaction, &before.id)?;
     revision(transaction, &after, "move", context)?;
     bump_channel(transaction, &before.channel_id)?;

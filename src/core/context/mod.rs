@@ -491,11 +491,17 @@ struct FocusRender {
 }
 
 /// Acrescenta o foco às configurações que entram no hash da `version`.
-fn with_focus(settings: &mut Value, focus: &str, model_id: &str, min_score: f64, mode: FocusMode) {
+fn with_focus(
+    settings: &mut Value,
+    focus: &str,
+    model_id: &str,
+    snapshot: &settings::SettingsSnapshot,
+    mode: FocusMode,
+) {
     if let Value::Object(map) = settings {
         map.insert(
             "focus".to_owned(),
-            focus::fingerprint_entry(focus, model_id, min_score, mode),
+            focus::fingerprint_entry(focus, model_id, snapshot, mode),
         );
     }
 }
@@ -680,9 +686,8 @@ impl<S: Store> Core<S> {
         let expected = match &focus {
             Some(text) => {
                 let (mode, model_id) = self.focus_expectation().await;
-                let min_score = snapshot.number(settings::FOCUS_MIN_SCORE);
-                with_focus(&mut settings, text, &model_id, min_score, mode);
-                Some((mode, model_id, min_score))
+                with_focus(&mut settings, text, &model_id, &snapshot, mode);
+                Some((mode, model_id))
             }
             None => None,
         };
@@ -698,7 +703,7 @@ impl<S: Store> Core<S> {
             }));
         }
         let focus_render = match (&focus, expected) {
-            (Some(text), Some((mode, model_id, min_score))) => {
+            (Some(text), Some((mode, model_id))) => {
                 let relevance = self
                     .focus_relevance(
                         text,
@@ -719,7 +724,7 @@ impl<S: Store> Core<S> {
                 );
                 if relevance.mode != mode {
                     // Degradado: outra `version`, para nunca casar com o bloco completo.
-                    with_focus(&mut settings, text, &model_id, min_score, relevance.mode);
+                    with_focus(&mut settings, text, &model_id, &snapshot, relevance.mode);
                     plan.fingerprint = fingerprint_of(plan.format, &plan.reached, &settings);
                     plan.version = version::label(&plan.fingerprint);
                 }

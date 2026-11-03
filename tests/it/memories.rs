@@ -1691,3 +1691,137 @@ async fn client_titles_are_validated_and_locked() {
     assert_eq!(revisions[0]["title"], "O Medo do Dragão");
     assert_eq!(revisions[0]["title_locked"], true);
 }
+
+/// Regressão: o upsert (criação e importação) reativa a memória arquivada, e o `move` não leva
+/// uma `key` que o destino já usa.
+#[tokio::test]
+async fn keys_survive_archive_import_and_move() {
+    let context = TestContext::new().await;
+    let token = setup(&context).await;
+    let (status, first) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/global", "text": "O dragão dorme na caverna.", "key": "quest:dragao" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    let id = first["memory"]["id"].as_str().expect("id").to_owned();
+    let archive = |id: String| {
+        let context = &context;
+        let token = token.clone();
+        async move {
+            let (status, body) = context
+                .call(
+                    "POST",
+                    &format!("/v1/memories/{id}/archive"),
+                    Some(&token),
+                    None,
+                )
+                .await;
+            assert_eq!(
+                (status, body["status"].clone()),
+                (StatusCode::OK, json!("archived"))
+            );
+        }
+    };
+    let in_context = |id: String| {
+        let context = &context;
+        let token = token.clone();
+        async move {
+            let (_, body) = context
+                .call("GET", "/v1/context?channels=eng/global", Some(&token), None)
+                .await;
+            body["content"].as_str().expect("content").contains(&id)
+        }
+    };
+    archive(id.clone()).await;
+    assert!(!in_context(id.clone()).await);
+    // Upsert pela criação: mesma memória, ativa de novo e no contexto.
+    let (status, upserted) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/global", "text": "O dragão acordou.", "key": "quest:dragao", "upsert": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{upserted}");
+    assert_eq!(
+        (
+            upserted["created"].clone(),
+            upserted["memory"]["id"].clone(),
+            upserted["memory"]["status"].clone()
+        ),
+        (json!(false), json!(id), json!("active"))
+    );
+    assert!(in_context(id.clone()).await);
+    // Upsert pela importação: idem.
+    archive(id.clone()).await;
+    let (status, _, imported) = context
+        .call_with(
+            "POST",
+            "/v1/memories/import",
+            Some(ADMIN_TOKEN),
+            Some(json!({
+                "channel": "eng/global",
+                "memories": [{ "text": "O dragão voou para o sul.", "key": "quest:dragao" }]
+            })),
+            &[("Idempotency-Key", "lote-dragao")],
+        )
+        .await;
+    assert!(status.is_success(), "{imported}");
+    assert_eq!(imported["updated"][0]["id"], json!(id));
+    let (_, memory) = context
+        .call("GET", &format!("/v1/memories/{id}"), Some(&token), None)
+        .await;
+    assert_eq!(
+        (memory["status"].clone(), memory["text"].clone()),
+        (json!("active"), json!("O dragão voou para o sul."))
+    );
+    assert!(in_context(id.clone()).await);
+    // Move: a mesma chave no destino → 409 com o id que já a tem; nada muda.
+    let (_, other) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/outro", "text": "Outro dragão no outro canal.", "key": "quest:dragao" }),
+    )
+    .await;
+    let other_id = other["memory"]["id"].as_str().expect("id").to_owned();
+    let (status, conflict) = context
+        .call(
+            "POST",
+            &format!("/v1/memories/{id}/move"),
+            Some(&token),
+            Some(json!({ "to": "eng/outro" })),
+        )
+        .await;
+    assert_eq!(
+        (status, conflict["error"]["code"].clone()),
+        (StatusCode::CONFLICT, json!("MEMORY_KEY_EXISTS")),
+        "{conflict}"
+    );
+    assert_eq!(conflict["error"]["details"]["existing_id"], json!(other_id));
+    let (_, unchanged) = context
+        .call("GET", &format!("/v1/memories/{id}"), Some(&token), None)
+        .await;
+    assert_eq!(unchanged["channel"], "eng/global");
+    // Sem colisão, a memória leva a chave.
+    let (_, free) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/global", "text": "A espada está no lago.", "key": "item:espada" }),
+    )
+    .await;
+    let free_id = free["memory"]["id"].as_str().expect("id").to_owned();
+    let (status, moved) = context
+        .call(
+            "POST",
+            &format!("/v1/memories/{free_id}/move"),
+            Some(&token),
+            Some(json!({ "to": "eng/outro" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    assert_eq!(
+        (moved["channel"].clone(), moved["key"].clone()),
+        (json!("eng/outro"), json!("item:espada"))
+    );
+}

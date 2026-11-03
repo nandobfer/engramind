@@ -7936,7 +7936,7 @@
           "Search"
         ],
         "summary": "Dicas baratas (id, título e canal) para um texto, sem LLM",
-        "description": "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel, score, method, duplicate }`: `method: vector` com o cosseno, e `duplicate` a partir de `memory.vector_duplicate_threshold`; o agente busca o texto completo se quiser. Sem embeddings, cai para o textual (`method: text`): candidatos do FTS com Jaccard dos termos ≥ `memory.similar_threshold`. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`.",
+        "description": "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel, score, method, duplicate }`: `method: vector` com o cosseno, e `duplicate` a partir de `memory.vector_duplicate_threshold`; o agente busca o texto completo se quiser. Sem embeddings, lista vazia. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`.",
         "operationId": "get_hints",
         "parameters": [
           {
@@ -10974,7 +10974,7 @@
           "Memories"
         ],
         "summary": "Move uma memória para outro canal",
-        "description": "Exige `write` efetivo na origem e no destino. Texto igual a outra memória do destino responde `409 MEMORY_DUPLICATE` com `details.existing_id`. Incrementa a versão da memória e dos dois canais. Aceita `Idempotency-Key`.",
+        "description": "Exige `write` efetivo na origem e no destino. Texto igual a outra memória do destino responde `409 MEMORY_DUPLICATE` e uma `key` já usada no destino, `409 MEMORY_KEY_EXISTS`, ambos com `details.existing_id`. Incrementa a versão da memória e dos dois canais. Aceita `Idempotency-Key`.",
         "operationId": "move_memory",
         "parameters": [
           {
@@ -11134,7 +11134,7 @@
             }
           },
           "409": {
-            "description": "`MEMORY_DUPLICATE`, `CHANNEL_ARCHIVED` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "description": "`MEMORY_DUPLICATE`, `MEMORY_KEY_EXISTS`, `CHANNEL_ARCHIVED` ou `IDEMPOTENCY_KEY_CONFLICT`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -19550,7 +19550,7 @@
         "properties": {
           "created": {
             "type": "boolean",
-            "description": "`true` quando uma memória nova foi gravada; `false` na duplicata, na edição e no upsert\nde uma `key` existente."
+            "description": "`true` quando uma memória nova foi gravada; `false` na duplicata, na edição e no upsert\nde uma `key` existente. Respostas gravadas antes da 0.11.0 (replay) recebem o valor do\nstatus gravado (`idempotency::with_created`)."
           },
           "duplicate": {
             "type": "boolean",

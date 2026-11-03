@@ -462,6 +462,7 @@ impl<S: Store> Core<S> {
                 tags: Vec::new(),
                 statuses: vec![MemoryStatus::Active, MemoryStatus::Permanent],
                 exclude_ids: exclude.map(str::to_owned).into_iter().collect(),
+                only_ids: Vec::new(),
                 limit: SIMILAR_CANDIDATES,
             })
             .await?;
@@ -893,6 +894,7 @@ impl<S: Store> Core<S> {
                         tags: new_tags,
                         origin: edit_origin,
                         dedupe: snapshot.dedupe_exact(),
+                        restore: None,
                         reason: "update",
                         jobs,
                         similar,
@@ -972,6 +974,7 @@ impl<S: Store> Core<S> {
                         tags: Some(revision.tags),
                         origin: revision.origin,
                         dedupe,
+                        restore: None,
                         reason: "revert",
                         jobs: content_jobs(true, core.embeddings_enabled()),
                         similar: Vec::new(),
@@ -1208,6 +1211,18 @@ impl<S: Store> Core<S> {
                     {
                         Err(StoreError::Conflict("MEMORY_DUPLICATE")) => {
                             Err(core.duplicate(&destination, &memory.text, &memory.id).await)
+                        }
+                        Err(StoreError::Conflict("MEMORY_KEY_EXISTS")) => {
+                            let existing = match &memory.key {
+                                Some(key) => core
+                                    .store()
+                                    .find_memory_by_key(destination.clone(), key.clone())
+                                    .await
+                                    .ok()
+                                    .flatten(),
+                                None => None,
+                            };
+                            Err(key_exists(existing.as_deref().unwrap_or_default()))
                         }
                         other => other.map_err(memory_error),
                     }

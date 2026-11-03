@@ -32,7 +32,7 @@ engramind categories create --key QUESTS --label Missões --priority 25 --json
 
 - **`title`** (3 a 200 caracteres, sem quebras de linha): título do cliente, gravado já `ready` e **travado** (`title_locked: true`). O Redator não o troca, nem quando o texto muda; ele só revisa o texto, se `redator.rewrite_text` estiver ligado. Para devolver o título ao Redator, `update_memory` com `title_locked: false` (enfileira só o título).
 - **`tags`** (até 20, de 1 a 40 caracteres; espaços nas pontas e repetidas saem): rótulos livres do consumidor. Não entram no `content_hash`, então trocar só as tags não dispara o Redator nem o embedding (a revisão é gravada). `list_memories` filtra com `tag` repetido (`?tag=missao&tag=ativa`, E lógico) e `search_memories` com `tags: []`.
-- **`key`** (1 a 80 de `A-Z a-z 0-9 : _ -`): chave natural, única no canal e imutável. A mesma `key` de novo → `409 MEMORY_KEY_EXISTS` com `details.existing_id`; com `upsert: true`, a memória existente é editada (texto, categoria, título, tags e origem) e volta com `created: false` e `200`, sem revisão se nada mudou. Com `key`, o dedupe exato por texto não se aplica: a chave é a identidade. Dois upserts simultâneos da mesma chave nunca criam duas memórias. `list_memories` filtra por `key`.
+- **`key`** (1 a 80 de `A-Z a-z 0-9 : _ -`): chave natural, única no canal e imutável. A mesma `key` de novo → `409 MEMORY_KEY_EXISTS` com `details.existing_id`; com `upsert: true`, a memória existente é editada (texto, categoria, título, tags e origem) e volta com `created: false` e `200`, sem revisão se nada mudou. Com `key`, o dedupe exato por texto não se aplica: a chave é a identidade. O upsert de uma memória arquivada (pela criação ou pela importação) a reativa no status pedido (`active` por padrão), na mesma revisão. `move_memory` leva a `key`; se o destino já tem a mesma, `409 MEMORY_KEY_EXISTS`. Dois upserts simultâneos da mesma chave nunca criam duas memórias. `list_memories` filtra por `key`.
 - **`origin`** na criação fica em `origin`; a origem da **última edição que informou uma** fica em `last_origin` (criação, `update_memory` com `origin`, importação ou `revert` de uma revisão com origem). Cada revisão guarda a própria `origin`. O Redator e o consolidador não mudam `last_origin`; memórias de antes da 0.11.0 ficam com `null` até a próxima edição com origem.
 
 ```bash
@@ -63,7 +63,7 @@ engramind memories revert m_8f2a1c3d --version 1
 | `archive_memory` | `write` | Sai do contexto e das dicas; continua buscável com `include_archived`. |
 | `restore_memory` | `write` | A arquivada volta a `active`. |
 | `pin_memory` / `unpin_memory` | `write` | `permanent` entra primeiro no contexto e o consolidador nunca toca; `unpin` volta a `active`. |
-| `move_memory` | `write` na origem e no destino | Troca de canal; duplicata no destino → `409 MEMORY_DUPLICATE`. |
+| `move_memory` | `write` na origem e no destino | Troca de canal levando a `key`; duplicata no destino → `409 MEMORY_DUPLICATE`, `key` já usada no destino → `409 MEMORY_KEY_EXISTS` (ambos com `details.existing_id`). |
 | `mark_verified` | `write` | Registra que alguém conferiu a memória: grava `verified_at` e limpa `stale_candidate`, sem nova revisão, sem mudar a `version` e sem mudar o contexto. |
 | `delete_memory` | `delete` | Apaga a memória e o índice de busca; a auditoria e a última revisão guardam a proveniência. |
 

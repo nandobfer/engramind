@@ -719,8 +719,9 @@ pub enum SimilarMethod {
 pub struct MemoryWrite {
     pub memory: Memory,
     /// `true` quando uma memória nova foi gravada; `false` na duplicata, na edição e no upsert
-    /// de uma `key` existente.
-    #[serde(default)]
+    /// de uma `key` existente. Respostas gravadas antes da 0.11.0 (replay) recebem o valor do
+    /// status gravado (`idempotency::with_created`).
+    #[serde(default = "created_default")]
     pub created: bool,
     /// `true` quando o texto já existia no canal e nada foi gravado.
     pub duplicate: bool,
@@ -810,6 +811,8 @@ pub struct MemoryPatch {
     /// Origem desta edição; só grava `last_origin` quando algo muda.
     pub origin: Option<Origin>,
     pub dedupe: bool,
+    /// `Some`: a memória arquivada volta a esse status na mesma revisão (upsert por `key`).
+    pub restore: Option<MemoryStatus>,
     pub reason: &'static str,
     /// Enfileirados quando o texto muda ou o título é destravado.
     pub jobs: Vec<NewJob>,
@@ -872,6 +875,8 @@ pub struct TextQuery {
     pub tags: Vec<String>,
     pub statuses: Vec<MemoryStatus>,
     pub exclude_ids: Vec<String>,
+    /// Não vazio: só estes ids (o foco reordena, numa busca só, os candidatos de cada canal).
+    pub only_ids: Vec<String>,
     pub limit: u32,
 }
 
