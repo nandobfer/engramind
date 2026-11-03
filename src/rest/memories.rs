@@ -61,7 +61,7 @@ pub async fn list_memories(
     operation_id = "get_memory",
     tag = "Memories",
     summary = "Mostra uma memória",
-    description = "Texto, título, autoria (`app`, `agent`), `origin`, contadores, estados e `version`. Memória num canal fora do alcance do token ou do `Engramind-Channels` responde `MEMORY_NOT_FOUND`. Traz também `key`, `tags`, `title_locked`, `last_origin` e `similar`: com vetor do modelo vigente, até três memórias do mesmo canal por cosseno ≥ `memory.vector_similar_threshold` (`method: vector`, `duplicate` a partir de `memory.vector_duplicate_threshold`); sem vetor, o `similar` textual (`method: text`).",
+    description = "Texto, título, autoria (`app`, `agent`), `origin`, contadores, estados e `version`. Memória num canal fora do alcance do token ou do `Engramind-Channels` responde `MEMORY_NOT_FOUND`. Traz também `key`, `tags`, `title_locked`, `last_origin` e `similar`: com vetor do modelo vigente, até três memórias do mesmo canal por cosseno ≥ `memory.vector_similar_threshold` (`method: vector`, `duplicate` a partir de `memory.vector_duplicate_threshold`); sem vetor, o `similar` textual (`method: text`). Com webhooks, emite `memory.consumed` por canal com os ids entregues (guia `integracao-gestor`).",
     params(
         ("memory" = String, Path, description = "Id da memória (`m_…`)"),
         ("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão: slugs e prefixos separados por vírgula")

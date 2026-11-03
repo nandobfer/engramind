@@ -356,3 +356,29 @@ fn without_a_cut_the_block_is_byte_identical() {
     input.channels[2].text_max_chars = 0;
     assert_eq!(text(&render(&input, &Words)), SECTION_8);
 }
+
+#[test]
+fn consumed_groups_both_bands_by_channel_without_the_overflow() {
+    let rendered = render(&section_8(ContextFormat::Tagged), &Words);
+    let ids = |ids: &[&str]| ids.iter().map(|id| (*id).to_owned()).collect::<Vec<_>>();
+    assert_eq!(
+        rendered.consumed,
+        [
+            ChannelConsumption {
+                channel: "eng/global".to_owned(),
+                memory_ids: ids(&["m_8f2a1c", "m_1b7d0e", "m_44c2aa"]),
+                title_ids: Vec::new(),
+            },
+            ChannelConsumption {
+                channel: "eng/projeto-atlas".to_owned(),
+                memory_ids: ids(&["m_90ee12"]),
+                title_ids: Vec::new(),
+            },
+            ChannelConsumption {
+                channel: "eng/misc".to_owned(),
+                memory_ids: Vec::new(),
+                title_ids: ids(&["m_77aa01", "m_77aa02"]),
+            },
+        ]
+    );
+}

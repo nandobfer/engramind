@@ -775,3 +775,290 @@ async fn every_write_operation_enqueues_its_event() {
         );
     }
 }
+
+/// Corpos `memory.consumed` recebidos pelo servidor.
+fn consumed(server: &WebhookServer) -> Vec<Value> {
+    server
+        .deliveries()
+        .into_iter()
+        .filter(|delivery| delivery.header("engramind-event-type") == "memory.consumed")
+        .map(|delivery| delivery.body)
+        .collect()
+}
+
+/// A rede do §19 mais `leitor/dev`, que assina os dois canais em `inject` (e não tem webhook),
+/// com uma memória em cada canal; as entregas da criação já saíram.
+async fn reading_network() -> (Network, String, String, String) {
+    let net = network().await;
+    net.context.create_app("leitor").await;
+    net.context.create_agent("leitor", "dev").await;
+    for target in [CHANNEL, "ops/geral"] {
+        net.context
+            .subscribe("leitor/dev", target, "inject", None)
+            .await;
+    }
+    let token = net
+        .context
+        .issue("leitor", Some("leitor/dev"), "agent", &["read"])
+        .await;
+    let id = |body: Value| body["memory"]["id"].as_str().expect("id").to_owned();
+    let eng = id(net
+        .context
+        .create_memory(
+            ADMIN_TOKEN,
+            CHANNEL,
+            "Rode so os testes afetados localmente",
+        )
+        .await);
+    let ops = id(net
+        .context
+        .create_memory(ADMIN_TOKEN, "ops/geral", "Deploy so com o pipeline verde")
+        .await);
+    deliver(&net.context, Duration::ZERO).await;
+    (net, token, eng, ops)
+}
+
+#[tokio::test]
+async fn context_emits_one_consumed_event_per_channel_and_again_on_304() {
+    let (net, token, eng, ops) = reading_network().await;
+    let versions = (
+        channel_version(&net.context, CHANNEL),
+        channel_version(&net.context, "ops/geral"),
+    );
+    let (status, headers, block) = net
+        .context
+        .call_with("GET", "/v1/context", Some(&token), None, &[])
+        .await;
+    assert_eq!(status, StatusCode::OK, "{block}");
+    let version = block["version"].as_str().expect("version").to_owned();
+    deliver(&net.context, Duration::ZERO).await;
+
+    // app-a alcança só eng/global, app-b só ops/geral, o gestor (admin) os dois.
+    let a = consumed(&net.app_a);
+    let b = consumed(&net.app_b);
+    let gestor = consumed(&net.gestor);
+    assert_eq!((a.len(), b.len(), gestor.len()), (1, 1, 2));
+    let event = &a[0];
+    assert!(event["id"].as_str().expect("id").starts_with("evt_"));
+    assert_eq!(event["type"], "memory.consumed");
+    assert_eq!(event["channel"], CHANNEL);
+    assert_eq!(event["channel_version"], versions.0);
+    assert_eq!(event["memory_ids"], json!([eng]));
+    assert_eq!(event["title_ids"], json!([]));
+    assert_eq!(event["context_version"], version.as_str());
+    assert_eq!(event["operation"], "get_context");
+    assert_eq!(event["app"], "leitor");
+    assert_eq!(event["agent"], "leitor/dev");
+    assert!(event["at"].is_string());
+    let consumption = event["consumption"].as_str().expect("consumption");
+    assert!(consumption.starts_with("cns_"));
+    assert_eq!(b[0]["channel"], "ops/geral");
+    assert_eq!(b[0]["memory_ids"], json!([ops]));
+    assert_eq!(b[0]["consumption"], consumption, "a mesma leitura");
+    let mut channels: Vec<&str> = gestor
+        .iter()
+        .map(|event| event["channel"].as_str().expect("channel"))
+        .collect();
+    channels.sort();
+    assert_eq!(channels, [CHANNEL, "ops/geral"]);
+    let raw: String = [&net.app_a, &net.app_b, &net.gestor]
+        .iter()
+        .flat_map(|server| server.deliveries())
+        .map(|delivery| String::from_utf8_lossy(&delivery.raw).into_owned())
+        .collect();
+    assert!(!raw.contains("testes afetados") && !raw.contains("pipeline verde"));
+
+    // O consumo não muda versão: o 304 continua valendo e emite de novo, pelo bloco em cache.
+    assert_eq!(
+        (
+            channel_version(&net.context, CHANNEL),
+            channel_version(&net.context, "ops/geral")
+        ),
+        versions
+    );
+    let etag = headers[axum::http::header::ETAG]
+        .to_str()
+        .expect("etag")
+        .to_owned();
+    let (status, _, _) = net
+        .context
+        .call_with(
+            "GET",
+            "/v1/context",
+            Some(&token),
+            None,
+            &[("If-None-Match", &etag)],
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    deliver(&net.context, Duration::ZERO).await;
+    let again = consumed(&net.app_a);
+    assert_eq!(again.len(), 2);
+    assert_eq!(again[1]["memory_ids"], json!([eng]));
+    assert_eq!(again[1]["context_version"], version.as_str());
+    assert_ne!(again[1]["consumption"], consumption);
+
+    // Outro serviço sobre o mesmo banco (sem o bloco em cache): o 304 não emite.
+    let reopened = net.context.reopened().await;
+    let before = webhook_jobs(&net.context);
+    let response = tower::ServiceExt::oneshot(
+        reopened,
+        axum::http::Request::builder()
+            .uri("/v1/context")
+            .header("authorization", format!("Bearer {token}"))
+            .header("if-none-match", &etag)
+            .body(axum::body::Body::empty())
+            .expect("request"),
+    )
+    .await
+    .expect("response");
+    assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(webhook_jobs(&net.context), before);
+}
+
+#[tokio::test]
+async fn search_hints_and_get_memory_emit_consumed_and_empty_reads_do_not() {
+    let (net, token, eng, _) = reading_network().await;
+    put_settings(&net.context, json!({ "search.hint_threshold": 0.1 })).await;
+    net.context.core.run_embed_jobs(Utc::now()).await;
+    deliver(&net.context, Duration::ZERO).await;
+
+    let (status, body) = net
+        .context
+        .call(
+            "POST",
+            "/v1/memories/search",
+            Some(&token),
+            Some(json!({ "query": "testes afetados", "channels": [CHANNEL] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = net
+        .context
+        .call(
+            "GET",
+            &format!("/v1/memories/{eng}"),
+            Some(ADMIN_TOKEN),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    deliver(&net.context, Duration::ZERO).await;
+    let events = consumed(&net.app_a);
+    let operations: Vec<&str> = events
+        .iter()
+        .map(|event| event["operation"].as_str().expect("operation"))
+        .collect();
+    assert_eq!(operations, ["search_memories", "get_memory"]);
+    for event in &events {
+        assert_eq!(event["memory_ids"], json!([eng]));
+        assert!(event.get("title_ids").is_none(), "só o contexto: {event}");
+        assert!(event.get("context_version").is_none());
+    }
+    assert_eq!(events[0]["agent"], "leitor/dev");
+    assert_eq!(events[1]["agent"], Value::Null, "token admin");
+    assert_eq!(events[1]["app"], "bootstrap", "o app do token admin");
+    let raw: String = net
+        .app_a
+        .deliveries()
+        .iter()
+        .map(|delivery| String::from_utf8_lossy(&delivery.raw).into_owned())
+        .collect();
+    assert!(!raw.contains("testes afetados"), "sem a query: {raw}");
+
+    // Dicas: só em canais `search`, fora do contexto. Um canal só de busca para o leitor.
+    net.context.create_channel("eng/busca").await;
+    net.context
+        .subscribe("leitor/dev", "eng/busca", "search", None)
+        .await;
+    let hint = net
+        .context
+        .create_memory(
+            ADMIN_TOKEN,
+            "eng/busca",
+            "Rodar todos os testes com nextest",
+        )
+        .await["memory"]["id"]
+        .as_str()
+        .expect("id")
+        .to_owned();
+    net.context.core.run_embed_jobs(Utc::now()).await;
+    deliver(&net.context, Duration::ZERO).await;
+    let (status, body) = net
+        .context
+        .call(
+            "POST",
+            "/v1/hints",
+            Some(&token),
+            Some(json!({ "text": "rodar todos os testes com nextest" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["hints"][0]["id"], hint.as_str(), "{body}");
+    deliver(&net.context, Duration::ZERO).await;
+    let last = consumed(&net.app_a).pop().expect("evento");
+    assert_eq!(last["operation"], "get_hints");
+    assert_eq!(last["channel"], "eng/busca");
+    assert_eq!(last["memory_ids"], json!([hint]));
+
+    // Nada entregue, nada gravado: um canal vazio.
+    net.context.create_channel("eng/vazio").await;
+    deliver(&net.context, Duration::ZERO).await;
+    let before = webhook_jobs(&net.context);
+    let (status, body) = net
+        .context
+        .call(
+            "POST",
+            "/v1/memories/search",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "query": "testes", "channels": ["eng/vazio"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["results"], json!([]));
+    assert_eq!(webhook_jobs(&net.context), before);
+}
+
+#[tokio::test]
+async fn reads_enqueue_nothing_with_webhooks_off_and_never_carry_the_focus() {
+    let (net, token, _, _) = reading_network().await;
+    let (status, block) = net
+        .context
+        .call(
+            "GET",
+            "/v1/context?focus=marcador-de-foco",
+            Some(&token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{block}");
+    deliver(&net.context, Duration::ZERO).await;
+    let events = consumed(&net.gestor);
+    assert_eq!(events.len(), 2);
+    let raw: String = net
+        .gestor
+        .deliveries()
+        .iter()
+        .map(|delivery| String::from_utf8_lossy(&delivery.raw).into_owned())
+        .collect();
+    assert!(!raw.contains("marcador-de-foco"), "sem o foco: {raw}");
+
+    put_settings(&net.context, json!({ "webhooks.enabled": false })).await;
+    let before = webhook_jobs(&net.context);
+    let (status, _) = net
+        .context
+        .call("GET", "/v1/context", Some(&token), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = net
+        .context
+        .call(
+            "POST",
+            "/v1/memories/search",
+            Some(&token),
+            Some(json!({ "query": "testes" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(webhook_jobs(&net.context), before);
+}

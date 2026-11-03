@@ -12,6 +12,7 @@ use super::settings::{
 use super::{
     Core,
     access::Purpose,
+    consumption::{Consumption, group},
     ids,
     memories::{Fields, MemoryItem},
     memory_text::query_terms,
@@ -227,6 +228,19 @@ impl<S: Store> Core<S> {
             memory_ids: found.iter().map(|(memory, _)| memory.id.clone()).collect(),
             rendered_tokens: None,
         });
+        self.consumed(
+            principal,
+            Consumption {
+                operation: "search_memories",
+                context_version: None,
+            },
+            &group(
+                found
+                    .iter()
+                    .map(|(memory, _)| (memory.channel.as_str(), memory.id.as_str())),
+            ),
+        )
+        .await;
         let fields = body.fields.unwrap_or_default();
         Ok(SearchResults {
             mode,
