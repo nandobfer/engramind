@@ -37,8 +37,10 @@ pub(super) fn memory_vector(
         |row| row.get(0),
     ))?;
     Ok(blob.map(|blob| {
-        blob.chunks_exact(4)
-            .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        blob.as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| f32::from_le_bytes(*bytes))
             .collect()
     }))
 }
