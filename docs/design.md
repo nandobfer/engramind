@@ -725,8 +725,8 @@ Observações:
 
 `skills/engramind/SKILL.md` ensina um agente com shell a usar a CLI:
 - quando ler o contexto (início da tarefa) e quando buscar (dúvida sobre uma regra);
-- como escrever uma boa memória: um fato durável, genérico, sem dados sensíveis, códigos de tarefa
-  ou URLs temporárias, na categoria certa e checando `similar` antes de criar outra;
+- como escrever uma boa memória: um fato durável e autossuficiente, segredos só com necessidade,
+  a política de memória do app consumidor prevalecendo (0.11.0), na categoria certa e checando `similar` antes de criar outra;
 - os comandos exatos com `--json`, e como tratar os erros comuns.
 
 Para agentes com shell, a skill costuma sair mais barata que o MCP: carrega algumas centenas de

@@ -4,7 +4,7 @@ O Engramind encontra memórias pelo **sentido** e pelas **palavras**. Cada memó
 
 ## Buscar
 
-`search_memories { query, channels?, categories?, limit?, include_archived?, exclude_ids?, exclude_context?, fields? }` busca nos canais em modo `inject` e `search`. Canais `manage` e arquivados só entram quando citados pelo slug exato em `channels` ou no `Engramind-Channels`.
+`search_memories { query, channels?, categories?, tags?, limit?, include_archived?, exclude_ids?, exclude_context?, fields? }` busca nos canais em modo `inject` e `search`. Canais `manage` e arquivados só entram quando citados pelo slug exato em `channels` ou no `Engramind-Channels`.
 
 1. **Ramo vetorial**: o embedding da consulta é comparado por cosseno com os vetores do modelo vigente, filtrados por canal, categoria e status. Vetores de outro modelo ou de outra dimensão nunca entram.
 2. **Ramo textual**: FTS5/BM25 sem acentos e sem caixa ("configuracao" encontra "configuração"), com o título pesando o dobro.
@@ -13,6 +13,7 @@ O Engramind encontra memórias pelo **sentido** e pelas **palavras**. Cada memó
 A resposta traz `mode`: `hybrid` quando a consulta foi vetorizada (mesmo que o ramo vetorial não ache nada) e `text` quando a busca rodou só com o FTS — embeddings desligados, provedor sem configuração, falha do provedor ou consulta acima de 2 s. A falha nunca vira erro: a busca segue pelo texto, com um `WARN embeddings.query_failed` no log.
 
 - Padrão `limit = search.default_limit` (10, máximo 50); só memórias ativas e fixadas, a menos que `include_archived`. Cada ramo traz até `limit` candidatos.
+- `tags` limita às memórias com **todas** as tags dadas (E lógico), nos dois ramos.
 - `exclude_ids` tira ids escolhidos por você; `exclude_context: true` tira as que já estão com texto completo no contexto do mesmo token e da mesma seleção (os títulos da segunda faixa continuam buscáveis).
 - A resposta traz `context_version`, a `version` de `get_context` sem `format` para a mesma seleção: se ela mudou, o bloco do prompt está desatualizado (guia `contexto-e-cache`).
 - Cada resultado traz `rank` e `score`; `score` só serve para comparar resultados da mesma busca.
@@ -30,8 +31,8 @@ Memórias recém-escritas entram no ramo vetorial alguns instantes depois (`embe
 
 `get_hints { text, channels?, limit? }` é a "lembrança vaga": feita para o sistema consumidor chamar antes do turno, barata e sem LLM. Busca pelo vetor do `text` (por exemplo, a mensagem do usuário) com o limiar alto `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), e deixa de fora o que já está com texto completo no contexto do mesmo token e seleção.
 
-- Devolve só `{ id, title, channel }`, até `limit` (padrão `search.hint_limit` = 3, máximo 20). O agente busca o texto completo com `get_memory` se quiser.
-- Sem embeddings (desligados, sem configuração, falha ou acima de 2 s), devolve lista vazia: uma dica nunca é ruído textual.
+- Devolve `{ id, title, channel, score, method, duplicate }`, até `limit` (padrão `search.hint_limit`, máximo 20). `method: vector` traz o cosseno em `score`, e `duplicate: true` quando ele passa de `memory.vector_duplicate_threshold` (o texto do turno praticamente repete a memória). O agente busca o texto completo com `get_memory` se quiser.
+- Sem embeddings (desligados, sem configuração, falha ou acima de 2 s), cai para o critério textual do `similar` da escrita: candidatos do FTS com Jaccard dos termos ≥ `memory.similar_threshold`, com `method: text` e `duplicate: false`. O limiar textual é alto, então só textos muito parecidos viram dica.
 - Conta uma recuperação de cada dica e grava `usage_log` com `op = get_hints`.
 - Leitura por `POST` (o corpo leva o texto): não aceita `Idempotency-Key`.
 
@@ -47,7 +48,9 @@ O limiar depende do modelo: a família e5 (padrão local) comprime os cossenos e
 
 ## Escrita e `similar`
 
-A escrita nunca espera o embedding: `create_memory` responde na hora e o vetor chega pelo job `embed`. Por isso `similar` (quase-duplicatas na resposta da escrita) continua pelo critério textual — o Jaccard dos termos dos candidatos do FTS acima de `memory.similar_threshold`. O cosseno entre memórias já vetorizadas entra com a consolidação.
+A escrita nunca espera o embedding: `create_memory` responde na hora e o vetor chega pelo job `embed`. Por isso `similar` na resposta da escrita continua pelo critério textual — o Jaccard dos termos dos candidatos do FTS acima de `memory.similar_threshold` (`method: text`).
+
+Na **leitura**, `get_memory` calcula `similar` pelo vetor quando a memória já tem um do modelo vigente: até três memórias `active`/`permanent` do mesmo canal com cosseno ≥ `memory.vector_similar_threshold` (`method: vector`), marcando `duplicate: true` a partir de `memory.vector_duplicate_threshold`. Sem vetor (memória recém-escrita ou embeddings desligados), devolve o `similar` textual. É só um aviso: nada é recusado nem fundido; a fusão de duplicatas continua com a consolidação.
 
 ## Estados do vetor
 

@@ -56,7 +56,7 @@ engramind memories list --fields title --channels eng/global --json
 Grave quando descobrir um fato que continuará verdadeiro por semanas e que outro agente precisaria saber. Uma boa memória:
 
 - tem **um** fato, curto e autossuficiente (quem lê não tem o contexto da sua conversa);
-- é genérica: sem dados sensíveis (segredos, tokens, dados pessoais), sem códigos de tarefa e sem URLs temporárias;
+- é durável: segredos e dados pessoais só com necessidade; códigos de tarefa, URLs e identificadores podem entrar quando úteis (a política de memória do app que você usa prevalece);
 - está na categoria certa: `PROJECT_RULES`, `ARCHITECTURE`, `CONSTRAINTS`, `CONFIG_VALUES` ou `NAMING`.
 
 Busque antes de criar. Depois de criar, confira `similar` na resposta: se aparecer uma memória parecida, prefira editá-la e excluir a nova.

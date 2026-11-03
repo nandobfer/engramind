@@ -8,7 +8,9 @@ As memórias pertencem a **canais**. Um agente só alcança um canal quando o **
 - O slug é único e **imutável**. `update_channel` muda só `name`, `description` e `priority`.
 - `priority` (de -1000 a 1000, padrão 0) é a prioridade padrão na ordem do contexto.
 - `version` cresce a cada mudança do canal.
-- Só token `admin` cria e mantém canais. Um token `agent` recebe `403 SCOPE_REQUIRED`. Um slug inexistente recebe `404 CHANNEL_NOT_FOUND`: canais nunca nascem implicitamente.
+- `create_channel` e `update_channel` são do token `admin`; um token `agent` ou `app` recebe `403 SCOPE_REQUIRED`. Fora isso, um canal só nasce quando o admin ou um token `app` assina um alvo exato que ainda não existe (veja Assinaturas). Um slug inexistente nas demais operações recebe `404 CHANNEL_NOT_FOUND`.
+- `created_by` é o slug do app cujo token de app criou o canal ao assinar (`null` para canais do admin); é ciclo de vida, não dono: o canal continua da rede.
+- O token `app` vê em `list_channels` e `get_channel` todos os canais (para poder assinar), com `reach` só onde os agentes dele chegam.
 - No caminho REST, `{channel}` aceita o id (`ch_…`) ou o slug com `/` codificada (`/v1/channels/eng%2Fglobal`). A CLI codifica sozinha.
 
 ```bash
@@ -21,6 +23,7 @@ engramind channels get eng/global
 
 - `archive_channel` tira o canal do contexto, da busca e das dicas padrão, e também de `list_channels` sem `include_archived`. O canal continua legível quando citado pelo slug.
 - `restore_channel` devolve o canal ao uso.
+- O token `app` arquiva e restaura só os canais que ele criou ao assinar (`created_by` = o app); canal criado pelo admin ou por outro app → `403 FOREIGN_APP`, e canal que agentes ativos de outro app assinam (exata ou por prefixo) → `409 CHANNEL_SHARED` com `details.apps`. `delete_channel` continua só do admin.
 - Um canal arquivado não recebe escrita de memórias (`409 CHANNEL_ARCHIVED`); a leitura e `delete_memory` continuam.
 - `delete_channel` só exclui um canal arquivado; um canal ativo recebe `409 CHANNEL_NOT_ARCHIVED`. A exclusão remove o canal, as memórias dele (com as revisões) e as assinaturas **exatas**; as por prefixo continuam. A auditoria guarda o canal e quantas assinaturas (`subscriptions_removed`) e memórias (`memories_removed`) saíram.
 
@@ -42,7 +45,7 @@ engramind channels stats eng/global --json
 | Campo | Significado |
 |---|---|
 | `agent` | O agente (id ou `app/agente`). |
-| `target` | Um canal exato existente (`eng/global`) ou um prefixo terminado em `*`. |
+| `target` | Um canal exato (`eng/global`) ou um prefixo terminado em `*`. |
 | `mode` | `inject`: entra no contexto, na busca e nas dicas. `search`: entra na busca e nas dicas, não no contexto. `manage`: só é alcançado quando o canal é citado pelo slug. |
 | `access` | Restringe os escopos do token (`read` obrigatório). Omitido ou `null`: os escopos do token. |
 | `priority` | Opcional. Sobrepõe a prioridade do canal. |
@@ -54,8 +57,9 @@ engramind subscriptions update sub_7c2e9a10 --mode search
 engramind subscriptions remove sub_7c2e9a10
 ```
 
-- Assinar o mesmo alvo duas vezes recebe `409 SUBSCRIPTION_EXISTS`. O agente e o alvo não mudam: para trocá-los, cancele e assine de novo.
-- Um alvo exato precisa existir (`404 CHANNEL_NOT_FOUND`), mesmo arquivado. Um prefixo não precisa: ele vale também para canais criados depois.
+- Assinar o mesmo alvo de novo com os mesmos `mode`, `access` e `priority` devolve a assinatura existente com `200` e `created: false`; com outros valores, `409 SUBSCRIPTION_EXISTS` com `details.existing`. O agente e o alvo não mudam: para trocá-los, cancele e assine de novo.
+- Um alvo exato inexistente é **criado** na mesma transação (nome = slug, sem descrição, prioridade 0; auditoria `channel.create` e evento `channel.updated`) e a resposta traz `channel_created: true`. Quando quem assina é um token `app`, o canal guarda `created_by` (o slug do app), que habilita o ciclo de vida acima. Um prefixo nunca cria canal: ele vale também para canais criados depois. Um canal arquivado continua assinável sem ser restaurado.
+- Assinam o token `admin` (qualquer agente) e o token `app` (só os agentes do próprio app, `403 FOREIGN_APP` nos outros); o token `agent` não assina.
 - Cada assinatura traz `reaches`, os canais ativos que o alvo alcança agora. Confira esse campo depois de assinar um prefixo.
 - `update_subscription` aceita `access: null` (volta aos escopos do token) e `priority: null` (volta à prioridade do canal).
 - Mudanças valem já na requisição seguinte.
