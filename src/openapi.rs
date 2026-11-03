@@ -23,7 +23,7 @@ use crate::{
         },
         context::{
             ContextCategory, ContextChannel, ContextContent, ContextCounts, ContextDocument,
-            ContextFormat, ContextLine, ContextNotModified, ContextTitle, ContextView,
+            ContextFormat, ContextLine, ContextNotModified, ContextTitle, ContextView, FocusMode,
         },
         docs::DocText,
         embeddings::{
@@ -33,7 +33,7 @@ use crate::{
         hints::{Hint, HintsBody, HintsResult},
         identities::{
             AgentList, AppList, CreateAgentBody, CreateAppBody, IssueTokenBody, IssuedToken,
-            TokenList, UpdateAppBody, UpdateBody, UpdateTokenBody, WhoAmI,
+            TokenList, UpdateAppBody, UpdateAppWebhookBody, UpdateBody, UpdateTokenBody, WhoAmI,
         },
         import::{ImportAuthor, ImportItem, ImportMemoriesBody},
         jobs::{JobList, LlmCallList},
@@ -55,7 +55,8 @@ use crate::{
         search::{SearchHit, SearchMemoriesBody, SearchMode, SearchResults},
         secrets::SetSecretBody,
         settings::{
-            Category, ChannelSettingView, ChannelSettingsView, SettingView, SettingsView,
+            Category, ChannelSettingView, ChannelSettingsView, ConsumerChannel, ConsumerContext,
+            ConsumerLimits, ConsumerMemory, ConsumerSettings, SettingView, SettingsView,
             UpdateChannelSettingsBody, UpdateSettingsBody,
         },
         status::{
@@ -99,6 +100,7 @@ use crate::{
         crate::rest::identities::update_token,
         crate::rest::identities::revoke_token,
         crate::rest::identities::rotate_token,
+        crate::rest::identities::update_app_webhook,
         crate::rest::channels::list_channels,
         crate::rest::channels::get_channel,
         crate::rest::channels::create_channel,
@@ -127,6 +129,7 @@ use crate::{
         crate::rest::subscriptions::subscribe,
         crate::rest::subscriptions::update_subscription,
         crate::rest::subscriptions::unsubscribe,
+        crate::rest::settings::get_consumer_settings,
         crate::rest::categories::list_categories,
         crate::rest::categories::create_category,
         crate::rest::settings::get_settings,
@@ -164,7 +167,8 @@ use crate::{
         Mode, Channel, ChannelReach, ChannelList, CreateChannelBody, UpdateChannelBody,
         Subscription, SubscriptionWrite, SubscriptionList, SubscribeBody, UpdateSubscriptionBody,
         SettingView, SettingsView, UpdateSettingsBody, Category,
-        CategoryList, CategoryWrite, CreateCategoryBody,
+        CategoryList, CategoryWrite, CreateCategoryBody, ConsumerSettings, ConsumerMemory,
+        ConsumerLimits, ConsumerContext, ConsumerChannel, UpdateAppWebhookBody, FocusMode,
         ChannelSettingView, ChannelSettingsView, UpdateChannelSettingsBody,
         MemoryStatus, TitleState, EmbeddingState, Author, Origin, Memory, MemoryTitle,
         SimilarMemory, SimilarMethod, MemoryDetail, MemoryWrite, MemoryRevision, MemoryItem, MemoryList, MemoryHistory, Fields,

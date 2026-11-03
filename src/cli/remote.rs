@@ -436,6 +436,11 @@ fn read_stdin_text(command: Command) -> Result<Command, String> {
                 webhook_secret_stdin: true,
                 webhook_secret,
                 ..
+            }
+            | AppsCommand::Webhook {
+                webhook_secret_stdin: true,
+                webhook_secret,
+                ..
             },
         ) => *webhook_secret = Some(read_secret_stdin()?),
         Command::Memories(MemoriesCommand::Import {
@@ -487,9 +492,11 @@ pub fn request(command: Command) -> ApiRequest {
         Command::Whoami => ApiRequest::new(Method::GET, "/v1/whoami".to_owned()),
         Command::Context {
             format,
+            focus,
             if_none_match,
         } => ApiRequest::new(Method::GET, "/v1/context".to_owned())
             .query("format", format)
+            .query("focus", focus)
             .if_none_match(if_none_match),
         Command::Apps(command) => match command {
             AppsCommand::List { page } => ApiRequest::new(Method::GET, "/v1/apps".to_owned())
@@ -548,6 +555,15 @@ pub fn request(command: Command) -> ApiRequest {
                 ApiRequest::new(Method::DELETE, format!("/v1/apps/{}", segment(&app)))
                     .idempotency(idempotency.idempotency_key)
             }
+            AppsCommand::Webhook {
+                app,
+                webhook_url,
+                webhook_secret,
+                idempotency,
+                ..
+            } => ApiRequest::new(Method::PUT, format!("/v1/apps/{}/webhook", segment(&app)))
+                .body(json!({ "url": webhook_url, "secret": webhook_secret }))
+                .idempotency(idempotency.idempotency_key),
         },
         Command::Agents(command) => match command {
             AgentsCommand::List { app, page } => {
@@ -830,6 +846,9 @@ pub fn request(command: Command) -> ApiRequest {
         Command::Settings(command) => match command {
             SettingsCommand::Get { key } => {
                 ApiRequest::new(Method::GET, "/v1/settings".to_owned()).query("key", key)
+            }
+            SettingsCommand::Consumer => {
+                ApiRequest::new(Method::GET, "/v1/consumer-settings".to_owned())
             }
             SettingsCommand::Set {
                 key,

@@ -5,6 +5,7 @@
 pub mod budget;
 pub mod cache;
 pub mod estimator;
+pub mod focus;
 pub mod order;
 pub mod render;
 pub mod version;
@@ -90,6 +91,30 @@ pub struct GetContextQuery {
     pub channels: Option<String>,
     /// `tagged`, `markdown` ou `json`; padrão `context.default_format`.
     pub format: Option<ContextFormat>,
+    /// Texto da tarefa ou da conversa (até 2000 caracteres depois de juntar os espaços): as
+    /// memórias relevantes (FTS5 + vetor) vêm antes dentro de cada prioridade de canal. Entra na
+    /// `version`; nunca é gravado em log nem em `usage_log`.
+    pub focus: Option<String>,
+}
+
+/// Como o `focus` foi aplicado: `hybrid` (FTS5 + vetor), `text` (só FTS5: embedding
+/// desligado, com falha ou fora do prazo) ou `none` (FTS5 também falhou: bloco sem foco).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FocusMode {
+    Hybrid,
+    Text,
+    None,
+}
+
+impl FocusMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hybrid => "hybrid",
+            Self::Text => "text",
+            Self::None => "none",
+        }
+    }
 }
 
 /// Quantas memórias entraram em cada faixa.
@@ -110,7 +135,8 @@ pub struct ContextCounts {
 pub struct ContextLine {
     #[schema(example = "m_8f2a1c3d")]
     pub id: String,
-    /// Texto da memória, sem alteração.
+    /// Texto da memória, sem alteração; com `context.text_max_chars`, sem quebras e cortado
+    /// com `…`.
     pub text: String,
 }
 
@@ -133,6 +159,11 @@ pub struct ContextTitle {
     #[schema(example = "m_77aa0100")]
     pub id: String,
     pub title: String,
+    #[schema(example = "CONSTRAINTS")]
+    pub category: String,
+    /// Slug do canal da memória (distingue canais privados dos públicos no mesmo bloco).
+    #[schema(example = "eng/global")]
+    pub channel: String,
 }
 
 /// O bloco no formato `json`.
@@ -165,6 +196,9 @@ pub struct ContextView {
     #[schema(example = 612)]
     pub rendered_tokens: u32,
     pub format: ContextFormat,
+    /// Só com `focus`: como ele foi aplicado (também no cabeçalho `Engramind-Focus-Mode`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_mode: Option<FocusMode>,
 }
 
 /// Resposta do MCP e da CLI quando `if_none_match` é igual à `version` (o REST responde
@@ -194,6 +228,7 @@ impl Rendered {
                 counts: ContextCounts::default(),
                 rendered_tokens: 0,
                 format: ContextFormat::Tagged,
+                focus_mode: None,
             },
             full_ids: Vec::new(),
             channel_ids: Vec::new(),
@@ -214,6 +249,11 @@ pub struct ChannelInput {
     pub priority: i64,
     pub full_cap: Option<u32>,
     pub titles_cap: Option<u32>,
+    /// Prioridade efetiva de cada categoria no canal (`categories.list` sobreposta por
+    /// `context.category_priorities`).
+    pub category_priorities: BTreeMap<String, i64>,
+    /// `context.text_max_chars` no canal (0 = sem corte).
+    pub text_max_chars: usize,
 }
 
 /// Tudo de que a renderização precisa; sem I/O.
@@ -227,6 +267,9 @@ pub struct RenderInput {
     pub full_budget: u32,
     pub titles_budget: u32,
     pub overflow_line: bool,
+    /// Posição de relevância das memórias relevantes ao `focus` (0 = a mais relevante).
+    pub focus: Option<HashMap<String, usize>>,
+    pub focus_mode: Option<FocusMode>,
 }
 
 /// Categorias de um canal: `(-prioridade, chave) → linhas`.
@@ -244,6 +287,14 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
         .iter()
         .map(|category| (category.key.as_str(), category.priority))
         .collect();
+    let priority_of = |channel: &ChannelInput, category: &str| -> i64 {
+        channel
+            .category_priorities
+            .get(category)
+            .or_else(|| category_priority.get(category))
+            .copied()
+            .unwrap_or(i64::MIN)
+    };
     let category_keys: Vec<String> = input
         .categories
         .iter()
@@ -258,30 +309,49 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
                 memory,
                 slug: channel.slug.as_str(),
                 channel_priority: channel.priority,
-                category_priority: category_priority
-                    .get(memory.category.as_str())
-                    .copied()
-                    .unwrap_or(i64::MIN),
+                category_priority: priority_of(channel, &memory.category),
+                focus_rank: input
+                    .focus
+                    .as_ref()
+                    .and_then(|ranks| ranks.get(&memory.id).copied()),
             })
         })
         .collect();
     order::sort(&mut entries);
-    let full_lines: Vec<String> = entries
+    // Faixa 1 com o corte de `context.text_max_chars` do canal; o orçamento mede a linha cortada.
+    let full_texts: Vec<std::borrow::Cow<'_, str>> = entries
         .iter()
         .map(|entry| {
+            let max = channels
+                .get(entry.memory.channel_id.as_str())
+                .map_or(0, |channel| channel.text_max_chars);
+            if max == 0 {
+                std::borrow::Cow::Borrowed(entry.memory.text.as_str())
+            } else {
+                std::borrow::Cow::Owned(render::preview(&entry.memory.text, max))
+            }
+        })
+        .collect();
+    let full_lines: Vec<String> = entries
+        .iter()
+        .zip(&full_texts)
+        .map(|(entry, text)| {
             format!(
                 "#{}: {}",
                 entry.memory.id,
-                render::escape_tagged(&entry.memory.text, &category_keys)
+                render::escape_tagged(text, &category_keys)
             )
         })
         .collect();
+    // Faixa 2 sem agrupamento: a categoria e o canal vão na linha (0.11.0).
     let title_lines: Vec<String> = entries
         .iter()
         .map(|entry| {
             format!(
-                "#{}: {}",
+                "#{} [{}] @{}: {}",
                 entry.memory.id,
+                entry.memory.category,
+                entry.slug,
                 render::escape_tagged(&entry.memory.title, &category_keys)
             )
         })
@@ -316,10 +386,11 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
     let mut full_ids = Vec::new();
     let mut grouped: BTreeMap<(i64, &str), Groups<'_>> = BTreeMap::new();
     let mut titles = Vec::new();
-    for ((entry, band), (full, title)) in entries
+    for (((entry, band), (full, title)), text) in entries
         .iter()
         .zip(&bands)
         .zip(full_lines.into_iter().zip(title_lines))
+        .zip(&full_texts)
     {
         match band {
             Band::Full => {
@@ -332,8 +403,10 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
                     .or_default()
                     .push(Item {
                         id: &entry.memory.id,
-                        raw: &entry.memory.text,
+                        raw: text.as_ref(),
                         tagged: full,
+                        category: &entry.memory.category,
+                        channel: entry.slug,
                     });
             }
             Band::Title => {
@@ -342,6 +415,8 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
                     id: &entry.memory.id,
                     raw: &entry.memory.title,
                     tagged: title,
+                    category: &entry.memory.category,
+                    channel: entry.slug,
                 });
             }
             Band::Overflow => counts.overflow += 1,
@@ -386,6 +461,7 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
             counts,
             rendered_tokens: measured,
             format: input.format,
+            focus_mode: input.focus_mode,
         },
         full_ids,
         channel_ids: input
@@ -404,6 +480,24 @@ fn render_settings(snapshot: &SettingsSnapshot) -> Value {
             .map(|key| ((*key).to_owned(), snapshot.value(key)))
             .collect::<Map<_, _>>(),
     )
+}
+
+/// O foco já calculado para a renderização.
+struct FocusRender {
+    ranks: Option<HashMap<String, usize>>,
+    mode: FocusMode,
+    /// O modo esperado rodou: o bloco pode ir para o cache dos focos.
+    cacheable: bool,
+}
+
+/// Acrescenta o foco às configurações que entram no hash da `version`.
+fn with_focus(settings: &mut Value, focus: &str, model_id: &str, min_score: f64, mode: FocusMode) {
+    if let Value::Object(map) = settings {
+        map.insert(
+            "focus".to_owned(),
+            focus::fingerprint_entry(focus, model_id, min_score, mode),
+        );
+    }
 }
 
 /// O que se sabe antes de ler as memórias: alcance, versão e sobreposições.
@@ -464,6 +558,8 @@ impl<S: Store> Core<S> {
                         settings::TITLES_BUDGET_TOKENS,
                         overrides,
                     ),
+                    category_priorities: self.settings_snapshot().category_priorities(overrides),
+                    text_max_chars: self.settings_snapshot().text_max_chars(overrides),
                 }
             })
             .collect();
@@ -495,8 +591,15 @@ impl<S: Store> Core<S> {
         plan: Plan,
         snapshot: &SettingsSnapshot,
         settings: &Value,
+        focus: Option<FocusRender>,
     ) -> Result<Arc<Rendered>, ApiError> {
-        if let Some(hit) = self.context_cache().get(&plan.fingerprint) {
+        // Com foco, o cache é o pequeno e separado; o bloco degradado não entra em cache.
+        let cache = match &focus {
+            None => Some(self.context_cache()),
+            Some(focus) if focus.cacheable => Some(self.focus_cache()),
+            Some(_) => None,
+        };
+        if let Some(hit) = cache.and_then(|cache| cache.get(&plan.fingerprint)) {
             return Ok(hit);
         }
         let read = self
@@ -524,10 +627,14 @@ impl<S: Store> Core<S> {
             .collect();
         let fingerprint = fingerprint_of(plan.format, &reached, settings);
         if fingerprint != plan.fingerprint
-            && let Some(hit) = self.context_cache().get(&fingerprint)
+            && let Some(hit) = cache.and_then(|cache| cache.get(&fingerprint))
         {
             return Ok(hit);
         }
+        let (focus_ranks, focus_mode) = match focus {
+            Some(focus) => (focus.ranks, Some(focus.mode)),
+            None => (None, None),
+        };
         let input = RenderInput {
             format: plan.format,
             version: version::label(&fingerprint),
@@ -541,13 +648,17 @@ impl<S: Store> Core<S> {
             full_budget: snapshot.budget(settings::BUDGET_TOKENS),
             titles_budget: snapshot.budget(settings::TITLES_BUDGET_TOKENS),
             overflow_line: snapshot.overflow_line(),
+            focus: focus_ranks,
+            focus_mode,
         };
         let estimator = Tiktoken::from_setting(&snapshot.token_estimator());
         let rendered = tokio::task::spawn_blocking(move || render(&input, &estimator))
             .await
             .map_err(|_| ApiError::internal())?;
         let rendered = Arc::new(rendered);
-        self.context_cache().insert(fingerprint, rendered.clone());
+        if let Some(cache) = cache {
+            cache.insert(fingerprint, rendered.clone());
+        }
         Ok(rendered)
     }
 
@@ -560,10 +671,22 @@ impl<S: Store> Core<S> {
     ) -> Result<ContextOutcome, ApiError> {
         self.authorize(principal, "get_context")?;
         let selection = Selection::parse(header, query.channels.as_deref())?;
+        let focus = focus::normalize(query.focus.as_deref())?;
         let format = self.context_format(query.format);
         let snapshot = self.settings_snapshot();
-        let settings = render_settings(&snapshot);
-        let plan = self
+        let mut settings = render_settings(&snapshot);
+        // Com foco (decisão 0029), o hash leva o digest do foco, o modelo, o limiar e o modo
+        // esperado; sem foco, a `version` é a de sempre.
+        let expected = match &focus {
+            Some(text) => {
+                let (mode, model_id) = self.focus_expectation().await;
+                let min_score = snapshot.number(settings::FOCUS_MIN_SCORE);
+                with_focus(&mut settings, text, &model_id, min_score, mode);
+                Some((mode, model_id, min_score))
+            }
+            None => None,
+        };
+        let mut plan = self
             .context_plan(principal, &selection, format, &settings)
             .await?;
         if let Some(tag) = if_none_match
@@ -574,7 +697,43 @@ impl<S: Store> Core<S> {
                 version: plan.version,
             }));
         }
-        let rendered = self.context_rendered(plan, &snapshot, &settings).await?;
+        let focus_render = match (&focus, expected) {
+            (Some(text), Some((mode, model_id, min_score))) => {
+                let relevance = self
+                    .focus_relevance(
+                        text,
+                        plan.channels
+                            .iter()
+                            .map(|channel| channel.id.clone())
+                            .collect(),
+                        &snapshot,
+                        mode,
+                    )
+                    .await;
+                tracing::debug!(
+                    event = "context.focus",
+                    focus_present = true,
+                    focus_len = text.chars().count(),
+                    focus_mode = relevance.mode.as_str(),
+                    "foco aplicado ao contexto"
+                );
+                if relevance.mode != mode {
+                    // Degradado: outra `version`, para nunca casar com o bloco completo.
+                    with_focus(&mut settings, text, &model_id, min_score, relevance.mode);
+                    plan.fingerprint = fingerprint_of(plan.format, &plan.reached, &settings);
+                    plan.version = version::label(&plan.fingerprint);
+                }
+                Some(FocusRender {
+                    ranks: relevance.ranks,
+                    mode: relevance.mode,
+                    cacheable: relevance.mode == mode,
+                })
+            }
+            _ => None,
+        };
+        let rendered = self
+            .context_rendered(plan, &snapshot, &settings, focus_render)
+            .await?;
         self.counters()
             .record_injected(rendered.full_ids.iter().map(String::as_str));
         self.counters().record_usage(UsageEntry {
@@ -608,7 +767,9 @@ impl<S: Store> Core<S> {
             return Ok((plan.version, Vec::new()));
         }
         let version = plan.version.clone();
-        let rendered = self.context_rendered(plan, &snapshot, &settings).await?;
+        let rendered = self
+            .context_rendered(plan, &snapshot, &settings, None)
+            .await?;
         Ok((version, rendered.full_ids.clone()))
     }
 
@@ -629,11 +790,11 @@ impl<S: Store> Core<S> {
             .store()
             .context_memories(vec![reach.channel.id.clone()])
             .await?;
-        let categories = self.settings_snapshot().categories();
-        let priority: HashMap<&str, i64> = categories
-            .iter()
-            .map(|category| (category.key.as_str(), category.priority))
-            .collect();
+        let snapshot = self.settings_snapshot();
+        let categories = snapshot.categories();
+        let network = self.network().await?;
+        let priority =
+            snapshot.category_priorities(network.channel_settings.get(&reach.channel.id));
         let keys: Vec<String> = categories.iter().map(|c| c.key.clone()).collect();
         let mut entries: Vec<Entry<'_>> = read
             .memories
@@ -646,6 +807,7 @@ impl<S: Store> Core<S> {
                     .get(memory.category.as_str())
                     .copied()
                     .unwrap_or(i64::MIN),
+                focus_rank: None,
             })
             .collect();
         order::sort(&mut entries);

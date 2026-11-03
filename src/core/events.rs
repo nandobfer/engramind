@@ -31,10 +31,12 @@ pub enum EventType {
     ChannelUpdated,
     SubscriptionUpdated,
     SettingsUpdated,
+    /// Identidade de um app mudou (0.11.0: o webhook do próprio app).
+    IdentitiesUpdated,
 }
 
 impl EventType {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::MemoryCreated,
         Self::MemoryUpdated,
         Self::MemoryArchived,
@@ -42,6 +44,7 @@ impl EventType {
         Self::ChannelUpdated,
         Self::SubscriptionUpdated,
         Self::SettingsUpdated,
+        Self::IdentitiesUpdated,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -53,6 +56,7 @@ impl EventType {
             Self::ChannelUpdated => "channel.updated",
             Self::SubscriptionUpdated => "subscription.updated",
             Self::SettingsUpdated => "settings.updated",
+            Self::IdentitiesUpdated => "identities.updated",
         }
     }
 }
@@ -98,6 +102,8 @@ pub enum Audience<'a> {
     Agent(&'a str),
     /// Só os apps admin (configuração global).
     Admins,
+    /// O próprio app e os apps admin (identidades do app).
+    App(&'a str),
 }
 
 /// Cache do diretório na mesma geração da rede (`network_changed()` invalida os dois).
@@ -140,6 +146,7 @@ pub fn recipients(
                 .filter_map(|subscription| agent_app(&subscription.agent.id)),
         ),
         Audience::Agent(agent_id) => apps.extend(agent_app(agent_id)),
+        Audience::App(app_id) => apps.push(app_id.to_owned()),
         Audience::Admins => {}
     }
     apps.retain(|app_id| reachable(app_id));
@@ -204,6 +211,49 @@ impl<S: Store> Core<S> {
             extra,
             recipients,
         }))
+    }
+
+    /// `identities.updated` do app: para ele e os apps admin. Com `webhook` (a URL que a
+    /// própria mutação grava), o app recebe mesmo que ainda não tivesse webhook.
+    pub(crate) async fn identities_event(
+        &self,
+        app_id: &str,
+        app_slug: &str,
+        webhook: bool,
+    ) -> Result<Vec<EventDraft>, ApiError> {
+        if !self.settings_snapshot().boolean(WEBHOOKS_ENABLED) {
+            return Ok(Vec::new());
+        }
+        let mut extra = Map::new();
+        extra.insert("app".to_owned(), json!(app_slug));
+        let mut draft = self
+            .event(
+                EventType::IdentitiesUpdated,
+                None,
+                Audience::App(app_id),
+                extra.clone(),
+            )
+            .await?;
+        if webhook {
+            match &mut draft {
+                Some(draft) if !draft.recipients.iter().any(|id| id == app_id) => {
+                    draft.recipients.push(app_id.to_owned());
+                    draft.recipients.sort();
+                }
+                Some(_) => {}
+                None => {
+                    draft = Some(EventDraft {
+                        id: event_id(),
+                        kind: EventType::IdentitiesUpdated,
+                        channel: None,
+                        memory_ids: Vec::new(),
+                        extra,
+                        recipients: vec![app_id.to_owned()],
+                    });
+                }
+            }
+        }
+        Ok(draft.into_iter().collect())
     }
 
     /// `subscription.updated` (Q-004): `channel` só com alvo exato; `subscription` vem da

@@ -50,14 +50,29 @@ pub fn escape_tagged(text: &str, categories: &[String]) -> String {
     out
 }
 
+/// Corta o texto já sem quebras em `max` caracteres (fronteira de caractere) com `…`; `0`
+/// não corta (`context.text_max_chars`, 0.11.0).
+pub fn preview(text: &str, max: usize) -> String {
+    let flat = flatten(text);
+    if max == 0 || flat.chars().count() <= max {
+        return flat;
+    }
+    let mut cut: String = flat.chars().take(max).collect();
+    cut.push('…');
+    cut
+}
+
 /// Uma linha já escapada do bloco.
 #[derive(Debug, Clone)]
 pub struct Item<'a> {
     pub id: &'a str,
-    /// Texto (faixa 1) ou título (faixa 2), sem escape.
+    /// Texto (faixa 1, já cortado por `context.text_max_chars`) ou título (faixa 2), sem
+    /// escape.
     pub raw: &'a str,
-    /// `#id: …` com o escape do `tagged`.
+    /// `#id: …` (faixa 1) ou `#id [CATEGORIA] @canal: …` (faixa 2) com o escape do `tagged`.
     pub tagged: String,
+    pub category: &'a str,
+    pub channel: &'a str,
 }
 
 #[derive(Debug, Clone)]
@@ -128,7 +143,12 @@ pub fn markdown(block: &Block<'_>) -> String {
     if !block.titles.is_empty() {
         let mut section = "## Títulos".to_owned();
         for item in &block.titles {
-            section.push_str(&format!("\n- {}", flatten(item.raw)));
+            section.push_str(&format!(
+                "\n- [{}] @{}: {}",
+                item.category,
+                item.channel,
+                flatten(item.raw)
+            ));
         }
         sections.push(section);
     }
@@ -168,6 +188,8 @@ pub fn json(block: &Block<'_>) -> ContextDocument {
             .map(|item| ContextTitle {
                 id: item.id.to_owned(),
                 title: item.raw.to_owned(),
+                category: item.category.to_owned(),
+                channel: item.channel.to_owned(),
             })
             .collect(),
         overflow: block.overflow,
@@ -180,6 +202,17 @@ mod tests {
 
     fn categories() -> Vec<String> {
         vec!["CONSTRAINTS".to_owned(), "NAMING".to_owned()]
+    }
+
+    #[test]
+    fn preview_cuts_on_char_boundaries_with_an_ellipsis() {
+        assert_eq!(preview("curto", 0), "curto");
+        assert_eq!(preview("curto", 5), "curto");
+        assert_eq!(preview("um\ndois", 0), "um dois");
+        assert_eq!(preview("abcdef", 3), "abc…");
+        assert_eq!(preview("abcdef", 1), "a…");
+        assert_eq!(preview("ação🐉ok", 4), "ação…");
+        assert_eq!(preview("ação🐉ok", 5), "ação🐉…");
     }
 
     #[test]

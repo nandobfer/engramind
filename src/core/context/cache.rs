@@ -10,6 +10,8 @@ use std::{
 use super::{Rendered, version::Fingerprint};
 
 pub const CAPACITY: usize = 1024;
+/// Blocos com `focus` guardados (cache próprio, 0.11.0).
+pub const FOCUS_CAPACITY: usize = 64;
 
 pub struct ContextCache {
     capacity: usize,

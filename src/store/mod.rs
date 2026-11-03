@@ -81,6 +81,14 @@ pub trait Store: Clone + Send + Sync + 'static {
         patch: AppPatch,
         context: WriteContext,
     ) -> impl Future<Output = Result<App, StoreError>> + Send;
+    /// Só a URL e o segredo do webhook (`AppPatch.webhook_*`), com a auditoria
+    /// `app.webhook_updated` (sem o segredo) e os eventos do contexto.
+    fn update_app_webhook(
+        &self,
+        id: String,
+        patch: AppPatch,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<App, StoreError>> + Send;
     /// Remove o app com agentes, tokens e assinaturas (cascata).
     fn delete_app(
         &self,

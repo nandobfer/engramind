@@ -1590,6 +1590,114 @@ impl<S: Store> Core<S> {
     }
 }
 
+/// `get_consumer_settings` (0.11.0, item 10): só o que governa a escrita e o contexto, sem
+/// segredo nem configuração de provedor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerSettings {
+    pub memory: ConsumerMemory,
+    pub limits: ConsumerLimits,
+    pub context: ConsumerContext,
+    /// Canais ativos em que o token escreve (token de app: a união dos agentes ativos), com os
+    /// valores efetivos (sobreposição do canal aplicada), por slug.
+    pub channels: Vec<ConsumerChannel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerMemory {
+    #[schema(example = 3)]
+    pub text_min: u64,
+    #[schema(example = 4000)]
+    pub text_max: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerLimits {
+    #[schema(example = 100)]
+    pub max_batch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerContext {
+    #[schema(example = 4000)]
+    pub budget_tokens: u64,
+    #[schema(example = 800)]
+    pub titles_budget_tokens: u64,
+    #[schema(example = "tagged")]
+    pub default_format: String,
+    /// 0 = sem corte.
+    #[schema(example = 0)]
+    pub text_max_chars: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerChannel {
+    #[schema(example = "eng/global")]
+    pub channel: String,
+    #[schema(example = 4000)]
+    pub memory_text_max: u64,
+    /// Teto do canal na faixa de texto completo (o global quando não há sobreposição).
+    #[schema(example = 4000)]
+    pub budget_tokens: u64,
+    /// Prioridade efetiva de cada categoria no canal.
+    #[schema(example = json!({ "PROJECT_RULES": 50, "CONSTRAINTS": 60 }))]
+    pub category_priorities: BTreeMap<String, i64>,
+    #[schema(example = 0)]
+    pub text_max_chars: u64,
+}
+
+impl<S: Store> Core<S> {
+    pub async fn get_consumer_settings(
+        &self,
+        principal: &Principal,
+        header: Option<&str>,
+    ) -> Result<ConsumerSettings, ApiError> {
+        self.authorize(principal, "get_consumer_settings")?;
+        let selection = super::selection::Selection::parse(header, None)?;
+        let snapshot = self.settings_snapshot();
+        let network = self.network().await?;
+        let whole = |value: i64| u64::try_from(value).unwrap_or_default();
+        let channels = super::access::resolve(
+            &network,
+            principal,
+            &selection,
+            super::access::Purpose::Explicit,
+            false,
+        )
+        .into_iter()
+        .filter(|reach| reach.scopes.contains(super::principal::Scope::Write))
+        .map(|reach| {
+            let overrides = network.channel_settings.get(&reach.channel.id);
+            ConsumerChannel {
+                channel: reach.channel.slug.clone(),
+                memory_text_max: snapshot.text_max(overrides) as u64,
+                budget_tokens: u64::from(
+                    SettingsSnapshot::channel_budget(BUDGET_TOKENS, overrides)
+                        .unwrap_or_else(|| snapshot.budget(BUDGET_TOKENS)),
+                ),
+                category_priorities: snapshot.category_priorities(overrides),
+                text_max_chars: snapshot.text_max_chars(overrides) as u64,
+            }
+        })
+        .collect();
+        Ok(ConsumerSettings {
+            memory: ConsumerMemory {
+                text_min: snapshot.text_min() as u64,
+                text_max: whole(snapshot.whole(TEXT_MAX)),
+            },
+            limits: ConsumerLimits {
+                max_batch: u64::from(snapshot.max_batch()),
+            },
+            context: ConsumerContext {
+                budget_tokens: u64::from(snapshot.budget(BUDGET_TOKENS)),
+                titles_budget_tokens: u64::from(snapshot.budget(TITLES_BUDGET_TOKENS)),
+                default_format: snapshot.default_format(),
+                text_max_chars: snapshot.text_max_chars(None) as u64,
+            },
+            channels,
+        })
+    }
+}
+
 impl<S: Store> Core<S> {
     pub async fn get_channel_settings(
         &self,

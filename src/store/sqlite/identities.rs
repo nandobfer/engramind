@@ -535,6 +535,31 @@ fn apply_webhook(
     Ok(())
 }
 
+pub(super) fn update_app_webhook(
+    transaction: &Transaction,
+    id: &str,
+    patch: &AppPatch,
+    context: &WriteContext,
+) -> Result<App, StoreError> {
+    let before = load_app(transaction, id)?;
+    apply_webhook(transaction, id, patch, &context.at)?;
+    let after = load_app(transaction, id)?;
+    journal::audit(
+        transaction,
+        context,
+        Entry {
+            action: "app.webhook_updated",
+            entity: "app",
+            entity_id: Some(id),
+            before: Some(to_value(&before)?),
+            after: Some(to_value(&after)?),
+        },
+    )?;
+    journal::emit(transaction, context, &[])?;
+    journal::remember(transaction, context, &after)?;
+    Ok(after)
+}
+
 /// Apps, agentes e tokens `admin` não revogados, para calcular destinatários.
 pub(super) fn webhook_directory(connection: &Connection) -> rusqlite::Result<WebhookDirectory> {
     let mut statement = connection.prepare(

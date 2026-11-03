@@ -45,6 +45,8 @@ fn channel(id: &str, slug: &str, priority: i64) -> ChannelInput {
         priority,
         full_cap: None,
         titles_cap: None,
+        category_priorities: std::collections::BTreeMap::new(),
+        text_max_chars: 0,
     }
 }
 
@@ -134,6 +136,8 @@ fn section_8(format: ContextFormat) -> RenderInput {
         full_budget,
         titles_budget,
         overflow_line: true,
+        focus: None,
+        focus_mode: None,
     }
 }
 

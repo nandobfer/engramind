@@ -9,8 +9,8 @@ use crate::{
     core::{
         identities::{
             AgentList, AppList, CreateAgentBody, CreateAppBody, IssueTokenBody, IssuedToken,
-            ListAgentsQuery, ListQuery, ListTokensQuery, TokenList, UpdateAppBody, UpdateBody,
-            UpdateTokenBody, WhoAmI,
+            ListAgentsQuery, ListQuery, ListTokensQuery, TokenList, UpdateAppBody,
+            UpdateAppWebhookBody, UpdateBody, UpdateTokenBody, WhoAmI,
         },
         model::{Agent, AgentWrite, App, Token},
     },
@@ -166,6 +166,46 @@ pub async fn update_app(
     let result = state
         .core
         .update_app(&principal, &app, body, key.as_deref())
+        .await?;
+    Ok(mutation(StatusCode::OK, result))
+}
+
+#[utoipa::path(
+    put,
+    path = "/v1/apps/{app}/webhook",
+    operation_id = "update_app_webhook",
+    tag = "Identities",
+    summary = "Grava ou remove o webhook de um app",
+    description = "Só a URL e o segredo do webhook, com as regras de `update_app`: `url` http/https sem credenciais, `secret` de 32 a 256 caracteres (só gravado e cifrado, nunca devolvido); `url` exige um segredo (o enviado ou o já gravado); `url: null` remove a URL e o segredo. Não muda nome, descrição nem `disabled`. Auditoria `app.webhook_updated` (sem o segredo) e evento `identities.updated` para o app e os admins. Aceita `Idempotency-Key`. Exige token admin com `write` (qualquer app) ou token app com `write` (só o próprio app, `403 FOREIGN_APP` em outro).",
+    params(
+        ("app" = String, Path, description = "Id (`app_…`) ou slug do app"),
+        ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")
+    ),
+    request_body = UpdateAppWebhookBody,
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "App com o webhook (sem o segredo)", body = App),
+        (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
+        (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
+        (status = 404, description = "`APP_NOT_FOUND`", body = ErrorResponse),
+        (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
+        (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
+        (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
+        (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
+        (status = 504, description = "`REQUEST_TIMEOUT`", body = ErrorResponse)
+    )
+)]
+pub async fn update_app_webhook(
+    State(state): State<AppState>,
+    Auth(principal): Auth,
+    key: IdempotencyKey,
+    ApiPath(app): ApiPath<String>,
+    ApiJson(body): ApiJson<UpdateAppWebhookBody>,
+) -> Result<Response, ApiError> {
+    let result = state
+        .core
+        .update_app_webhook(&principal, &app, body, key.as_deref())
         .await?;
     Ok(mutation(StatusCode::OK, result))
 }

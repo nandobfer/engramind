@@ -94,6 +94,10 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         ("/v1/tokens/{token}/revoke", post(identities::revoke_token)),
         ("/v1/tokens/{token}/rotate", post(identities::rotate_token)),
         (
+            "/v1/apps/{app}/webhook",
+            put(identities::update_app_webhook),
+        ),
+        (
             "/v1/channels",
             get(channels::list_channels).post(channels::create_channel),
         ),
@@ -164,6 +168,10 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         (
             "/v1/settings",
             get(settings::get_settings).put(settings::update_settings),
+        ),
+        (
+            "/v1/consumer-settings",
+            get(settings::get_consumer_settings),
         ),
         (
             "/v1/categories",

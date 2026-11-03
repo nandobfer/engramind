@@ -122,6 +122,9 @@ pub enum Command {
         /// `tagged`, `markdown` ou `json` (padrão `context.default_format`).
         #[arg(long)]
         format: Option<String>,
+        /// Texto da tarefa ou da conversa: as memórias relevantes vêm antes (até 2000).
+        #[arg(long)]
+        focus: Option<String>,
         /// `version` já em uso: sem mudança, nada é impresso (`--json`: `not_modified: true`)
         /// e a saída é 0.
         #[arg(long)]
@@ -251,6 +254,24 @@ pub enum AppsCommand {
     /// Exclui um app com seus agentes e tokens.
     Delete {
         app: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Grava ou remove o webhook de um app (admin: qualquer app; token app: o próprio).
+    Webhook {
+        app: String,
+        /// Destino dos eventos (http/https); exige um segredo (o lido ou o já gravado).
+        #[arg(long, required_unless_present = "remove")]
+        webhook_url: Option<String>,
+        /// Lê o segredo (32 a 256 caracteres) da entrada padrão.
+        #[arg(long, requires = "webhook_url")]
+        webhook_secret_stdin: bool,
+        /// Remove a URL e o segredo.
+        #[arg(long, conflicts_with_all = ["webhook_url", "webhook_secret_stdin"])]
+        remove: bool,
+        /// Segredo lido da entrada padrão.
+        #[arg(skip)]
+        webhook_secret: Option<String>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -777,6 +798,8 @@ pub enum CategoriesCommand {
 pub enum SettingsCommand {
     /// Lê as configurações (todas ou uma chave).
     Get { key: Option<String> },
+    /// Limites de escrita e orçamento do contexto para o consumidor (qualquer token com read).
+    Consumer,
     /// Altera uma configuração; o valor é lido como JSON (`600`, `true`, `null` volta ao padrão).
     Set {
         key: String,

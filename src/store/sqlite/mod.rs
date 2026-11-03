@@ -313,6 +313,18 @@ impl Store for SqliteStore {
             .await
     }
 
+    async fn update_app_webhook(
+        &self,
+        id: String,
+        patch: AppPatch,
+        context: WriteContext,
+    ) -> Result<App, StoreError> {
+        self.mutate(move |transaction| {
+            identities::update_app_webhook(transaction, &id, &patch, &context)
+        })
+        .await
+    }
+
     async fn delete_app(&self, id: String, context: WriteContext) -> Result<App, StoreError> {
         self.mutate(move |transaction| identities::delete_app(transaction, &id, &context))
             .await

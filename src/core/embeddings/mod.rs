@@ -637,8 +637,19 @@ impl<S: Store> Core<S> {
         text: &str,
         operation: &'static str,
     ) -> Option<(EmbeddingRuntime, Vec<f32>)> {
+        self.query_vector_within(text, operation, QUERY_TIMEOUT)
+            .await
+    }
+
+    /// Como `query_vector`, com o prazo dado (o `focus` de `get_context` usa o seu).
+    pub(crate) async fn query_vector_within(
+        &self,
+        text: &str,
+        operation: &'static str,
+        limit: Duration,
+    ) -> Option<(EmbeddingRuntime, Vec<f32>)> {
         let runtime = self.current_runtime().await?;
-        let timeout = QUERY_TIMEOUT.min(runtime.timeout);
+        let timeout = limit.min(runtime.timeout);
         match runtime
             .embed(&[text.to_owned()], EmbedKind::Query, timeout)
             .await

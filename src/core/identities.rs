@@ -98,6 +98,18 @@ pub struct UpdateAppBody {
     pub webhook_secret: Option<Option<String>>,
 }
 
+/// Webhook do app (0.11.0): `url: null` remove a URL e o segredo; URL exige segredo (o
+/// enviado ou o já gravado).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateAppWebhookBody {
+    /// Destino dos eventos (`http://` ou `https://`, sem credenciais); `null` remove.
+    #[schema(example = "https://consumidor.interno/engramind/events")]
+    pub url: Option<String>,
+    /// Segredo do HMAC (32 a 256 caracteres); só gravado e cifrado, nunca devolvido.
+    pub secret: Option<String>,
+}
+
 /// Campos omitidos não mudam; `description: null` limpa; `disabled` desativa ou reativa.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -1011,6 +1023,74 @@ impl<S: Store> Core<S> {
                     .revoke_token(id, context)
                     .await
                     .map_err(|error| store_error(error, token_not_found))
+            },
+        )
+        .await
+        .inspect(|_| self.network_changed())
+    }
+
+    /// O webhook do app: admin em qualquer app, token de app só no próprio (decisão 0028).
+    pub async fn update_app_webhook(
+        &self,
+        principal: &Principal,
+        app: &str,
+        body: UpdateAppWebhookBody,
+        key: Option<&str>,
+    ) -> Result<Mutation<App>, ApiError> {
+        let operation = self.authorize(principal, "update_app_webhook")?;
+        let url = body.url.as_deref().map(webhook_url).transpose()?;
+        let secret = body.secret.as_deref().map(webhook_secret).transpose()?;
+        if url.is_none() && secret.is_some() {
+            return Err(
+                ApiError::validation("secret exige url; url: null remove os dois")
+                    .with_details(json!({ "field": "secret" })),
+            );
+        }
+        // O segredo nunca entra na entrada da idempotência: só se veio ou não.
+        let input = json!({ "app": app, "url": url, "secret": secret.is_some() });
+        let core = self.clone();
+        let app = app.to_owned();
+        let principal_owned = principal.clone();
+        self.mutate(
+            principal,
+            operation,
+            key,
+            &input,
+            200,
+            |mut context| async move {
+                let found = core.find_app(&app).await?;
+                ensure_own_app(&principal_owned, &found.reference())?;
+                let configured = match &secret {
+                    Some(_) => true,
+                    None => core
+                        .store()
+                        .webhook_target(found.id.clone())
+                        .await?
+                        .is_some_and(|target| target.secret_enc.is_some()),
+                };
+                if url.is_some() && !configured {
+                    return Err(ApiError::validation("url exige secret (nenhum gravado)")
+                        .with_details(json!({ "field": "secret" })));
+                }
+                let patch = AppPatch {
+                    webhook_secret: match (&url, secret) {
+                        (None, _) => Some(None),
+                        (Some(_), Some(secret)) => Some(Some(
+                            core.vault()
+                                .seal(&webhook_secret_name(&found.slug), &secret),
+                        )),
+                        (Some(_), None) => None,
+                    },
+                    webhook_url: Some(url.clone()),
+                    ..AppPatch::default()
+                };
+                context.events = core
+                    .identities_event(&found.id, &found.slug, url.is_some())
+                    .await?;
+                core.store()
+                    .update_app_webhook(found.id, patch, context)
+                    .await
+                    .map_err(|error| store_error(error, app_not_found))
             },
         )
         .await

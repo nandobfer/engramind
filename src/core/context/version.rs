@@ -1,4 +1,5 @@
-//! `version` do contexto (005 D-001, Q-008): `cv_` + 12 hex do SHA-256 sobre o formato, os
+//! `version` do contexto (005 D-001, Q-008; domínio `v2` desde a 0.11.0, que mudou a linha de
+//! título): `cv_` + 12 hex do SHA-256 sobre o formato, os
 //! canais alcançados `(id, version, modo, prioridade)` e as configurações que mudam o bloco. O
 //! digest completo é a chave do cache (Q-009).
 
@@ -26,7 +27,7 @@ pub fn fingerprint(
     let mut channels: Vec<&ReachedChannel<'_>> = channels.iter().collect();
     channels.sort_by(|a, b| a.id.cmp(b.id));
     let mut hasher = Sha256::new();
-    hasher.update(b"engramind.context.v1\n");
+    hasher.update(b"engramind.context.v2\n");
     hasher.update(format.as_str().as_bytes());
     hasher.update(b"\n");
     for channel in channels {

@@ -1,6 +1,8 @@
 //! Ordem determinística do contexto (desenho §8, FR-002): prioridade da assinatura ou do canal
-//! (maior primeiro), `permanent` primeiro, prioridade da categoria, `importance` (só quando
-//! classificada; as não classificadas depois), `created_at` e `id`.
+//! (maior primeiro); com `focus` (0.11.0), as relevantes antes, pela posição de relevância;
+//! `permanent` primeiro, prioridade da categoria (a do canal, com
+//! `context.category_priorities`), `importance` (só quando classificada; as não classificadas
+//! depois), `created_at` e `id`.
 
 use std::cmp::{Ordering, Reverse};
 
@@ -13,6 +15,8 @@ pub struct Entry<'a> {
     pub slug: &'a str,
     pub channel_priority: i64,
     pub category_priority: i64,
+    /// Posição de relevância ao `focus` (0 = a mais relevante); `None` sem foco ou irrelevante.
+    pub focus_rank: Option<usize>,
 }
 
 fn importance(entry: &Entry<'_>) -> (bool, f64) {
@@ -24,8 +28,10 @@ fn importance(entry: &Entry<'_>) -> (bool, f64) {
 
 pub fn compare(a: &Entry<'_>, b: &Entry<'_>) -> Ordering {
     let permanent = |entry: &Entry<'_>| entry.memory.status != MemoryStatus::Permanent;
+    let focus = |entry: &Entry<'_>| (entry.focus_rank.is_none(), entry.focus_rank);
     Reverse(a.channel_priority)
         .cmp(&Reverse(b.channel_priority))
+        .then_with(|| focus(a).cmp(&focus(b)))
         .then_with(|| permanent(a).cmp(&permanent(b)))
         .then_with(|| Reverse(a.category_priority).cmp(&Reverse(b.category_priority)))
         .then_with(|| {
@@ -66,6 +72,7 @@ mod tests {
             slug: "eng/global",
             channel_priority: 0,
             category_priority: 0,
+            focus_rank: None,
         }
     }
 
@@ -157,5 +164,31 @@ mod tests {
         let mut entries = vec![entry(&a), entry(&b), entry(&c)];
         sort(&mut entries);
         assert_eq!(ids(&entries), ["m_b", "m_c", "m_a"]);
+    }
+
+    #[test]
+    fn focus_ranks_come_after_the_channel_and_before_everything_else() {
+        let permanent = ContextMemory {
+            status: MemoryStatus::Permanent,
+            ..memory("m_p")
+        };
+        let (a, b, c) = (memory("m_a"), memory("m_b"), memory("m_c"));
+        let mut entries = vec![
+            entry(&permanent),
+            Entry {
+                focus_rank: Some(1),
+                ..entry(&a)
+            },
+            Entry {
+                focus_rank: Some(0),
+                ..entry(&b)
+            },
+            Entry {
+                channel_priority: 9,
+                ..entry(&c)
+            },
+        ];
+        sort(&mut entries);
+        assert_eq!(ids(&entries), ["m_c", "m_b", "m_a", "m_p"]);
     }
 }

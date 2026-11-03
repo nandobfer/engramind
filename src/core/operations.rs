@@ -240,6 +240,17 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/apps/{app}",
         &["apps", "update"],
     ),
+    app_mutation(
+        "update_app_webhook",
+        TAG_IDENTITIES,
+        "Grava ou remove o webhook de um app",
+        Scope::Write,
+        false,
+        true,
+        "PUT",
+        "/v1/apps/{app}/webhook",
+        &["apps", "webhook"],
+    ),
     mutation(
         "delete_app",
         TAG_IDENTITIES,
@@ -646,6 +657,14 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "POST",
         "/v1/memories/import",
         &["memories", "import"],
+    ),
+    read(
+        "get_consumer_settings",
+        TAG_SETTINGS,
+        "Limites de escrita e orçamento do contexto para o app consumidor",
+        RequiredKind::Any,
+        "/v1/consumer-settings",
+        &["settings", "consumer"],
     ),
     read(
         "list_categories",
