@@ -792,3 +792,243 @@ async fn cli_prints_the_raw_block_and_honors_if_none_match() {
     assert_eq!(parsed["results"].as_array().expect("results").len(), 1);
     assert_eq!(parsed["context_version"], version);
 }
+
+async fn focused(
+    context: &TestContext,
+    token: &str,
+    focus: &str,
+    etag: Option<&str>,
+) -> (StatusCode, Value, String, String) {
+    let uri = format!("/v1/context?focus={}", focus.replace(' ', "%20"));
+    let headers: Vec<(&str, &str)> = etag
+        .map(|etag| vec![("If-None-Match", etag)])
+        .unwrap_or_default();
+    let (status, response_headers, body) = context
+        .call_with("GET", &uri, Some(token), None, &headers)
+        .await;
+    let mode = response_headers
+        .get("engramind-focus-mode")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let version = body["version"].as_str().unwrap_or_default().to_owned();
+    (status, body, mode, version)
+}
+
+#[tokio::test]
+async fn focus_brings_relevant_memories_first_and_has_its_own_version() {
+    let embedder = std::sync::Arc::new(engramind::providers::embeddings::HashEmbedder::new());
+    let net = network().await;
+    let context = &net.context;
+    context.core.set_local_embedder(embedder.clone());
+    for text in [
+        "Nomes de comandos da CLI usam kebab-case.",
+        "Deploy na main faz SCP da imagem para o servidor.",
+    ] {
+        context.create_memory(ADMIN_TOKEN, "eng/global", text).await;
+    }
+    context.core.run_embed_jobs(chrono::Utc::now()).await;
+    let (_, plain, _) = get(context, &net.agent, "/v1/context").await;
+    let plain_text = content(&plain).to_owned();
+    assert!(plain_text.find("#m_").is_some());
+    let position = |block: &str, needle: &str| block.find(needle).expect(needle);
+    assert!(position(&plain_text, "Nunca rodar") < position(&plain_text, "Deploy na main"));
+
+    // Foco em branco = sem foco: mesmos bytes e mesma `version`.
+    let (_, blank, mode, _) = focused(context, &net.agent, "   ", None).await;
+    assert_eq!(blank, plain);
+    assert_eq!(mode, "");
+
+    let (status, deploy, mode, deploy_version) =
+        focused(context, &net.agent, "deploy scp servidor", None).await;
+    assert_eq!(status, StatusCode::OK, "{deploy}");
+    assert_eq!(
+        (mode.as_str(), deploy["focus_mode"].as_str()),
+        ("hybrid", Some("hybrid"))
+    );
+    assert_ne!(deploy_version, plain["version"].as_str().expect("version"));
+    let block = content(&deploy);
+    assert!(
+        position(block, "Deploy na main") < position(block, "Nunca rodar"),
+        "{block}"
+    );
+    assert_eq!(deploy["counts"], plain["counts"], "as faixas não mudam");
+    // O foco não aparece no bloco nem no `usage_log`.
+    assert!(!block.contains("deploy scp servidor"));
+    assert_eq!(context.count("SELECT COUNT(*) FROM usage_log WHERE memory_ids LIKE '%deploy%' OR channel_ids LIKE '%deploy%'"), 0);
+
+    // `304` só com o mesmo foco; outro foco nunca recebe o bloco do primeiro.
+    let (status, _, _, _) = focused(
+        context,
+        &net.agent,
+        "deploy scp servidor",
+        Some(&deploy_version),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    let (status, other, _, other_version) = focused(
+        context,
+        &net.agent,
+        "kebab-case comandos",
+        Some(&deploy_version),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(other_version, deploy_version);
+    assert!(
+        position(content(&other), "Nomes de comandos") < position(content(&other), "Nunca rodar")
+    );
+    let (status, _, _) = context
+        .call_with(
+            "GET",
+            "/v1/context",
+            Some(&net.agent),
+            None,
+            &[("If-None-Match", deploy_version.as_str())],
+        )
+        .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "sem foco não casa com a versão do foco"
+    );
+
+    // Embedding fora do ar: só o FTS, outra `version`, nunca `304` nem erro.
+    embedder.fail(Some(engramind::providers::embeddings::EmbedError::Timeout));
+    // O cliente com a versão híbrida continua com ela (`304` sem tocar o banco); sem
+    // `If-None-Match`, o bloco sai só com o FTS e outra `version`, que nunca dá `304`.
+    let (status, _, _, _) = focused(
+        context,
+        &net.agent,
+        "deploy scp servidor",
+        Some(&deploy_version),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    let (status, degraded, mode, degraded_version) =
+        focused(context, &net.agent, "deploy scp servidor", None).await;
+    assert_eq!((status, mode.as_str()), (StatusCode::OK, "text"));
+    assert_ne!(degraded_version, deploy_version);
+    assert!(
+        position(content(&degraded), "Deploy na main")
+            < position(content(&degraded), "Nunca rodar")
+    );
+    let (status, _, _, _) = focused(
+        context,
+        &net.agent,
+        "deploy scp servidor",
+        Some(&degraded_version),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "bloco degradado não responde 304");
+    embedder.fail(None);
+
+    // Limite do foco.
+    let (status, error, _, _) = focused(context, &net.agent, &"a".repeat(2001), None).await;
+    assert_eq!(
+        (status, error["error"]["code"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("FOCUS_TOO_LONG"))
+    );
+}
+
+#[tokio::test]
+async fn channel_category_priorities_and_the_text_preview_change_the_block_and_the_version() {
+    let net = network().await;
+    let context = &net.context;
+    context
+        .create_memory(
+            ADMIN_TOKEN,
+            "eng/global",
+            "Nunca usar abreviações nos nomes das tabelas do banco.",
+        )
+        .await;
+    let (status, naming) = context
+        .call("POST", "/v1/memories", Some(ADMIN_TOKEN), Some(json!({ "channel": "eng/global", "text": "Comandos da CLI em kebab-case.", "category": "NAMING" })))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{naming}");
+    let (_, before, _) = get(context, &net.agent, "/v1/context").await;
+    let global = |body: &Value| {
+        let block = content(body);
+        block[block.find("<channel slug=\"eng/global\">").expect("global")..].to_owned()
+    };
+    let block = global(&before);
+    assert!(
+        block.find("<PROJECT_RULES>").expect("rules") < block.find("<NAMING>").expect("naming")
+    );
+
+    let set = |body: Value| {
+        let context = &net.context;
+        async move {
+            context
+                .call(
+                    "PUT",
+                    "/v1/channels/eng%2Fglobal/settings",
+                    Some(ADMIN_TOKEN),
+                    Some(body),
+                )
+                .await
+        }
+    };
+    let (status, _) = set(json!({ "context.category_priorities": { "NAMING": 60 } })).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, after, _) = get(context, &net.agent, "/v1/context").await;
+    assert_ne!(after["version"], before["version"]);
+    let block = global(&after);
+    assert!(
+        block.find("<NAMING>").expect("naming") < block.find("<PROJECT_RULES>").expect("rules"),
+        "{block}"
+    );
+    for invalid in [
+        json!({ "nope": 1 }),
+        json!({ "INEXISTENTE": 1 }),
+        json!({ "NAMING": 2000 }),
+        json!([1]),
+    ] {
+        let (status, error) = set(json!({ "context.category_priorities": invalid })).await;
+        assert_eq!(
+            (status, error["error"]["code"].as_str()),
+            (StatusCode::BAD_REQUEST, Some("SETTING_INVALID")),
+            "{invalid}"
+        );
+    }
+    // A categoria citada na sobreposição não sai de `categories.list`.
+    let (status, error) = context
+        .call("PUT", "/v1/settings", Some(ADMIN_TOKEN), Some(json!({ "categories.list": [{ "key": "PROJECT_RULES", "label": "Regras", "priority": 50 }, { "key": "CONSTRAINTS", "label": "R", "priority": 30 }] })))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{error}");
+    // Sem a sobreposição, o bloco e a `version` voltam.
+    let (status, _) = set(json!({ "context.category_priorities": null })).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, restored, _) = get(context, &net.agent, "/v1/context").await;
+    let body = |value: &Value| content(value).split_once('\n').expect("body").1.to_owned();
+    assert_eq!(
+        body(&restored),
+        body(&before),
+        "o bloco volta (a version acompanha o canal)"
+    );
+
+    // Prévia: a faixa 1 corta em 20 caracteres com `…`; a busca devolve o texto inteiro.
+    let (status, _) = set(json!({ "context.text_max_chars": 20 })).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, preview, _) = get(context, &net.agent, "/v1/context").await;
+    assert_ne!(preview["version"], restored["version"]);
+    assert!(
+        content(&preview).contains(": Nunca rodar a suite …\n"),
+        "{}",
+        content(&preview)
+    );
+    let (_, found) = context
+        .call(
+            "POST",
+            "/v1/memories/search",
+            Some(&net.agent),
+            Some(json!({ "query": "suite completa" })),
+        )
+        .await;
+    assert_eq!(
+        found["results"][0]["memory"]["text"],
+        "Nunca rodar a suite completa de testes localmente."
+    );
+    let (status, error) = set(json!({ "context.text_max_chars": 4001 })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{error}");
+}

@@ -1008,3 +1008,104 @@ async fn a_remote_rejection_returns_the_provider_reason() {
         "recusado pelo provedor (HTTP 400: model `x` is not an embedding model (invalid_request_error))"
     );
 }
+
+#[tokio::test]
+async fn get_memory_computes_vector_similar_at_read_time() {
+    let context = TestContext::new().await;
+    // Paráfrases com o mesmo conceito ficam com o mesmo vetor.
+    context.core.set_local_embedder(Arc::new(
+        HashEmbedder::new()
+            .concept(&["dragao", "serpe"])
+            .concept(&["gelo", "frio"])
+            .concept(&["teme", "receia"]),
+    ));
+    let token = setup(&context).await;
+    let a = memory(&context, &token, "eng/global", "O dragao teme o gelo").await;
+    let b = memory(&context, &token, "eng/global", "O serpe receia o frio").await;
+    let far = memory(&context, &token, "eng/global", "Deploy na main faz SCP").await;
+    let other = memory(&context, &token, "eng/busca", "O dragao teme o gelo eterno").await;
+    run(&context).await;
+    let (status, detail) = context
+        .call("GET", &format!("/v1/memories/{a}"), Some(&token), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    let similar = detail["similar"].as_array().expect("similar");
+    assert_eq!(similar.len(), 1, "{detail}");
+    assert_eq!(similar[0]["id"], json!(b));
+    assert_eq!(similar[0]["method"], "vector");
+    assert_eq!(similar[0]["duplicate"], true);
+    assert!(
+        similar
+            .iter()
+            .all(|item| item["id"] != json!(far) && item["id"] != json!(other))
+    );
+    // Arquivada não aparece.
+    let (status, _) = context
+        .call(
+            "POST",
+            &format!("/v1/memories/{b}/archive"),
+            Some(&token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, detail) = context
+        .call("GET", &format!("/v1/memories/{a}"), Some(&token), None)
+        .await;
+    assert_eq!(detail["similar"], json!([]));
+    // Sem vetor (memória nova ainda sem embedding): o similar textual.
+    let fresh = memory(&context, &token, "eng/global", "O dragao teme o gelo azul").await;
+    let (_, detail) = context
+        .call("GET", &format!("/v1/memories/{fresh}"), Some(&token), None)
+        .await;
+    assert!(
+        detail["similar"]
+            .as_array()
+            .expect("similar")
+            .iter()
+            .all(|item| item["method"] == "text")
+    );
+}
+
+#[tokio::test]
+async fn hints_fall_back_to_text_similarity_without_embeddings() {
+    let context = TestContext::new().await;
+    let token = setup(&context).await;
+    let (status, _) = context
+        .call(
+            "PUT",
+            "/v1/settings",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "embedding.provider": "off", "memory.similar_threshold": 0.5 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let id = memory(
+        &context,
+        &token,
+        "eng/busca",
+        "rodar testes afetados com nextest",
+    )
+    .await;
+    let (status, result) = context
+        .call(
+            "POST",
+            "/v1/hints",
+            Some(&token),
+            Some(json!({ "text": "rodar testes afetados com nextest agora" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["hints"][0]["id"], json!(id));
+    assert_eq!(result["hints"][0]["method"], "text");
+    assert_eq!(result["hints"][0]["duplicate"], false);
+    let (_, unrelated) = context
+        .call(
+            "POST",
+            "/v1/hints",
+            Some(&token),
+            Some(json!({ "text": "deploy de imagem" })),
+        )
+        .await;
+    assert_eq!(unrelated["hints"], json!([]));
+}
