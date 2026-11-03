@@ -878,6 +878,41 @@ pub(super) fn revoke_token(
     Ok(after)
 }
 
+pub(super) fn rotate_token(
+    transaction: &Transaction,
+    old_id: &str,
+    new: &NewToken,
+    context: &WriteContext,
+) -> Result<Token, StoreError> {
+    let before = load_token(transaction, old_id)?;
+    let token = insert_token(transaction, new, &context.at)?;
+    let changed = transaction
+        .execute(
+            "UPDATE tokens SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL",
+            params![context.at, old_id],
+        )
+        .map_err(sql_error)?;
+    if changed == 0 {
+        return Err(StoreError::NotFound);
+    }
+    let revoked = load_token(transaction, old_id)?;
+    journal::audit(
+        transaction,
+        context,
+        Entry {
+            action: "token.rotate",
+            entity: "token",
+            entity_id: Some(old_id),
+            before: Some(to_value(&before)?),
+            after: Some(
+                serde_json::json!({ "revoked": to_value(&revoked)?, "issued": to_value(&token)? }),
+            ),
+        },
+    )?;
+    journal::remember(transaction, context, &token)?;
+    Ok(token)
+}
+
 pub(super) fn bootstrap(
     transaction: &Transaction,
     app: &NewApp,

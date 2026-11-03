@@ -1,6 +1,7 @@
 //! Adaptador REST (`/v1`): handlers finos que traduzem HTTP para o `core` e de volta.
 
 pub mod audit;
+pub mod categories;
 pub mod channels;
 pub mod consolidation;
 pub mod context;

@@ -18,12 +18,12 @@ use super::{
     model::{
         AgentLookup, Lookup, Memory, MemoryContent, MemoryFilter, MemoryPatch, MemoryRevision,
         MemoryStatus, MemoryTarget, MemoryTitle, MemoryWrite, NewJob, NewMemory, Origin,
-        SimilarMemory, StatusAction, TextQuery,
+        SimilarMemory, SimilarMethod, StatusAction, TextQuery, TitleChange, VectorQuery,
     },
     pagination::PageRequest,
     principal::{Principal, Scope},
     selection::Selection,
-    settings::SettingsSnapshot,
+    settings::{self, SettingsSnapshot},
     store_error,
 };
 use crate::{
@@ -33,6 +33,11 @@ use crate::{
 
 const MAX_ORIGIN_SOURCE: usize = 64;
 const MAX_ORIGIN_LABEL: usize = 200;
+const MIN_TITLE: usize = 3;
+const MAX_TITLE: usize = 200;
+const MAX_TAGS: usize = 20;
+const MAX_TAG: usize = 40;
+const MAX_KEY: usize = 80;
 /// Candidatos do FTS avaliados para `similar` (Q-003).
 const SIMILAR_CANDIDATES: u32 = 10;
 const SIMILAR_MAX: usize = 3;
@@ -68,6 +73,10 @@ pub struct ListMemoriesQuery {
     pub since: Option<String>,
     /// `true`: só as candidatas por desuso (`stale_candidate`); `false`: só as demais.
     pub stale: Option<bool>,
+    /// Só as que têm esta tag; repita o parâmetro (`tag=a&tag=b`) para exigir todas (E lógico).
+    pub tag: Option<Vec<String>>,
+    /// Só a memória com esta chave (`key`).
+    pub key: Option<String>,
     pub fields: Option<Fields>,
     /// Cursor opaco devolvido em `next_cursor`.
     pub cursor: Option<String>,
@@ -103,15 +112,40 @@ pub struct CreateMemoryBody {
     pub origin: Option<Origin>,
     /// `active` (padrão) ou `permanent`.
     pub status: Option<MemoryStatus>,
+    /// Título do cliente (3 a 200 caracteres): fica travado e o Redator não o troca. Omitido,
+    /// o título é provisório até o Redator.
+    #[schema(example = "A Fraqueza do Dragão")]
+    pub title: Option<String>,
+    /// Até 20 tags de 1 a 40 caracteres (espaços nas pontas e repetidas saem); fora do
+    /// `content_hash`, sem Redator nem embedding.
+    #[schema(example = json!(["missao", "ativa"]))]
+    pub tags: Option<Vec<String>>,
+    /// Chave natural, única no canal e imutável: 1 a 80 de `A-Z a-z 0-9 : _ -`.
+    #[schema(example = "quest:dragao")]
+    pub key: Option<String>,
+    /// Com `key` existente no canal: atualiza texto, categoria, título, tags e origem e devolve
+    /// `created: false` (sem revisão se nada mudou). Sem `upsert`, `409 MEMORY_KEY_EXISTS`.
+    /// Exige `key`.
+    pub upsert: Option<bool>,
 }
 
-/// Campos omitidos não mudam; informe ao menos `text` ou `category`.
+/// Campos omitidos não mudam; informe ao menos `text`, `category`, `title`, `title_locked` ou
+/// `tags`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateMemoryBody {
     pub text: Option<String>,
     #[schema(example = "ARCHITECTURE")]
     pub category: Option<String>,
+    /// Título do cliente (3 a 200): grava e trava. Junto com `title_locked: false` → `400`.
+    #[schema(example = "A Fraqueza do Dragão")]
+    pub title: Option<String>,
+    /// `true` trava o título atual; `false` destrava e o Redator gera um título.
+    pub title_locked: Option<bool>,
+    /// Substitui as tags (`[]` limpa); omitido, mantém.
+    pub tags: Option<Vec<String>>,
+    /// Origem desta edição (vira `last_origin`); omitida, `last_origin` não muda.
+    pub origin: Option<Origin>,
     /// Versão lida; divergente → `409 MEMORY_VERSION_CONFLICT` com `details.current_version`.
     #[schema(example = 1)]
     pub expected_version: Option<i64>,
@@ -150,6 +184,16 @@ impl MemoryItem {
             Fields::Title => Self::Title(memory.title_view()),
         }
     }
+}
+
+/// `get_memory`: a memória e as parecidas no mesmo canal, calculadas na leitura (0.11.0):
+/// por cosseno com o vetor do modelo vigente, ou pelo textual sem vetor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct MemoryDetail {
+    #[serde(flatten)]
+    pub memory: Memory,
+    /// Até três memórias `active`/`permanent` do mesmo canal, da mais parecida à menos.
+    pub similar: Vec<SimilarMemory>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
@@ -232,6 +276,67 @@ pub(crate) fn origin(value: Option<&Origin>) -> Result<Option<Origin>, ApiError>
             })
         })
         .transpose()
+}
+
+/// Título do cliente: 3 a 200 caracteres, sem controles (quebras incluídas).
+pub(crate) fn client_title(value: &str) -> Result<String, ApiError> {
+    let value = value.trim();
+    let length = value.chars().count();
+    if !(MIN_TITLE..=MAX_TITLE).contains(&length) || value.chars().any(char::is_control) {
+        return Err(ApiError::validation(format!(
+            "title deve ter de {MIN_TITLE} a {MAX_TITLE} caracteres, sem quebras de linha"
+        ))
+        .with_details(json!({ "field": "title", "min": MIN_TITLE, "max": MAX_TITLE })));
+    }
+    Ok(value.to_owned())
+}
+
+/// Tags: até 20, de 1 a 40 depois do trim, sem controles; repetidas saem (a ordem fica).
+pub(crate) fn tags(values: &[String]) -> Result<Vec<String>, ApiError> {
+    let mut tags: Vec<String> = Vec::with_capacity(values.len());
+    for value in values {
+        let tag = value.trim();
+        let length = tag.chars().count();
+        if !(1..=MAX_TAG).contains(&length) || tag.chars().any(char::is_control) {
+            return Err(ApiError::validation(format!(
+                "cada tag deve ter de 1 a {MAX_TAG} caracteres, sem controles"
+            ))
+            .with_details(json!({ "field": "tags", "max_length": MAX_TAG })));
+        }
+        if !tags.iter().any(|existing| existing == tag) {
+            tags.push(tag.to_owned());
+        }
+    }
+    if tags.len() > MAX_TAGS {
+        return Err(ApiError::validation(format!("ate {MAX_TAGS} tags"))
+            .with_details(json!({ "field": "tags", "max": MAX_TAGS })));
+    }
+    Ok(tags)
+}
+
+/// Chave natural: 1 a 80 de `A-Z a-z 0-9 : _ -`.
+pub(crate) fn memory_key(value: &str) -> Result<String, ApiError> {
+    let valid = (1..=MAX_KEY).contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'_' | b'-'));
+    if valid {
+        Ok(value.to_owned())
+    } else {
+        Err(ApiError::validation(format!(
+            "key deve ter de 1 a {MAX_KEY} caracteres de A-Z, a-z, 0-9, :, _ e -"
+        ))
+        .with_details(json!({ "field": "key" })))
+    }
+}
+
+/// `409 MEMORY_KEY_EXISTS` com o id da memória que já tem a chave.
+fn key_exists(existing: &str) -> ApiError {
+    ApiError::new(
+        "MEMORY_KEY_EXISTS",
+        "Ja existe uma memoria com essa key no canal; use upsert para atualiza-la",
+    )
+    .with_details(json!({ "existing_id": existing }))
 }
 
 pub(crate) fn initial_status(value: Option<MemoryStatus>) -> Result<MemoryStatus, ApiError> {
@@ -354,6 +459,7 @@ impl<S: Store> Core<S> {
                 terms: query_terms(text),
                 channel_ids: vec![channel_id.to_owned()],
                 categories: Vec::new(),
+                tags: Vec::new(),
                 statuses: vec![MemoryStatus::Active, MemoryStatus::Permanent],
                 exclude_ids: exclude.map(str::to_owned).into_iter().collect(),
                 limit: SIMILAR_CANDIDATES,
@@ -370,6 +476,8 @@ impl<S: Store> Core<S> {
                 title: memory.title,
                 channel: memory.channel,
                 score: (score * 1000.0).round() / 1000.0,
+                method: SimilarMethod::Text,
+                duplicate: false,
             })
             .collect();
         similar.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.id.cmp(&b.id)));
@@ -469,6 +577,14 @@ impl<S: Store> Core<S> {
             author_agent_id,
             since,
             stale: query.stale,
+            tags: tags(query.tag.as_deref().unwrap_or_default())?,
+            key: query
+                .key
+                .as_deref()
+                .map(str::trim)
+                .filter(|key| !key.is_empty())
+                .map(memory_key)
+                .transpose()?,
         };
         let page = self.store().list_memories(filter, page).await?;
         let fields = query.fields.unwrap_or_default();
@@ -487,10 +603,74 @@ impl<S: Store> Core<S> {
         principal: &Principal,
         memory: &str,
         header: Option<&str>,
-    ) -> Result<Memory, ApiError> {
+    ) -> Result<MemoryDetail, ApiError> {
         self.authorize(principal, "get_memory")?;
-        self.reach_memory(principal, header, memory, Scope::Read)
-            .await
+        let memory = self
+            .reach_memory(principal, header, memory, Scope::Read)
+            .await?;
+        let similar = self.read_similar(&memory).await?;
+        Ok(MemoryDetail { memory, similar })
+    }
+
+    /// `similar` na leitura (decisão 0031): cosseno sobre os vetores do modelo vigente no mesmo
+    /// canal, sem a própria memória; sem vetor da memória, o textual da escrita.
+    pub(crate) async fn read_similar(
+        &self,
+        memory: &Memory,
+    ) -> Result<Vec<SimilarMemory>, ApiError> {
+        let model_id = self
+            .store()
+            .embedding_model()
+            .await?
+            .filter(|model| !model.is_empty());
+        let vector = match &model_id {
+            Some(model_id) => {
+                self.store()
+                    .memory_vector(memory.id.clone(), model_id.clone())
+                    .await?
+            }
+            None => None,
+        };
+        let (Some(model_id), Some(embedding)) = (model_id, vector) else {
+            return self
+                .similar(
+                    &memory.channel_id,
+                    &memory.text,
+                    &content_hash(&memory.text),
+                    Some(&memory.id),
+                )
+                .await;
+        };
+        let snapshot = self.settings_snapshot();
+        let threshold = snapshot.number(settings::VECTOR_SIMILAR_THRESHOLD);
+        let duplicate = snapshot.number(settings::VECTOR_DUPLICATE_THRESHOLD);
+        let hits = self
+            .store()
+            .search_vectors(VectorQuery {
+                embedding,
+                model_id,
+                channel_ids: vec![memory.channel_id.clone()],
+                categories: Vec::new(),
+                tags: Vec::new(),
+                statuses: vec![MemoryStatus::Active, MemoryStatus::Permanent],
+                exclude_ids: vec![memory.id.clone()],
+                limit: SIMILAR_CANDIDATES,
+            })
+            .await?;
+        Ok(hits
+            .into_iter()
+            .map(|hit| (1.0 - hit.distance, hit.memory))
+            .filter(|(score, _)| *score >= threshold)
+            .take(SIMILAR_MAX)
+            .map(|(score, found)| SimilarMemory {
+                id: found.id,
+                title: found.title,
+                channel: found.channel,
+                score: (score * 1000.0).round() / 1000.0,
+                method: SimilarMethod::Vector,
+                duplicate: score >= duplicate,
+            })
+            .collect())
     }
 
     pub async fn memory_history(
@@ -525,6 +705,15 @@ impl<S: Store> Core<S> {
         let status = initial_status(body.status)?;
         let origin = origin(body.origin.as_ref())?;
         let category = category(&snapshot, body.category.as_deref())?;
+        let title = body.title.as_deref().map(client_title).transpose()?;
+        let new_tags = body.tags.as_deref().map(tags).transpose()?;
+        let memory_key = body.key.as_deref().map(memory_key).transpose()?;
+        let upsert = body.upsert.unwrap_or(false);
+        if upsert && memory_key.is_none() {
+            return Err(
+                ApiError::validation("upsert exige key").with_details(json!({ "field": "upsert" }))
+            );
+        }
         let selection = Selection::parse(header, None)?;
         let core = self.clone();
         let principal_owned = principal.clone();
@@ -540,30 +729,64 @@ impl<S: Store> Core<S> {
                     let reach = core
                         .require_channel(&principal_owned, &selection, &body.channel, Scope::Write)
                         .await?;
-                    context.events = core
-                        .channel_event(EventType::MemoryCreated, &reach.channel.slug)
-                        .await?;
                     let channel_id = reach.channel.id;
+                    let existing = match &memory_key {
+                        Some(memory_key) => {
+                            core.store()
+                                .find_memory_by_key(channel_id.clone(), memory_key.clone())
+                                .await?
+                        }
+                        None => None,
+                    };
+                    if let Some(existing) = &existing
+                        && !upsert
+                    {
+                        return Err(key_exists(existing));
+                    }
+                    let event = if existing.is_some() {
+                        EventType::MemoryUpdated
+                    } else {
+                        EventType::MemoryCreated
+                    };
+                    context.events = core.channel_event(event, &reach.channel.slug).await?;
                     let (min, max) = core.text_limits(&channel_id).await?;
                     let text = memory_text(&body.text, min, max)?;
                     let hash = content_hash(&text);
-                    let similar = core.similar(&channel_id, &text, &hash, None).await?;
+                    let similar = core
+                        .similar(&channel_id, &text, &hash, existing.as_deref())
+                        .await?;
+                    let title_locked = title.is_some();
                     let new = NewMemory {
-                        channel_id,
+                        channel_id: channel_id.clone(),
                         category,
-                        title: provisional_title(&text),
+                        title: title.unwrap_or_else(|| provisional_title(&text)),
+                        title_locked,
                         text,
                         status,
                         content_hash: hash,
                         origin,
+                        tags: new_tags,
+                        key: memory_key.clone(),
+                        upsert,
                         dedupe: snapshot.dedupe_exact(),
                         jobs: content_jobs(false, core.embeddings_enabled()),
                         similar,
                     };
-                    core.store()
-                        .create_memory(new, context)
-                        .await
-                        .map_err(memory_error)
+                    match core.store().create_memory(new, context).await {
+                        Err(StoreError::Conflict("MEMORY_KEY_EXISTS")) => {
+                            let existing = match &memory_key {
+                                Some(memory_key) => core
+                                    .store()
+                                    .find_memory_by_key(channel_id, memory_key.clone())
+                                    .await
+                                    .ok()
+                                    .flatten(),
+                                None => None,
+                            };
+                            Err(key_exists(existing.as_deref().unwrap_or_default()))
+                        }
+                        other => other.map_err(memory_error),
+                    }
                 },
             )
             .await;
@@ -581,9 +804,35 @@ impl<S: Store> Core<S> {
         key: Option<&str>,
     ) -> Result<Mutation<MemoryWrite>, ApiError> {
         let operation = self.authorize(principal, "update_memory")?;
-        if body.text.is_none() && body.category.is_none() {
-            return Err(ApiError::validation("Informe text ou category"));
+        if body.text.is_none()
+            && body.category.is_none()
+            && body.title.is_none()
+            && body.title_locked.is_none()
+            && body.tags.is_none()
+        {
+            return Err(ApiError::validation(
+                "Informe text, category, title, title_locked ou tags",
+            ));
         }
+        if body.title.is_some() && body.title_locked == Some(false) {
+            return Err(ApiError::validation(
+                "title trava o titulo; nao combine com title_locked: false",
+            )
+            .with_details(json!({ "field": "title_locked" })));
+        }
+        let title_change = match (&body.title, body.title_locked) {
+            (Some(title), _) => Some(TitleChange {
+                title: Some(client_title(title)?),
+                locked: true,
+            }),
+            (None, Some(locked)) => Some(TitleChange {
+                title: None,
+                locked,
+            }),
+            (None, None) => None,
+        };
+        let new_tags = body.tags.as_deref().map(tags).transpose()?;
+        let edit_origin = origin(body.origin.as_ref())?;
         let snapshot = self.settings_snapshot();
         let category = body
             .category
@@ -628,13 +877,24 @@ impl<S: Store> Core<S> {
                     let similar = core
                         .similar(&memory.channel_id, &text, &hash, Some(&memory.id))
                         .await?;
+                    // Só destravar o título: o Redator gera um título, sem revisar o texto.
+                    let title_only = content.is_none()
+                        && title_change.as_ref().is_some_and(|change| !change.locked);
+                    let jobs = if title_only {
+                        content_jobs(true, false)
+                    } else {
+                        content_jobs(false, core.embeddings_enabled())
+                    };
                     let patch = MemoryPatch {
                         expected_version: body.expected_version,
                         content,
                         category,
+                        title: title_change,
+                        tags: new_tags,
+                        origin: edit_origin,
                         dedupe: snapshot.dedupe_exact(),
                         reason: "update",
-                        jobs: content_jobs(false, core.embeddings_enabled()),
+                        jobs,
                         similar,
                     };
                     let target = MemoryTarget {
@@ -696,6 +956,7 @@ impl<S: Store> Core<S> {
                         .await?
                         .ok_or_else(revision_not_found)?;
                     let text = revision.text.clone();
+                    let restored_title = revision.title.clone();
                     let patch = MemoryPatch {
                         expected_version: Some(memory.version),
                         content: Some(MemoryContent {
@@ -704,6 +965,12 @@ impl<S: Store> Core<S> {
                             text: revision.text,
                         }),
                         category: Some(revision.category),
+                        title: Some(TitleChange {
+                            title: Some(restored_title),
+                            locked: revision.title_locked,
+                        }),
+                        tags: Some(revision.tags),
+                        origin: revision.origin,
                         dedupe,
                         reason: "revert",
                         jobs: content_jobs(true, core.embeddings_enabled()),

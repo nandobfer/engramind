@@ -8,13 +8,13 @@ use crate::{
     auth::Auth,
     core::{
         memories::{
-            CreateMemoryBody, HistoryQuery, ListMemoriesQuery, MemoryHistory, MemoryList,
-            MoveMemoryBody, RevertMemoryBody, UpdateMemoryBody,
+            CreateMemoryBody, HistoryQuery, ListMemoriesQuery, MemoryDetail, MemoryHistory,
+            MemoryList, MoveMemoryBody, RevertMemoryBody, UpdateMemoryBody,
         },
         model::{Memory, MemoryWrite},
     },
     error::{ApiError, ErrorResponse},
-    http::{ApiJson, ApiPath, ApiQuery},
+    http::{ApiJson, ApiPath, ApiQuery, ApiQueryRepeated},
 };
 
 #[utoipa::path(
@@ -23,7 +23,7 @@ use crate::{
     operation_id = "list_memories",
     tag = "Memories",
     summary = "Lista as memórias dos canais alcançados",
-    description = "Memórias de todos os canais que o token alcança (qualquer modo; canais arquivados só citados pelo slug), restritas por `channels` e pelo cabeçalho `Engramind-Channels`. Padrão `status=active,permanent`. `author` aceita app (`app_…`/slug) ou agente (`ag_…`/`app/agente`); `since` filtra por `updated_at`. `fields=title` devolve só `id`, `title`, `channel`, `category` e `status`. Da alteração mais recente à mais antiga, paginado por `cursor` e `limit`.",
+    description = "Memórias de todos os canais que o token alcança (qualquer modo; canais arquivados só citados pelo slug), restritas por `channels` e pelo cabeçalho `Engramind-Channels`. Padrão `status=active,permanent`. `author` aceita app (`app_…`/slug) ou agente (`ag_…`/`app/agente`); `since` filtra por `updated_at`. `fields=title` devolve só `id`, `title`, `channel`, `category` e `status`. Da alteração mais recente à mais antiga, paginado por `cursor` e `limit`. Filtros novos: `tag` repetido (`tag=a&tag=b`, E lógico) e `key` exato. Cada memória traz `key`, `tags`, `title_locked` e `last_origin`.",
     params(
         ListMemoriesQuery,
         ("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão: slugs e prefixos separados por vírgula")
@@ -43,8 +43,11 @@ pub async fn list_memories(
     State(state): State<AppState>,
     Auth(principal): Auth,
     header: ChannelsHeader,
-    ApiQuery(query): ApiQuery<ListMemoriesQuery>,
+    ApiQueryRepeated(mut query, tags): ApiQueryRepeated<ListMemoriesQuery>,
 ) -> Result<Json<MemoryList>, ApiError> {
+    if !tags.is_empty() {
+        query.tag = Some(tags);
+    }
     state
         .core
         .list_memories(&principal, query, header.as_deref())
@@ -58,14 +61,14 @@ pub async fn list_memories(
     operation_id = "get_memory",
     tag = "Memories",
     summary = "Mostra uma memória",
-    description = "Texto, título, autoria (`app`, `agent`), `origin`, contadores, estados e `version`. Memória num canal fora do alcance do token ou do `Engramind-Channels` responde `MEMORY_NOT_FOUND`.",
+    description = "Texto, título, autoria (`app`, `agent`), `origin`, contadores, estados e `version`. Memória num canal fora do alcance do token ou do `Engramind-Channels` responde `MEMORY_NOT_FOUND`. Traz também `key`, `tags`, `title_locked`, `last_origin` e `similar`: com vetor do modelo vigente, até três memórias do mesmo canal por cosseno ≥ `memory.vector_similar_threshold` (`method: vector`, `duplicate` a partir de `memory.vector_duplicate_threshold`); sem vetor, o `similar` textual (`method: text`).",
     params(
         ("memory" = String, Path, description = "Id da memória (`m_…`)"),
         ("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão: slugs e prefixos separados por vírgula")
     ),
     security(("bearerAuth" = [])),
     responses(
-        (status = 200, description = "Memória", body = Memory),
+        (status = 200, description = "Memória com `similar`", body = MemoryDetail),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
         (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
@@ -80,7 +83,7 @@ pub async fn get_memory(
     Auth(principal): Auth,
     header: ChannelsHeader,
     ApiPath(memory): ApiPath<String>,
-) -> Result<Json<Memory>, ApiError> {
+) -> Result<Json<MemoryDetail>, ApiError> {
     state
         .core
         .get_memory(&principal, &memory, header.as_deref())
@@ -94,7 +97,7 @@ pub async fn get_memory(
     operation_id = "memory_history",
     tag = "Memories",
     summary = "Lista as revisões de uma memória",
-    description = "Uma revisão por mudança (`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert`), com texto, título, categoria, status, autor e motivo, da versão mais nova à mais antiga.",
+    description = "Uma revisão por mudança (`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert`), com texto, título, categoria, status, autor e motivo, da versão mais nova à mais antiga. Cada revisão traz também `title_locked`, `tags` e a `origin` informada nela.",
     params(
         ("memory" = String, Path, description = "Id da memória (`m_…`)"),
         HistoryQuery,
@@ -132,7 +135,7 @@ pub async fn memory_history(
     operation_id = "create_memory",
     tag = "Memories",
     summary = "Grava uma memória num canal",
-    description = "Exige `write` efetivo no canal. Grava na hora com título provisório (`title_state: pending`), a revisão 1 e a auditoria, e enfileira o Redator e o embedding; nunca espera o LLM. Texto igual (normalizado) a outra memória do canal devolve a existente com `duplicate: true` e `200`, sem gravar. `similar` traz até três memórias parecidas do canal: prefira `update_memory` a uma quase-duplicata. Aceita `Idempotency-Key`.",
+    description = "Exige `write` efetivo no canal. Grava na hora com título provisório (`title_state: pending`), a revisão 1 e a auditoria, e enfileira o Redator e o embedding; nunca espera o LLM. Texto igual (normalizado) a outra memória do canal devolve a existente com `duplicate: true` e `200`, sem gravar. `similar` traz até três memórias parecidas do canal: prefira `update_memory` a uma quase-duplicata. Aceita `Idempotency-Key`. `title` (3 a 200) grava um título do cliente travado (`title_locked: true`, `title_state: ready`) que o Redator não troca. `tags` (até 20, de 1 a 40) não entram no `content_hash`. `key` (1 a 80, `A-Z a-z 0-9 : _ -`) é única no canal e imutável: repetida sem `upsert` → `409 MEMORY_KEY_EXISTS` (`details.existing_id`); com `upsert: true`, a memória existente é editada e volta com `created: false` e `200` (sem revisão se nada mudou). Com `key`, o dedupe exato por texto não se aplica. `created` diz se uma memória nova foi gravada.",
     params(
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h"),
         ("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão: slugs e prefixos separados por vírgula")
@@ -164,10 +167,10 @@ pub async fn create_memory(
         .core
         .create_memory(&principal, body, header.as_deref(), key.as_deref())
         .await?;
-    let status = if result.value.duplicate {
-        StatusCode::OK
-    } else {
+    let status = if result.value.created {
         StatusCode::CREATED
+    } else {
+        StatusCode::OK
     };
     Ok(mutation(status, result))
 }
@@ -178,7 +181,7 @@ pub async fn create_memory(
     operation_id = "update_memory",
     tag = "Memories",
     summary = "Edita o texto ou a categoria de uma memória",
-    description = "Exige `write` efetivo no canal. Com `expected_version`, uma versão diferente responde `409 MEMORY_VERSION_CONFLICT` com `details.current_version`. Texto novo volta o título e o embedding para `pending`, zera `importance` e reenfileira o Redator; texto igual a outra memória do canal responde `409 MEMORY_DUPLICATE` com `details.existing_id`. Sem mudança efetiva, nada é gravado. Aceita `Idempotency-Key`.",
+    description = "Exige `write` efetivo no canal. Com `expected_version`, uma versão diferente responde `409 MEMORY_VERSION_CONFLICT` com `details.current_version`. Texto novo volta o título e o embedding para `pending`, zera `importance` e reenfileira o Redator; texto igual a outra memória do canal responde `409 MEMORY_DUPLICATE` com `details.existing_id`. Sem mudança efetiva, nada é gravado. Aceita `Idempotency-Key`. `title` grava e trava o título do cliente; `title_locked: false` destrava e enfileira o Redator para gerar um título (com `title` no mesmo corpo → `400`); `title_locked: true` trava o atual. Com título travado, texto novo mantém o título. `tags` substitui (`[]` limpa) sem mexer no `content_hash` nem enfileirar jobs. `origin` grava a origem desta edição em `last_origin` e na revisão.",
     params(
         ("memory" = String, Path, description = "Id da memória (`m_…`)"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h"),
@@ -341,7 +344,7 @@ pub async fn move_memory(
     operation_id = "revert_memory",
     tag = "Memories",
     summary = "Restaura o conteúdo de uma versão anterior numa revisão nova",
-    description = "Exige `write` efetivo no canal. Texto, título e categoria da versão pedida voltam numa revisão nova; o histórico nunca é reescrito. O Redator só refaz o título (o texto restaurado fica como está). Conteúdo igual ao atual não muda nada. Aceita `Idempotency-Key`.",
+    description = "Exige `write` efetivo no canal. Texto, título e categoria da versão pedida voltam numa revisão nova; o histórico nunca é reescrito. O Redator só refaz o título (o texto restaurado fica como está). Conteúdo igual ao atual não muda nada. Aceita `Idempotency-Key`. Também voltam a trava do título (`title_locked`), as tags e a origem da revisão; título travado não é regenerado.",
     params(
         ("memory" = String, Path, description = "Id da memória (`m_…`)"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h"),

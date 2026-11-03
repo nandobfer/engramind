@@ -10,11 +10,7 @@ use crate::error::ApiError;
 
 /// Se o token pode executar a operação (sem considerar canais).
 pub fn allows(principal: &Principal, operation: &OperationSpec) -> bool {
-    let kind_ok = match operation.kind {
-        RequiredKind::Any => true,
-        RequiredKind::Admin => principal.is_admin(),
-    };
-    kind_ok
+    operation.kind.admits(principal.kind)
         && operation
             .scope
             .is_none_or(|scope| principal.scopes.contains(scope))
@@ -25,21 +21,25 @@ pub fn require(principal: &Principal, operation: &OperationSpec) -> Result<(), A
     if allows(principal, operation) {
         return Ok(());
     }
-    let message = match (operation.kind, operation.scope) {
-        (RequiredKind::Admin, Some(scope)) => format!(
-            "A operacao {} exige um token admin com o escopo {}",
+    let who = match operation.kind {
+        RequiredKind::Any => None,
+        RequiredKind::Admin => Some("um token admin"),
+        RequiredKind::AdminOrApp => Some("um token admin ou app"),
+        RequiredKind::AgentOrAdmin => Some("um token agent ou admin"),
+    };
+    let message = match (who, operation.scope) {
+        (Some(who), Some(scope)) => format!(
+            "A operacao {} exige {who} com o escopo {}",
             operation.name,
             scope.as_str()
         ),
-        (RequiredKind::Admin, None) => {
-            format!("A operacao {} exige um token admin", operation.name)
-        }
-        (RequiredKind::Any, Some(scope)) => format!(
+        (Some(who), None) => format!("A operacao {} exige {who}", operation.name),
+        (None, Some(scope)) => format!(
             "A operacao {} exige o escopo {}",
             operation.name,
             scope.as_str()
         ),
-        (RequiredKind::Any, None) => format!("A operacao {} nao e permitida", operation.name),
+        (None, None) => format!("A operacao {} nao e permitida", operation.name),
     };
     Err(
         ApiError::new("SCOPE_REQUIRED", message).with_details(json!({
@@ -85,7 +85,10 @@ mod tests {
         for operation in OPERATIONS {
             assert_eq!(
                 allows(&agent, operation),
-                operation.kind == RequiredKind::Any,
+                matches!(
+                    operation.kind,
+                    RequiredKind::Any | RequiredKind::AgentOrAdmin
+                ),
                 "{}",
                 operation.name
             );
@@ -108,5 +111,31 @@ mod tests {
         assert!(allows(&read_delete, spec("revoke_token")));
         assert!(!allows(&read_delete, spec("update_token")));
         assert!(allowed_operations(&read_only).contains(&"whoami"));
+    }
+
+    #[test]
+    fn app_tokens_manage_their_app_but_never_write_single_memories() {
+        let app = principal(TokenKind::App, "read,write,delete");
+        for operation in OPERATIONS {
+            assert_eq!(
+                allows(&app, operation),
+                matches!(operation.kind, RequiredKind::Any | RequiredKind::AdminOrApp),
+                "{}",
+                operation.name
+            );
+        }
+        assert!(allows(&app, spec("create_agent")));
+        assert!(allows(&app, spec("import_memories")));
+        assert!(!allows(&app, spec("create_memory")));
+        assert!(!allows(&app, spec("update_settings")));
+        assert!(!allows(&app, spec("create_app")));
+        let error = require(&app, spec("create_memory")).expect_err("denied");
+        assert_eq!(
+            error.details,
+            Some(json!({ "required_kind": "agent_or_admin", "required_scope": "write" }))
+        );
+        let read_only = principal(TokenKind::App, "read");
+        assert!(allows(&read_only, spec("list_agents")));
+        assert!(!allows(&read_only, spec("create_agent")));
     }
 }

@@ -7,7 +7,7 @@ use serde_json::json;
 
 use super::{
     journal,
-    memories::{MEMORY_COLUMNS, MEMORY_JOINS, memory_from_row, placeholders, texts},
+    memories::{MEMORY_COLUMNS, MEMORY_JOINS, memory_from_row, placeholders, push_tags, texts},
     sql_error,
 };
 use crate::{
@@ -23,6 +23,24 @@ pub(super) fn to_blob(vector: &[f32]) -> Vec<u8> {
         .iter()
         .flat_map(|value| value.to_le_bytes())
         .collect()
+}
+
+/// O vetor da memória no modelo dado, quando existe.
+pub(super) fn memory_vector(
+    connection: &Connection,
+    memory_id: &str,
+    model_id: &str,
+) -> rusqlite::Result<Option<Vec<f32>>> {
+    let blob: Option<Vec<u8>> = rusqlite::OptionalExtension::optional(connection.query_row(
+        "SELECT embedding FROM memory_vectors WHERE memory_id = ?1 AND model_id = ?2",
+        rusqlite::params![memory_id, model_id],
+        |row| row.get(0),
+    ))?;
+    Ok(blob.map(|blob| {
+        blob.chunks_exact(4)
+            .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+            .collect()
+    }))
 }
 
 fn meta_text(connection: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
@@ -180,6 +198,7 @@ pub(super) fn search_vectors(
         ));
         values.extend(texts(query.exclude_ids.iter().map(String::as_str)));
     }
+    push_tags(&mut conditions, &mut values, &query.tags);
     let mut statement = connection.prepare(&format!(
         "SELECT {MEMORY_COLUMNS}, vec_distance_cosine(v.embedding, ?) AS distance
          FROM memory_vectors v JOIN memories m ON m.id = v.memory_id

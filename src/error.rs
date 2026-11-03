@@ -74,6 +74,12 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         description: "O lote passa de `limits.max_batch` itens; `details` traz `max` e `received`.",
     },
     ErrorCodeDoc {
+        code: "FOCUS_TOO_LONG",
+        status: 400,
+        exit_code: 2,
+        description: "`focus` de `get_context` passa de 2000 caracteres depois da normalização; `details.max` traz o limite.",
+    },
+    ErrorCodeDoc {
         code: "AUTH_INVALID",
         status: 401,
         exit_code: 3,
@@ -90,6 +96,12 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         status: 403,
         exit_code: 4,
         description: "O token não alcança o canal (sem assinatura ou fora da seleção `channels`/`Engramind-Channels`); `details.channel` traz o slug.",
+    },
+    ErrorCodeDoc {
+        code: "FOREIGN_APP",
+        status: 403,
+        exit_code: 4,
+        description: "O token de app tentou operar um app, agente, token, canal ou autor de outro app; `details.app` traz o slug do app alvo quando conhecido.",
     },
     ErrorCodeDoc {
         code: "ROUTE_NOT_FOUND",
@@ -234,6 +246,30 @@ pub const ERROR_CODES: &[ErrorCodeDoc] = &[
         status: 409,
         exit_code: 6,
         description: "A mudança de `categories.list` retira categorias usadas; `details.in_use` traz a contagem.",
+    },
+    ErrorCodeDoc {
+        code: "CATEGORY_CONFLICT",
+        status: 409,
+        exit_code: 6,
+        description: "`create_category` com uma `key` existente e `label` ou `priority` diferentes; `details.existing` traz a categoria gravada.",
+    },
+    ErrorCodeDoc {
+        code: "CATEGORY_LIMIT_REACHED",
+        status: 409,
+        exit_code: 6,
+        description: "`categories.list` já tem o máximo de categorias; `details.max` traz o limite.",
+    },
+    ErrorCodeDoc {
+        code: "MEMORY_KEY_EXISTS",
+        status: 409,
+        exit_code: 6,
+        description: "Já existe uma memória com essa `key` no canal e `upsert` não foi pedido; `details.existing_id` aponta para ela.",
+    },
+    ErrorCodeDoc {
+        code: "CHANNEL_SHARED",
+        status: 409,
+        exit_code: 6,
+        description: "O token de app não arquiva nem restaura um canal que agentes ativos de outro app assinam; `details.apps` traz os slugs.",
     },
     ErrorCodeDoc {
         code: "IDEMPOTENCY_KEY_CONFLICT",

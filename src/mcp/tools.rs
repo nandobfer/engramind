@@ -134,6 +134,14 @@ pub struct AgentMutationRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateCategoryRequest {
+    #[serde(flatten)]
+    pub body: crate::core::categories::CreateCategoryBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateAgentRequest {
     #[serde(flatten)]
     pub body: CreateAgentBody,
@@ -777,6 +785,25 @@ impl EngramindServer {
     }
 
     #[tool]
+    async fn rotate_token(
+        &self,
+        Parameters(request): Parameters<TokenMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .rotate_token(
+                    &principal,
+                    &request.token,
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
     async fn list_channels(
         &self,
         Parameters(query): Parameters<ListChannelsQuery>,
@@ -1347,6 +1374,31 @@ impl EngramindServer {
                     UpdateChannelSettingsBody(request.settings),
                     request.idempotency_key.as_deref(),
                 )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn list_categories(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(self.core.list_categories(&principal).await)
+    }
+
+    #[tool]
+    async fn create_category(
+        &self,
+        Parameters(request): Parameters<CreateCategoryRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        reply(
+            self.core
+                .create_category(&principal, request.body, key)
                 .await
                 .map(|mutation| mutation.value),
         )

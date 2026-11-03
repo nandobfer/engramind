@@ -22,10 +22,10 @@ use crate::{
     store::StoreError,
 };
 
-const CHANNEL_COLUMNS: &str =
-    "c.id, c.slug, c.name, c.description, c.priority, c.version, c.created_at, c.archived_at";
+const CHANNEL_COLUMNS: &str = "c.id, c.slug, c.name, c.description, c.priority, c.version, c.created_at, c.archived_at, \
+     c.created_by_app_id, (SELECT slug FROM apps WHERE id = c.created_by_app_id)";
 const SUBSCRIPTION_SELECT: &str = "SELECT s.id, s.target, s.is_prefix, s.mode, s.access, \
-     s.priority, s.created_at, g.id, a.slug, g.slug \
+     s.priority, s.created_at, g.id, a.slug, g.slug, g.app_id, g.disabled_at IS NOT NULL \
      FROM subscriptions s JOIN agents g ON g.id = s.agent_id JOIN apps a ON a.id = g.app_id";
 
 fn channel_from_row(row: &Row<'_>) -> rusqlite::Result<Channel> {
@@ -38,6 +38,8 @@ fn channel_from_row(row: &Row<'_>) -> rusqlite::Result<Channel> {
         version: row.get(5)?,
         created_at: row.get(6)?,
         archived_at: row.get(7)?,
+        created_by_app_id: row.get(8)?,
+        created_by: row.get(9)?,
         reach: None,
     })
 }
@@ -76,6 +78,8 @@ fn subscription_from_row(row: &Row<'_>) -> rusqlite::Result<Subscription> {
         priority: row.get(5)?,
         created_at: row.get(6)?,
         reaches: Vec::new(),
+        agent_app_id: row.get(10)?,
+        agent_disabled: row.get(11)?,
     })
 }
 
@@ -170,18 +174,32 @@ pub(super) fn create_channel(
     new: &NewChannel,
     context: &WriteContext,
 ) -> Result<Channel, StoreError> {
+    let channel = insert_channel(transaction, new, context)?;
+    journal::emit(transaction, context, &[])?;
+    journal::remember(transaction, context, &channel)?;
+    Ok(channel)
+}
+
+/// Insere o canal e grava `channel.create` (sem evento nem idempotência).
+fn insert_channel(
+    transaction: &Transaction,
+    new: &NewChannel,
+    context: &WriteContext,
+) -> Result<Channel, StoreError> {
     let id = free_id(transaction, "channels", ids::CHANNEL_PREFIX)?;
     transaction
         .execute(
-            "INSERT INTO channels (id, slug, name, description, priority, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO channels (id, slug, name, description, priority, created_at,
+                                   created_by_app_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 id,
                 new.slug,
                 new.name,
                 new.description,
                 new.priority,
-                context.at
+                context.at,
+                new.created_by_app_id
             ],
         )
         .map_err(|error| unique_conflict(error, "SLUG_ALREADY_EXISTS"))?;
@@ -197,8 +215,6 @@ pub(super) fn create_channel(
             after: Some(to_value(&channel)?),
         },
     )?;
-    journal::emit(transaction, context, &[])?;
-    journal::remember(transaction, context, &channel)?;
     Ok(channel)
 }
 
@@ -410,7 +426,12 @@ pub(super) fn create_subscription(
             )
             .map_err(sql_error)?;
         if !exists {
-            return Err(StoreError::Conflict("CHANNEL_NOT_FOUND"));
+            match &new.create_channel {
+                Some(channel) => {
+                    insert_channel(transaction, channel, context)?;
+                }
+                None => return Err(StoreError::Conflict("CHANNEL_NOT_FOUND")),
+            }
         }
     }
     let id = free_id(transaction, "subscriptions", ids::SUBSCRIPTION_PREFIX)?;

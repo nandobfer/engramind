@@ -138,6 +138,13 @@ pub trait Store: Clone + Send + Sync + 'static {
         id: String,
         context: WriteContext,
     ) -> impl Future<Output = Result<Token, StoreError>> + Send;
+    /// Grava o token novo e revoga o antigo na mesma transação (auditoria `token.rotate`).
+    fn rotate_token(
+        &self,
+        old_id: String,
+        new: NewToken,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Token, StoreError>> + Send;
     /// Cria o app (ou reaproveita o slug) e o token do bootstrap só se não existir nenhum
     /// token; devolve `None` quando já havia tokens.
     fn bootstrap(
@@ -231,6 +238,12 @@ pub trait Store: Clone + Send + Sync + 'static {
         channel_id: String,
         content_hash: Vec<u8>,
         exclude: Option<String>,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+    /// Id da memória do canal com essa `key`.
+    fn find_memory_by_key(
+        &self,
+        channel_id: String,
+        key: String,
     ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
     /// Por `updated_at` decrescente.
     fn list_memories(
@@ -332,6 +345,16 @@ pub trait Store: Clone + Send + Sync + 'static {
         embedding: Option<EmbeddingSwitch>,
         context: WriteContext,
     ) -> impl Future<Output = Result<Vec<SettingRow>, StoreError>> + Send;
+    /// Acrescenta a categoria a `categories.list` (ou ao padrão `default_json` quando a chave
+    /// não está gravada), com auditoria `category.create`. `key` existente → `Existing`, sem
+    /// gravar; lista cheia → `Conflict("CATEGORY_LIMIT_REACHED")`.
+    fn create_category(
+        &self,
+        category: crate::core::settings::Category,
+        default_json: String,
+        max: usize,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<crate::core::model::CategoryAppend, StoreError>> + Send;
     fn find_idempotency(
         &self,
         token_id: &str,
@@ -461,6 +484,12 @@ pub trait Store: Clone + Send + Sync + 'static {
         state: EmbeddingState,
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
     /// Ramo vetorial da busca, da menor para a maior distância.
+    /// Vetor gravado da memória no `model_id` dado.
+    fn memory_vector(
+        &self,
+        memory_id: String,
+        model_id: String,
+    ) -> impl Future<Output = Result<Option<Vec<f32>>, StoreError>> + Send;
     fn search_vectors(
         &self,
         query: VectorQuery,

@@ -325,6 +325,8 @@ mod tests {
             priority: None,
             created_at: "2026-01-01T00:00:00.000Z".to_owned(),
             reaches: Vec::new(),
+            agent_app_id: "app_x".to_owned(),
+            agent_disabled: false,
         }
     }
 

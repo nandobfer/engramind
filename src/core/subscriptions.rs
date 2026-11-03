@@ -1,5 +1,7 @@
 //! Assinaturas (desenho §5): ligam um agente a um canal exato ou a um prefixo, com modo, acesso
-//! e prioridade. Só token `admin` assina; o agente vê só as próprias (FR-012).
+//! e prioridade. Assinam o token `admin` (qualquer agente) e o token `app` (só os agentes do
+//! próprio app); o agente vê só as próprias (FR-012). Um alvo exato inexistente cria o canal
+//! na mesma transação (0.11.0, decisão 0033).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -10,10 +12,14 @@ use super::{
     Core,
     access::subscription_pattern,
     channels::{find_in, priority},
+    events::EventType,
     idempotency::Mutation,
-    identities::{next_cursor, scopes},
+    identities::{ensure_own_app, foreign_app, next_cursor, scopes},
     ids,
-    model::{Mode, NewSubscription, Subscription, SubscriptionPatch, double_option},
+    model::{
+        Mode, NewChannel, NewSubscription, Subscription, SubscriptionPatch, SubscriptionWrite,
+        double_option,
+    },
     pagination::{Cursor, PageRequest, paginate},
     principal::{Principal, Scope, ScopeSet},
     selection::ChannelPattern,
@@ -43,8 +49,9 @@ pub struct SubscribeBody {
     /// Agente (id ou `app/agente`).
     #[schema(example = "app-a/curador")]
     pub agent: String,
-    /// Canal exato existente (`eng/global`) ou prefixo terminado em `*` (`eng/*`,
-    /// `eng/projeto-*`), que vale também para canais criados depois.
+    /// Canal exato (`eng/global`) ou prefixo terminado em `*` (`eng/*`, `eng/projeto-*`), que
+    /// vale também para canais criados depois. Um canal exato inexistente é criado junto (nome =
+    /// slug, sem descrição); prefixos nunca criam canal.
     #[schema(example = "eng/projeto-*")]
     pub target: String,
     pub mode: Mode,
@@ -128,9 +135,14 @@ impl<S: Store> Core<S> {
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty());
-        let agent_id = if principal.is_admin() {
+        let app_id = principal.is_app().then(|| principal.app.id.clone());
+        let agent_id = if principal.is_admin() || principal.is_app() {
             match requested {
-                Some(agent) => Some(self.find_agent(agent).await?.id),
+                Some(agent) => {
+                    let agent = self.find_agent(agent).await?;
+                    ensure_own_app(principal, &agent.app)?;
+                    Some(agent.id)
+                }
                 None => None,
             }
         } else {
@@ -161,6 +173,11 @@ impl<S: Store> Core<S> {
                     .is_none_or(|agent| &subscription.agent.id == agent)
             })
             .filter(|subscription| {
+                app_id
+                    .as_ref()
+                    .is_none_or(|app| &subscription.agent_app_id == app)
+            })
+            .filter(|subscription| {
                 channel
                     .as_ref()
                     .is_none_or(|slug| subscription_pattern(subscription).matches(slug))
@@ -182,7 +199,7 @@ impl<S: Store> Core<S> {
         principal: &Principal,
         body: SubscribeBody,
         key: Option<&str>,
-    ) -> Result<Mutation<Subscription>, ApiError> {
+    ) -> Result<Mutation<SubscriptionWrite>, ApiError> {
         let operation = self.authorize(principal, "subscribe")?;
         let target = ChannelPattern::parse(&body.target)?;
         let restricted = body.access.as_deref().map(access).transpose()?;
@@ -191,6 +208,7 @@ impl<S: Store> Core<S> {
         let agent = body.agent.clone();
         let mode = body.mode;
         let body_target = body.target.clone();
+        let principal_owned = principal.clone();
         let result = self
             .mutate(
                 principal,
@@ -200,10 +218,55 @@ impl<S: Store> Core<S> {
                 201,
                 |mut context| async move {
                     let agent = core.find_agent(&agent).await?;
+                    ensure_own_app(&principal_owned, &agent.app)?;
                     let (stored, is_prefix) = target.stored();
+                    let network = core.network().await?;
+                    // Idempotência natural (decisão 0028): mesmo alvo e mesmos campos → a existente.
+                    if let Some(existing) = network.subscriptions.iter().find(|subscription| {
+                        subscription.agent.id == agent.id
+                            && subscription.is_prefix == is_prefix
+                            && subscription.target.trim_end_matches('*') == stored
+                    }) {
+                        if existing.mode == mode
+                            && existing.access == restricted
+                            && existing.priority == priority
+                        {
+                            return Ok(SubscriptionWrite {
+                                subscription: existing.clone(),
+                                created: false,
+                                channel_created: false,
+                            });
+                        }
+                        return Err(ApiError::new(
+                            "SUBSCRIPTION_EXISTS",
+                            "O agente ja assina esse alvo, com outro modo, acesso ou prioridade",
+                        )
+                        .with_details(json!({ "existing": existing })));
+                    }
+                    let create_channel = (!is_prefix
+                        && !network
+                            .channels
+                            .iter()
+                            .any(|channel| channel.slug == stored))
+                    .then(|| NewChannel {
+                        slug: stored.to_owned(),
+                        name: stored.to_owned(),
+                        description: None,
+                        priority: 0,
+                        created_by_app_id: principal_owned
+                            .is_app()
+                            .then(|| principal_owned.app.id.clone()),
+                    });
+                    let channel_created = create_channel.is_some();
                     context.events = core
                         .subscription_event(&agent.id, body_target.trim(), None)
                         .await?;
+                    if channel_created {
+                        context.events.extend(
+                            core.channel_event(EventType::ChannelUpdated, stored)
+                                .await?,
+                        );
+                    }
                     let new = NewSubscription {
                         agent_id: agent.id,
                         target: stored.to_owned(),
@@ -211,16 +274,40 @@ impl<S: Store> Core<S> {
                         mode,
                         access: restricted,
                         priority,
+                        create_channel,
                     };
                     core.store()
                         .create_subscription(new, context)
                         .await
+                        .map(|subscription| SubscriptionWrite {
+                            subscription,
+                            created: true,
+                            channel_created,
+                        })
                         .map_err(|error| store_error(error, subscription_not_found))
                 },
             )
             .await;
         self.network_changed();
         result
+    }
+
+    /// A assinatura citada, conferida contra o app do token de app.
+    async fn own_subscription(&self, principal: &Principal, id: &str) -> Result<(), ApiError> {
+        if !principal.is_app() {
+            return Ok(());
+        }
+        let network = self.network().await?;
+        let subscription = network
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.id == id)
+            .ok_or_else(subscription_not_found)?;
+        if subscription.agent_app_id != principal.app.id {
+            let app = subscription.agent.slug.split('/').next().map(str::to_owned);
+            return Err(foreign_app(app.as_deref()));
+        }
+        Ok(())
     }
 
     pub async fn update_subscription(
@@ -234,6 +321,7 @@ impl<S: Store> Core<S> {
         let patch = subscription_patch(&body)?;
         let input = json!({ "subscription": subscription, "body": body });
         let id = subscription_id(subscription)?;
+        self.own_subscription(principal, &id).await?;
         let core = self.clone();
         let result = self
             .mutate(
@@ -264,6 +352,7 @@ impl<S: Store> Core<S> {
         let operation = self.authorize(principal, "unsubscribe")?;
         let input = json!({ "subscription": subscription });
         let id = subscription_id(subscription)?;
+        self.own_subscription(principal, &id).await?;
         let core = self.clone();
         let result = self
             .mutate(

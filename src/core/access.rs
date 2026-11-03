@@ -92,6 +92,9 @@ fn reach_of(network: &Network, principal: &Principal, channel: &Channel) -> Opti
             target: None,
         });
     }
+    if principal.is_app() {
+        return app_reach(network, principal, channel);
+    }
     let agent = principal.agent.as_ref()?;
     let subscription = best_subscription(
         network
@@ -113,6 +116,79 @@ fn reach_of(network: &Network, principal: &Principal, channel: &Channel) -> Opti
         subscription: Some(subscription.id.clone()),
         target: Some(subscription.target.clone()),
     })
+}
+
+fn mode_rank(mode: Mode) -> u8 {
+    match mode {
+        Mode::Inject => 2,
+        Mode::Search => 1,
+        Mode::Manage => 0,
+    }
+}
+
+/// Alcance do token `app` (0.11.0, decisão 0028): a união das melhores assinaturas dos agentes
+/// **ativos** do app no canal. Escopos = token ∩ união dos acessos; modo = o mais amplo
+/// (`inject` > `search` > `manage`); prioridade = a maior; a assinatura citada é a do modo
+/// vencedor (desempate pelo id).
+fn app_reach(network: &Network, principal: &Principal, channel: &Channel) -> Option<Reach> {
+    let mut agents: Vec<&str> = network
+        .subscriptions
+        .iter()
+        .filter(|subscription| {
+            subscription.agent_app_id == principal.app.id && !subscription.agent_disabled
+        })
+        .map(|subscription| subscription.agent.id.as_str())
+        .collect();
+    agents.sort_unstable();
+    agents.dedup();
+    let mut best: Option<(&Subscription, ScopeSet, i64)> = None;
+    let mut access = None::<ScopeSet>;
+    let mut priority = i64::MIN;
+    for agent in agents {
+        let Some(subscription) = best_subscription(
+            network
+                .subscriptions
+                .iter()
+                .filter(|subscription| subscription.agent.id == agent),
+            &channel.slug,
+        ) else {
+            continue;
+        };
+        let scopes = subscription
+            .access
+            .as_deref()
+            .and_then(|scopes| ScopeSet::from_scopes(scopes).ok())
+            .unwrap_or(principal.scopes);
+        access = Some(match access {
+            Some(current) => current.union(scopes),
+            None => scopes,
+        });
+        let effective = subscription.priority.unwrap_or(channel.priority);
+        priority = priority.max(effective);
+        let better = best.is_none_or(|(current, _, _)| {
+            (
+                mode_rank(subscription.mode),
+                std::cmp::Reverse(&subscription.id),
+            ) > (mode_rank(current.mode), std::cmp::Reverse(&current.id))
+        });
+        if better {
+            best = Some((subscription, scopes, effective));
+        }
+    }
+    let (subscription, _, _) = best?;
+    Some(Reach {
+        channel: channel.clone(),
+        mode: subscription.mode,
+        scopes: principal.scopes.intersection(access?),
+        priority,
+        subscription: Some(subscription.id.clone()),
+        target: Some(subscription.target.clone()),
+    })
+}
+
+/// Alcance do token no canal, sem seleção nem propósito (listagem do token de app).
+pub fn reach_in(network: &Network, principal: &Principal, channel: &Channel) -> Option<Reach> {
+    reach_of(network, principal, channel)
 }
 
 /// Canais alcançados, em ordem de slug. `include_archived` traz os arquivados (listagem).
@@ -278,6 +354,8 @@ mod tests {
             version: 1,
             created_at: "2026-10-30T12:00:00.000Z".to_owned(),
             archived_at: None,
+            created_by: None,
+            created_by_app_id: None,
             reach: None,
         }
     }
@@ -302,6 +380,8 @@ mod tests {
             priority: None,
             created_at: "2026-10-30T12:00:00.000Z".to_owned(),
             reaches: Vec::new(),
+            agent_app_id: "app_00000001".to_owned(),
+            agent_disabled: false,
         }
     }
 
@@ -550,6 +630,65 @@ mod tests {
             cache.current(generation).expect("atual").channels.len(),
             5,
             "a leitura antiga nao sobrescreve a nova"
+        );
+    }
+
+    #[test]
+    fn app_tokens_reach_the_union_of_their_active_agents() {
+        let mut network = network();
+        // Um agente de outro app e um agente desativado do app-a não contam.
+        let mut foreign = subscription("sub_f", "estranho", "assistente/geral", Mode::Inject, None);
+        foreign.agent_app_id = "app_00000002".to_owned();
+        let mut off = subscription("sub_off", "desligado", "review/revisor", Mode::Inject, None);
+        off.agent_disabled = true;
+        network.subscriptions.push(foreign);
+        network.subscriptions.push(off);
+        let app = principal(TokenKind::App, None, "read,write");
+        let reached = |purpose| -> Vec<(String, Mode, String)> {
+            resolve(&network, &app, &Selection::default(), purpose, false)
+                .into_iter()
+                .map(|reach| (reach.channel.slug, reach.mode, reach.scopes.to_csv()))
+                .collect()
+        };
+        // eng/global: desenvolvedor (inject, read) + curador (manage, read+write) → inject,
+        // read+write.
+        assert_eq!(
+            reached(Purpose::Explicit),
+            vec![
+                (
+                    "assistente/geral".to_owned(),
+                    Mode::Inject,
+                    "read,write".to_owned()
+                ),
+                (
+                    "eng/global".to_owned(),
+                    Mode::Inject,
+                    "read,write".to_owned()
+                ),
+                (
+                    "eng/projeto-atlas".to_owned(),
+                    Mode::Inject,
+                    "read,write".to_owned()
+                ),
+                (
+                    "review/revisor".to_owned(),
+                    Mode::Inject,
+                    "read,write".to_owned()
+                ),
+            ]
+        );
+        // Sem agentes ativos, nada.
+        let mut lonely = app.clone();
+        lonely.app.id = "app_00000009".to_owned();
+        assert!(
+            resolve(
+                &network,
+                &lonely,
+                &Selection::default(),
+                Purpose::Explicit,
+                false
+            )
+            .is_empty()
         );
     }
 }

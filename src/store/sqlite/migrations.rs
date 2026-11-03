@@ -14,6 +14,9 @@ const SOURCES: &[&str] = &[
     include_str!("../../../migrations/0007_vectors.sql"),
     include_str!("../../../migrations/0008_integration.sql"),
     include_str!("../../../migrations/0009_consolidation.sql"),
+    include_str!("../../../migrations/0010_app_tokens.sql"),
+    include_str!("../../../migrations/0011_memory_fields.sql"),
+    include_str!("../../../migrations/0012_channel_lifecycle.sql"),
 ];
 
 static MIGRATIONS: LazyLock<Migrations<'static>> =

@@ -12,7 +12,7 @@ use crate::{
             ListAgentsQuery, ListQuery, ListTokensQuery, TokenList, UpdateAppBody, UpdateBody,
             UpdateTokenBody, WhoAmI,
         },
-        model::{Agent, App, Token},
+        model::{Agent, AgentWrite, App, Token},
     },
     error::{ApiError, ErrorResponse},
     http::{ApiJson, ApiPath, ApiQuery},
@@ -212,14 +212,14 @@ pub async fn delete_app(
     operation_id = "list_agents",
     tag = "Identities",
     summary = "Lista os agentes",
-    description = "Filtra por `app` (id ou slug). Paginado por `cursor` e `limit`. Exige token admin com `read`.",
+    description = "Filtra por `app` (id ou slug). Paginado por `cursor` e `limit`. Exige token admin com `read`, ou token app com `read` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(ListAgentsQuery),
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "Página de agentes", body = AgentList),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`APP_NOT_FOUND`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
@@ -240,14 +240,14 @@ pub async fn list_agents(
     operation_id = "get_agent",
     tag = "Identities",
     summary = "Mostra um agente",
-    description = "`{agent}` aceita o id (`ag_…`) ou `app/agente` (codificado como `app%2Fagente`). Exige token admin com `read`.",
+    description = "`{agent}` aceita o id (`ag_…`) ou `app/agente` (codificado como `app%2Fagente`). Exige token admin com `read`, ou token app com `read` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(("agent" = String, Path, description = "Id (`ag_…`) ou `app/agente`")),
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "Agente", body = Agent),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`AGENT_NOT_FOUND`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
@@ -268,12 +268,13 @@ pub async fn get_agent(
     operation_id = "create_agent",
     tag = "Identities",
     summary = "Cria um agente num app",
-    description = "O slug é único dentro do app. Aceita `Idempotency-Key`. Exige token admin com `write`.",
+    description = "O slug é único dentro do app. Repetir com os mesmos campos devolve o agente existente com `200` e `created: false`; com outros campos, `409 SLUG_ALREADY_EXISTS` com `details.existing`. Aceita `Idempotency-Key`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` em outro).",
     params(("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")),
     request_body = CreateAgentBody,
     security(("bearerAuth" = [])),
     responses(
-        (status = 201, description = "Agente criado", body = Agent),
+        (status = 201, description = "Agente criado", body = AgentWrite),
+        (status = 200, description = "Agente equivalente já existia (`created: false`)", body = AgentWrite),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
         (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
@@ -295,7 +296,12 @@ pub async fn create_agent(
         .core
         .create_agent(&principal, body, key.as_deref())
         .await?;
-    Ok(mutation(StatusCode::CREATED, result))
+    let status = if result.value.created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok(mutation(status, result))
 }
 
 #[utoipa::path(
@@ -304,7 +310,7 @@ pub async fn create_agent(
     operation_id = "update_agent",
     tag = "Identities",
     summary = "Altera ou desativa um agente",
-    description = "Campos omitidos não mudam. `disabled: true` desativa o agente e os tokens dele deixam de autenticar. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`.",
+    description = "Campos omitidos não mudam. `disabled: true` desativa o agente e os tokens dele deixam de autenticar. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(
         ("agent" = String, Path, description = "Id (`ag_…`) ou `app/agente`"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")
@@ -315,7 +321,7 @@ pub async fn create_agent(
         (status = 200, description = "Agente alterado", body = Agent),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`AGENT_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`LAST_ADMIN_TOKEN` ou `IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
@@ -344,7 +350,7 @@ pub async fn update_agent(
     operation_id = "delete_agent",
     tag = "Identities",
     summary = "Exclui um agente com seus tokens",
-    description = "Remove de vez o agente e os tokens dele; a auditoria guarda o registro anterior. Exige token admin com `delete`.",
+    description = "Remove de vez o agente e os tokens dele; a auditoria guarda o registro anterior. Exige token admin com `delete`, ou token app com `delete` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(
         ("agent" = String, Path, description = "Id (`ag_…`) ou `app/agente`"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada por 24 h")
@@ -354,7 +360,7 @@ pub async fn update_agent(
         (status = 200, description = "Agente excluído (estado anterior)", body = Agent),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`AGENT_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`LAST_ADMIN_TOKEN` ou `IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
@@ -381,14 +387,14 @@ pub async fn delete_agent(
     operation_id = "list_tokens",
     tag = "Identities",
     summary = "Lista os tokens, sem segredos",
-    description = "Filtra por `app` e `agent`. Mostra o prefixo público, escopos, expiração, último uso e estado; nunca o segredo. Exige token admin com `read`.",
+    description = "Filtra por `app` e `agent`. Mostra o prefixo público, escopos, expiração, último uso e estado; nunca o segredo. Exige token admin com `read`, ou token app com `read` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(ListTokensQuery),
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "Página de tokens", body = TokenList),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`APP_NOT_FOUND` ou `AGENT_NOT_FOUND`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
@@ -409,7 +415,7 @@ pub async fn list_tokens(
     operation_id = "issue_token",
     tag = "Identities",
     summary = "Emite um token; o segredo aparece só nesta resposta",
-    description = "Token `agent` exige `agent`; token `admin` aceita um agente do mesmo app. `app` pode ser omitido quando `agent` é informado. Os escopos nunca vão além dos do emissor (`SCOPE_REQUIRED`). Com `Idempotency-Key`, a repetição devolve o token sem `secret`. Exige token admin com `write`.",
+    description = "Token `agent` exige `agent`; token `admin` aceita um agente do mesmo app. `app` pode ser omitido quando `agent` é informado. Os escopos nunca vão além dos do emissor (`SCOPE_REQUIRED`). Com `Idempotency-Key`, a repetição devolve o token sem `secret`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada (sem o segredo) por 24 h")),
     request_body = IssueTokenBody,
     security(("bearerAuth" = [])),
@@ -417,7 +423,7 @@ pub async fn list_tokens(
         (status = 201, description = "Token emitido", body = IssuedToken),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`APP_NOT_FOUND` ou `AGENT_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
@@ -445,7 +451,7 @@ pub async fn issue_token(
     operation_id = "update_token",
     tag = "Identities",
     summary = "Altera rótulo, escopos ou expiração de um token",
-    description = "Campos omitidos não mudam; `label` e `expires_at` aceitam `null`. Os escopos nunca vão além dos do emissor. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`.",
+    description = "Campos omitidos não mudam; `label` e `expires_at` aceitam `null`. Os escopos nunca vão além dos do emissor. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(
         ("token" = String, Path, description = "Id do token (`tk_…`)"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")
@@ -456,7 +462,7 @@ pub async fn issue_token(
         (status = 200, description = "Token alterado", body = Token),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`TOKEN_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`LAST_ADMIN_TOKEN` ou `IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
@@ -485,7 +491,7 @@ pub async fn update_token(
     operation_id = "revoke_token",
     tag = "Identities",
     summary = "Revoga um token imediatamente",
-    description = "O token deixa de autenticar na próxima requisição. Revogar de novo não muda nada. Recusado com `LAST_ADMIN_TOKEN` para o último admin ativo com `write`. Exige token admin com `delete`.",
+    description = "O token deixa de autenticar na próxima requisição. Revogar de novo não muda nada. Recusado com `LAST_ADMIN_TOKEN` para o último admin ativo com `write`. Exige token admin com `delete`, ou token app com `delete` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(
         ("token" = String, Path, description = "Id do token (`tk_…`)"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada por 24 h")
@@ -494,7 +500,7 @@ pub async fn update_token(
     responses(
         (status = 200, description = "Token revogado", body = Token),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`TOKEN_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`LAST_ADMIN_TOKEN` ou `IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
@@ -513,4 +519,41 @@ pub async fn revoke_token(
         .revoke_token(&principal, &token, key.as_deref())
         .await?;
     Ok(mutation(StatusCode::OK, result))
+}
+
+#[utoipa::path(
+    post,
+    path = "/v1/tokens/{token}/rotate",
+    operation_id = "rotate_token",
+    tag = "Identities",
+    summary = "Emite um token igual e revoga o antigo; o segredo aparece só nesta resposta",
+    description = "Na mesma transação, emite um token com o mesmo app, agente, tipo, escopos, rótulo e expiração e revoga o antigo (auditoria `token.rotate`). Só token ativo. Use quando o segredo se perdeu, para não deixar token órfão. Exige token admin com `write` (qualquer token) ou token app com `write` (tokens de agente do próprio app).",
+    params(
+        ("token" = String, Path, description = "Id do token (`tk_…`)"),
+        ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada por 24 h (sem o segredo)")
+    ),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 201, description = "Token novo emitido e antigo revogado", body = IssuedToken),
+        (status = 400, description = "`VALIDATION_ERROR` (token não ativo)", body = ErrorResponse),
+        (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
+        (status = 404, description = "`TOKEN_NOT_FOUND`", body = ErrorResponse),
+        (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
+        (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
+        (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
+        (status = 504, description = "`REQUEST_TIMEOUT`", body = ErrorResponse)
+    )
+)]
+pub async fn rotate_token(
+    State(state): State<AppState>,
+    Auth(principal): Auth,
+    key: IdempotencyKey,
+    ApiPath(token): ApiPath<String>,
+) -> Result<Response, ApiError> {
+    let result = state
+        .core
+        .rotate_token(&principal, &token, key.as_deref())
+        .await?;
+    Ok(mutation(StatusCode::CREATED, result))
 }

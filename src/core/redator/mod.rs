@@ -492,6 +492,10 @@ impl<S: Store> Core<S> {
             return JobOutcome::Done("skipped");
         };
         let rewrite = config.rewrite_text && !title_only;
+        if memory.title_locked && !rewrite {
+            // Título do cliente (0.11.0): nada a gerar e nenhum texto a revisar.
+            return JobOutcome::Done("locked");
+        }
         let completion = self
             .complete(
                 &config,
@@ -544,7 +548,7 @@ impl<S: Store> Core<S> {
         let redaction = Redaction {
             memory_id: memory_id.clone(),
             expected_hash: hash,
-            title: output.title,
+            title: (!memory.title_locked).then_some(output.title),
             text: text.map(|text| {
                 let hash = memory_text::content_hash(&text);
                 (text, hash)
