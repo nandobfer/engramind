@@ -53,7 +53,12 @@ async fn initialize_and_tools_list_follow_the_token() {
     let names = tool_names(&listed);
     let expected: Vec<&str> = OPERATIONS
         .iter()
-        .filter(|operation| operation.kind == RequiredKind::Any)
+        .filter(|operation| {
+            matches!(
+                operation.kind,
+                RequiredKind::Any | RequiredKind::AgentOrAdmin
+            )
+        })
         .map(|operation| operation.name)
         .collect();
     assert_eq!(names, expected);

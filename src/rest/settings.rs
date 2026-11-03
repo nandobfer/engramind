@@ -23,7 +23,7 @@ use crate::{
     get,
     path = "/v1/consumer-settings",
     operation_id = "get_consumer_settings",
-    tag = "Settings",
+    tag = "Consumer",
     summary = "Limites de escrita e orçamento do contexto para o app consumidor",
     description = "Só o que governa a escrita e o contexto, para o consumidor validar o texto e mostrar o orçamento sem token admin: `memory.text_min`/`text_max` e `limits.max_batch` globais; `context.budget_tokens`, `titles_budget_tokens`, `default_format` e `text_max_chars`; e, por canal ativo em que o token escreve (token de app: a união dos agentes ativos do app; admin: todos), `memory_text_max`, `budget_tokens`, `category_priorities` e `text_max_chars` efetivos (com a sobreposição do canal). Restrito pelo cabeçalho `Engramind-Channels`. Nunca traz segredo, chave de IA nem configuração do Redator ou dos embeddings. Acompanha os eventos `settings.updated` e `channel.updated`; pode ser cacheado por pouco tempo. Qualquer token com `read`.",
     params(("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão")),

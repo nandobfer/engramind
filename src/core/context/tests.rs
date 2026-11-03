@@ -19,8 +19,8 @@ const SECTION_8: &str = r#"<memories version="cv_3f9e1a">
 </ARCHITECTURE>
 </channel>
 <titles>
-#m_77aa01: Prefixo de versão nos commits de release
-#m_77aa02: Porta padrão do ambiente de preview
+#m_77aa01 [NAMING] @eng/misc: Prefixo de versão nos commits de release
+#m_77aa02 [NAMING] @eng/misc: Porta padrão do ambiente de preview
 </titles>
 <overflow count="12">use search_memories para o restante</overflow>
 </memories>"#;
@@ -121,8 +121,9 @@ fn section_8(format: ContextFormat) -> RenderInput {
     .iter()
     .map(|line| words(line))
     .sum();
-    let titles_budget = words("#m_77aa01: Prefixo de versão nos commits de release")
-        + words("#m_77aa02: Porta padrão do ambiente de preview");
+    let titles_budget =
+        words("#m_77aa01 [NAMING] @eng/misc: Prefixo de versão nos commits de release")
+            + words("#m_77aa02 [NAMING] @eng/misc: Porta padrão do ambiente de preview");
     RenderInput {
         format,
         version: "cv_3f9e1a".to_owned(),
@@ -178,8 +179,8 @@ fn markdown_has_no_ids() {
          ### NAMING\n- Nomes de comandos da CLI usam kebab-case.\n\n\
          ## eng/projeto-atlas\n\n### ARCHITECTURE\n\
          - Toda chamada externa passa pelo cliente central com timeout e retry.\n\n\
-         ## Títulos\n- Prefixo de versão nos commits de release\n\
-         - Porta padrão do ambiente de preview\n\n\
+         ## Títulos\n- [NAMING] @eng/misc: Prefixo de versão nos commits de release\n\
+         - [NAMING] @eng/misc: Porta padrão do ambiente de preview\n\n\
          _+12 memórias: use search_memories para o restante_"
     );
     assert!(!text(&rendered).contains("m_"));
@@ -211,8 +212,18 @@ fn json_carries_ids_titles_and_overflow() {
                 ] }
             ],
             "titles": [
-                { "id": "m_77aa01", "title": "Prefixo de versão nos commits de release" },
-                { "id": "m_77aa02", "title": "Porta padrão do ambiente de preview" }
+                {
+                    "id": "m_77aa01",
+                    "title": "Prefixo de versão nos commits de release",
+                    "category": "NAMING",
+                    "channel": "eng/misc"
+                },
+                {
+                    "id": "m_77aa02",
+                    "title": "Porta padrão do ambiente de preview",
+                    "category": "NAMING",
+                    "channel": "eng/misc"
+                }
             ],
             "overflow": 12
         })
@@ -276,5 +287,72 @@ fn a_channel_cap_limits_only_that_channel() {
     assert_eq!(rendered.view.counts.overflow, 0);
     assert!(!rendered.full_ids.iter().any(|id| id == "m_8f2a1c"));
     assert!(rendered.full_ids.iter().any(|id| id == "m_90ee12"));
-    assert!(text(&rendered).contains("<titles>\n#m_8f2a1c: Testes locais"));
+    assert!(
+        text(&rendered).contains("<titles>\n#m_8f2a1c [CONSTRAINTS] @eng/global: Testes locais")
+    );
+}
+
+#[test]
+fn a_channel_category_priority_changes_who_gets_full_text() {
+    // O orçamento da faixa 1 só cabe as duas primeiras linhas do eng/global.
+    let mut input = section_8(ContextFormat::Tagged);
+    input.full_budget = words(
+        "#m_8f2a1c: Nunca rodar a suíte completa de testes localmente; só os testes afetados.",
+    ) + words(
+        "#m_1b7d0e: Segredos de serviços externos nunca ficam no código nem no repositório.",
+    );
+    let before = render(&input, &Words);
+    assert_eq!(before.full_ids, ["m_8f2a1c", "m_1b7d0e"]);
+    // NAMING acima de CONSTRAINTS só no eng/global: a memória de nomenclatura entra primeiro.
+    input.channels[2].category_priorities =
+        std::collections::BTreeMap::from([("NAMING".to_owned(), 60)]);
+    let after = render(&input, &Words);
+    assert_eq!(after.full_ids[0], "m_44c2aa");
+    assert!(!after.full_ids.iter().any(|id| id == "m_1b7d0e"));
+    assert!(text(&after).contains("<NAMING>\n#m_44c2aa"));
+}
+
+#[test]
+fn text_max_chars_cuts_the_full_band_and_the_budget_counts_the_cut() {
+    let mut input = section_8(ContextFormat::Tagged);
+    input.full_budget = 10_000;
+    input.channels[2].text_max_chars = 10;
+    let rendered = render(&input, &Words);
+    let block = text(&rendered);
+    assert!(block.contains("#m_8f2a1c: Nunca roda…\n"));
+    assert!(block.contains("#m_44c2aa: Nomes de c…\n"));
+    // Outro canal sem corte continua inteiro.
+    assert!(block.contains(
+        "#m_90ee12: Toda chamada externa passa pelo cliente central com timeout e retry.\n"
+    ));
+    assert_eq!(rendered.view.rendered_tokens, words(block));
+    let markdown = render(
+        &RenderInput {
+            format: ContextFormat::Markdown,
+            ..input.clone()
+        },
+        &Words,
+    );
+    assert!(text(&markdown).contains("- Nunca roda…"));
+    let json = render(
+        &RenderInput {
+            format: ContextFormat::Json,
+            ..input
+        },
+        &Words,
+    );
+    let ContextContent::Document(document) = &json.view.content else {
+        panic!("documento esperado");
+    };
+    assert_eq!(
+        document.channels[0].categories[0].memories[0].text,
+        "Nunca roda…"
+    );
+}
+
+#[test]
+fn without_a_cut_the_block_is_byte_identical() {
+    let mut input = section_8(ContextFormat::Tagged);
+    input.channels[2].text_max_chars = 0;
+    assert_eq!(text(&render(&input, &Words)), SECTION_8);
 }

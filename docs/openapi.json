@@ -780,7 +780,7 @@
           "Identities"
         ],
         "summary": "Lista os agentes",
-        "description": "Filtra por `app` (id ou slug). Paginado por `cursor` e `limit`. Exige token admin com `read`.",
+        "description": "Filtra por `app` (id ou slug). Paginado por `cursor` e `limit`. Exige token admin com `read`, ou token app com `read` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "list_agents",
         "parameters": [
           {
@@ -887,7 +887,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -993,7 +993,7 @@
           "Identities"
         ],
         "summary": "Cria um agente num app",
-        "description": "O slug é único dentro do app. Aceita `Idempotency-Key`. Exige token admin com `write`.",
+        "description": "O slug é único dentro do app. Repetir com os mesmos campos devolve o agente existente com `200` e `created: false`; com outros campos, `409 SLUG_ALREADY_EXISTS` com `details.existing`. Aceita `Idempotency-Key`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` em outro).",
         "operationId": "create_agent",
         "parameters": [
           {
@@ -1030,6 +1030,25 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Agente equivalente já existia (`created: false`)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentWrite"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Agente criado",
             "headers": {
@@ -1044,7 +1063,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Agent"
+                  "$ref": "#/components/schemas/AgentWrite"
                 }
               }
             }
@@ -1240,7 +1259,7 @@
           "Identities"
         ],
         "summary": "Mostra um agente",
-        "description": "`{agent}` aceita o id (`ag_…`) ou `app/agente` (codificado como `app%2Fagente`). Exige token admin com `read`.",
+        "description": "`{agent}` aceita o id (`ag_…`) ou `app/agente` (codificado como `app%2Fagente`). Exige token admin com `read`, ou token app com `read` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "get_agent",
         "parameters": [
           {
@@ -1328,7 +1347,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -1434,7 +1453,7 @@
           "Identities"
         ],
         "summary": "Exclui um agente com seus tokens",
-        "description": "Remove de vez o agente e os tokens dele; a auditoria guarda o registro anterior. Exige token admin com `delete`.",
+        "description": "Remove de vez o agente e os tokens dele; a auditoria guarda o registro anterior. Exige token admin com `delete`, ou token app com `delete` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "delete_agent",
         "parameters": [
           {
@@ -1534,7 +1553,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -1659,7 +1678,7 @@
           "Identities"
         ],
         "summary": "Altera ou desativa um agente",
-        "description": "Campos omitidos não mudam. `disabled: true` desativa o agente e os tokens dele deixam de autenticar. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`.",
+        "description": "Campos omitidos não mudam. `disabled: true` desativa o agente e os tokens dele deixam de autenticar. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "update_agent",
         "parameters": [
           {
@@ -1769,7 +1788,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -2961,6 +2980,262 @@
         ]
       }
     },
+    "/v1/apps/{app}/webhook": {
+      "put": {
+        "tags": [
+          "Identities"
+        ],
+        "summary": "Grava ou remove o webhook de um app",
+        "description": "Só a URL e o segredo do webhook, com as regras de `update_app`: `url` http/https sem credenciais, `secret` de 32 a 256 caracteres (só gravado e cifrado, nunca devolvido); `url` exige um segredo (o enviado ou o já gravado); `url: null` remove a URL e o segredo. Não muda nome, descrição nem `disabled`. Auditoria `app.webhook_updated` (sem o segredo) e evento `identities.updated` para o app e os admins. Aceita `Idempotency-Key`. Exige token admin com `write` (qualquer app) ou token app com `write` (só o próprio app, `403 FOREIGN_APP` em outro).",
+        "operationId": "update_app_webhook",
+        "parameters": [
+          {
+            "name": "app",
+            "in": "path",
+            "description": "Id (`app_…`) ou slug do app",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAppWebhookBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "App com o webhook (sem o segredo)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/App"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`APP_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/audit": {
       "get": {
         "tags": [
@@ -3093,6 +3368,400 @@
           },
           "403": {
             "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/categories": {
+      "get": {
+        "tags": [
+          "Consumer"
+        ],
+        "summary": "Lista as categorias de memória",
+        "description": "As categorias de `categories.list`, na ordem gravada (a primeira é a padrão), com `key`, `label` e `priority`. Não exige token admin: qualquer token com `read`.",
+        "operationId": "list_categories",
+        "parameters": [
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Categorias",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryList"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Consumer"
+        ],
+        "summary": "Cria uma categoria de memória sem sobrescrever as existentes",
+        "description": "Acrescenta `{ key, label, priority }` ao fim de `categories.list` (auditoria `category.create`, evento `settings.updated`); a `version` do contexto muda. Repetir com os mesmos campos devolve a existente com `200` e `created: false`; a mesma `key` com outro `label` ou `priority` dá `409 CATEGORY_CONFLICT`; lista cheia, `409 CATEGORY_LIMIT_REACHED`. Editar e remover continuam com `update_settings` (admin). Aceita `Idempotency-Key`. Qualquer token com `write`.",
+        "operationId": "create_category",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada para o mesmo corpo por 24 h",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCategoryBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Categoria equivalente já existia (`created: false`)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryWrite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Categoria criada",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryWrite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`CATEGORY_CONFLICT`, `CATEGORY_LIMIT_REACHED` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "`PAYLOAD_TOO_LARGE`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -4313,7 +4982,7 @@
           "Network"
         ],
         "summary": "Arquiva um canal",
-        "description": "O canal sai do contexto, da busca e das dicas padrão e de `list_channels` sem `include_archived`; continua legível quando citado pelo slug. Arquivar um canal já arquivado não muda nada. Exige token admin com `write`.",
+        "description": "O canal sai do contexto, da busca e das dicas padrão e de `list_channels` sem `include_archived`; continua legível quando citado pelo slug. Arquivar um canal já arquivado não muda nada. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "archive_channel",
         "parameters": [
           {
@@ -4413,7 +5082,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -4540,7 +5209,7 @@
           "Network"
         ],
         "summary": "Restaura um canal arquivado",
-        "description": "O canal volta ao contexto, à busca e às listagens. Restaurar um canal ativo não muda nada. Exige token admin com `write`.",
+        "description": "O canal volta ao contexto, à busca e às listagens. Restaurar um canal ativo não muda nada. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "restore_channel",
         "parameters": [
           {
@@ -4640,7 +5309,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -5685,13 +6354,193 @@
         ]
       }
     },
+    "/v1/consumer-settings": {
+      "get": {
+        "tags": [
+          "Consumer"
+        ],
+        "summary": "Limites de escrita e orçamento do contexto para o app consumidor",
+        "description": "Só o que governa a escrita e o contexto, para o consumidor validar o texto e mostrar o orçamento sem token admin: `memory.text_min`/`text_max` e `limits.max_batch` globais; `context.budget_tokens`, `titles_budget_tokens`, `default_format` e `text_max_chars`; e, por canal ativo em que o token escreve (token de app: a união dos agentes ativos do app; admin: todos), `memory_text_max`, `budget_tokens`, `category_priorities` e `text_max_chars` efetivos (com a sobreposição do canal). Restrito pelo cabeçalho `Engramind-Channels`. Nunca traz segredo, chave de IA nem configuração do Redator ou dos embeddings. Acompanha os eventos `settings.updated` e `channel.updated`; pode ser cacheado por pouco tempo. Qualquer token com `read`.",
+        "operationId": "get_consumer_settings",
+        "parameters": [
+          {
+            "name": "Engramind-Channels",
+            "in": "header",
+            "description": "Filtro de canais da conexão",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Configurações do consumidor",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsumerSettings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/v1/context": {
       "get": {
         "tags": [
           "Context"
         ],
         "summary": "Bloco de memórias pronto para o prompt",
-        "description": "Memórias `active` e `permanent` dos canais alcançados em modo `inject` (token `admin`: todos os canais ativos), restritas por `channels` e pelo cabeçalho `Engramind-Channels`, em ordem determinística e em duas faixas: texto completo até `context.budget_tokens`, depois `#id: título` até `context.titles_budget_tokens`; o resto é contado em `counts.overflow`. `format`: `tagged` (padrão `context.default_format`), `markdown` (sem ids) ou `json` (`content` é um objeto). O `ETag` é a `version`; com `If-None-Match` igual, responde `304` sem corpo e sem ler o banco.",
+        "description": "Memórias `active` e `permanent` dos canais alcançados em modo `inject` (token `admin`: todos os canais ativos), restritas por `channels` e pelo cabeçalho `Engramind-Channels`, em ordem determinística e em duas faixas: texto completo até `context.budget_tokens`, depois `#id: título` até `context.titles_budget_tokens`; o resto é contado em `counts.overflow`. `format`: `tagged` (padrão `context.default_format`), `markdown` (sem ids) ou `json` (`content` é um objeto). O `ETag` é a `version`; com `If-None-Match` igual, responde `304` sem corpo e sem ler o banco. A faixa de títulos traz a categoria e o canal (`#id [CATEGORIA] @canal: título`). `context.category_priorities` sobrepõe a prioridade das categorias por canal e `context.text_max_chars` corta o texto da faixa 1. `focus` (até 2000 caracteres) põe antes, dentro de cada prioridade de canal, as memórias relevantes (cosseno ≥ `context.focus_min_score` ou termo casado no FTS5), sem LLM; entra na `version` e nunca é gravado em log. Sem embedding (ou com falha/prazo), o foco segue só com o FTS5 (`focus_mode: text`); com falha do FTS5, sem foco (`focus_mode: none`); o modo vem em `focus_mode` e no cabeçalho `Engramind-Focus-Mode`. Foco acima do limite → `400 FOCUS_TOO_LONG`.",
         "operationId": "get_context",
         "parameters": [
           {
@@ -5710,6 +6559,15 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/ContextFormat"
+            }
+          },
+          {
+            "name": "focus",
+            "in": "query",
+            "description": "Texto da tarefa ou da conversa (até 2000 caracteres depois de juntar os espaços): as\nmemórias relevantes (FTS5 + vetor) vêm antes dentro de cada prioridade de canal. Entra na\n`version`; nunca é gravado em log nem em `usage_log`.",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -5757,6 +6615,12 @@
                 },
                 "description": "A `version` entre aspas"
               },
+              "Engramind-Focus-Mode": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Só com `focus`: `hybrid`, `text` ou `none`"
+              },
               "x-request-id": {
                 "schema": {
                   "type": "string",
@@ -5792,7 +6656,7 @@
             }
           },
           "400": {
-            "description": "`VALIDATION_ERROR`",
+            "description": "`VALIDATION_ERROR` ou `FOCUS_TOO_LONG`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -7072,7 +7936,7 @@
           "Search"
         ],
         "summary": "Dicas baratas (id, título e canal) para um texto, sem LLM",
-        "description": "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel }`; o agente busca o texto completo se quiser. Sem embeddings, lista vazia. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`.",
+        "description": "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel, score, method, duplicate }`: `method: vector` com o cosseno, e `duplicate` a partir de `memory.vector_duplicate_threshold`; o agente busca o texto completo se quiser. Sem embeddings, cai para o textual (`method: text`): candidatos do FTS com Jaccard dos termos ≥ `memory.similar_threshold`. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`.",
         "operationId": "get_hints",
         "parameters": [
           {
@@ -7918,7 +8782,7 @@
           "Memories"
         ],
         "summary": "Lista as memórias dos canais alcançados",
-        "description": "Memórias de todos os canais que o token alcança (qualquer modo; canais arquivados só citados pelo slug), restritas por `channels` e pelo cabeçalho `Engramind-Channels`. Padrão `status=active,permanent`. `author` aceita app (`app_…`/slug) ou agente (`ag_…`/`app/agente`); `since` filtra por `updated_at`. `fields=title` devolve só `id`, `title`, `channel`, `category` e `status`. Da alteração mais recente à mais antiga, paginado por `cursor` e `limit`.",
+        "description": "Memórias de todos os canais que o token alcança (qualquer modo; canais arquivados só citados pelo slug), restritas por `channels` e pelo cabeçalho `Engramind-Channels`. Padrão `status=active,permanent`. `author` aceita app (`app_…`/slug) ou agente (`ag_…`/`app/agente`); `since` filtra por `updated_at`. `fields=title` devolve só `id`, `title`, `channel`, `category` e `status`. Da alteração mais recente à mais antiga, paginado por `cursor` e `limit`. Filtros novos: `tag` repetido (`tag=a&tag=b`, E lógico) e `key` exato. Cada memória traz `key`, `tags`, `title_locked` e `last_origin`.",
         "operationId": "list_memories",
         "parameters": [
           {
@@ -7973,6 +8837,27 @@
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "description": "Só as que têm esta tag; repita o parâmetro (`tag=a&tag=b`) para exigir todas (E lógico).",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "description": "Só a memória com esta chave (`key`).",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -8179,7 +9064,7 @@
           "Memories"
         ],
         "summary": "Grava uma memória num canal",
-        "description": "Exige `write` efetivo no canal. Grava na hora com título provisório (`title_state: pending`), a revisão 1 e a auditoria, e enfileira o Redator e o embedding; nunca espera o LLM. Texto igual (normalizado) a outra memória do canal devolve a existente com `duplicate: true` e `200`, sem gravar. `similar` traz até três memórias parecidas do canal: prefira `update_memory` a uma quase-duplicata. Aceita `Idempotency-Key`.",
+        "description": "Exige `write` efetivo no canal. Grava na hora com título provisório (`title_state: pending`), a revisão 1 e a auditoria, e enfileira o Redator e o embedding; nunca espera o LLM. Texto igual (normalizado) a outra memória do canal devolve a existente com `duplicate: true` e `200`, sem gravar. `similar` traz até três memórias parecidas do canal: prefira `update_memory` a uma quase-duplicata. Aceita `Idempotency-Key`. `title` (3 a 200) grava um título do cliente travado (`title_locked: true`, `title_state: ready`) que o Redator não troca. `tags` (até 20, de 1 a 40) não entram no `content_hash`. `key` (1 a 80, `A-Z a-z 0-9 : _ -`) é única no canal e imutável: repetida sem `upsert` → `409 MEMORY_KEY_EXISTS` (`details.existing_id`); com `upsert: true`, a memória existente é editada e volta com `created: false` e `200` (sem revisão se nada mudou). Com `key`, o dedupe exato por texto não se aplica. `created` diz se uma memória nova foi gravada.",
         "operationId": "create_memory",
         "parameters": [
           {
@@ -8457,7 +9342,7 @@
           "Integration"
         ],
         "summary": "Importa memórias em lote preservando data, autoria e origem",
-        "description": "Grava até `limits.max_batch` memórias num canal ativo, numa transação: tudo é validado antes (um item inválido recusa o lote, com `details.index`). Preserva `created_at` (não futuro), o autor (`author: { app, agent? }`, que precisa existir; omitido, o token) e `origin`; cria a revisão 1, enfileira o Redator e os embeddings e um único evento `memory.created` com os ids criados. Textos iguais a uma memória do canal (ou a um item anterior do lote) ficam em `duplicates`. Exige `Idempotency-Key` e token admin com `write`.",
+        "description": "Grava até `limits.max_batch` memórias num canal ativo, numa transação: tudo é validado antes (um item inválido recusa o lote, com `details.index`). Preserva `created_at` (não futuro), o autor (`author: { app, agent? }`, que precisa existir; omitido, o token) e `origin`; cria a revisão 1, enfileira o Redator e os embeddings e um único evento `memory.created` com os ids criados. Textos iguais a uma memória do canal (ou a um item anterior do lote) ficam em `duplicates`. Exige `Idempotency-Key` e token admin com `write`, ou token app com `write` (só nos canais que os agentes ativos do app alcançam com `write`; autor do próprio app, `403 FOREIGN_APP` em outro).",
         "operationId": "import_memories",
         "parameters": [
           {
@@ -8555,7 +9440,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -8701,7 +9586,7 @@
           "Search"
         ],
         "summary": "Busca memórias por sentido e por texto",
-        "description": "Busca híbrida nos canais em modo `inject` e `search`; canais `manage` e arquivados só entram citados pelo slug em `channels` ou no `Engramind-Channels`. O ramo vetorial compara o embedding da consulta com os vetores do modelo vigente (cosseno do sqlite-vec) e o textual usa FTS5/BM25 sem acentos; a fusão RRF dá `score = Σ peso / (search.rrf_k + posição)` com `search.vector_weight` e `search.text_weight`. Sem embeddings (desligados, sem configuração, provedor com falha ou acima de 2 s), só o FTS e `mode: text`. Padrão `limit = search.default_limit` (máximo 50), só memórias ativas e fixadas (`include_archived` inclui as arquivadas). `exclude_ids` e `exclude_context` tiram o que já está no contexto. Leitura: não aceita `Idempotency-Key`.",
+        "description": "Busca híbrida nos canais em modo `inject` e `search`; canais `manage` e arquivados só entram citados pelo slug em `channels` ou no `Engramind-Channels`. O ramo vetorial compara o embedding da consulta com os vetores do modelo vigente (cosseno do sqlite-vec) e o textual usa FTS5/BM25 sem acentos; a fusão RRF dá `score = Σ peso / (search.rrf_k + posição)` com `search.vector_weight` e `search.text_weight`. Sem embeddings (desligados, sem configuração, provedor com falha ou acima de 2 s), só o FTS e `mode: text`. Padrão `limit = search.default_limit` (máximo 50), só memórias ativas e fixadas (`include_archived` inclui as arquivadas). `exclude_ids` e `exclude_context` tiram o que já está no contexto. Leitura: não aceita `Idempotency-Key`. `tags` filtra pelas memórias com todas as tags (E lógico).",
         "operationId": "search_memories",
         "parameters": [
           {
@@ -8910,7 +9795,7 @@
           "Memories"
         ],
         "summary": "Mostra uma memória",
-        "description": "Texto, título, autoria (`app`, `agent`), `origin`, contadores, estados e `version`. Memória num canal fora do alcance do token ou do `Engramind-Channels` responde `MEMORY_NOT_FOUND`.",
+        "description": "Texto, título, autoria (`app`, `agent`), `origin`, contadores, estados e `version`. Memória num canal fora do alcance do token ou do `Engramind-Channels` responde `MEMORY_NOT_FOUND`. Traz também `key`, `tags`, `title_locked`, `last_origin` e `similar`: com vetor do modelo vigente, até três memórias do mesmo canal por cosseno ≥ `memory.vector_similar_threshold` (`method: vector`, `duplicate` a partir de `memory.vector_duplicate_threshold`); sem vetor, o `similar` textual (`method: text`).",
         "operationId": "get_memory",
         "parameters": [
           {
@@ -8947,7 +9832,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Memória",
+            "description": "Memória com `similar`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -8960,7 +9845,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Memory"
+                  "$ref": "#/components/schemas/MemoryDetail"
                 }
               }
             }
@@ -9353,7 +10238,7 @@
           "Memories"
         ],
         "summary": "Edita o texto ou a categoria de uma memória",
-        "description": "Exige `write` efetivo no canal. Com `expected_version`, uma versão diferente responde `409 MEMORY_VERSION_CONFLICT` com `details.current_version`. Texto novo volta o título e o embedding para `pending`, zera `importance` e reenfileira o Redator; texto igual a outra memória do canal responde `409 MEMORY_DUPLICATE` com `details.existing_id`. Sem mudança efetiva, nada é gravado. Aceita `Idempotency-Key`.",
+        "description": "Exige `write` efetivo no canal. Com `expected_version`, uma versão diferente responde `409 MEMORY_VERSION_CONFLICT` com `details.current_version`. Texto novo volta o título e o embedding para `pending`, zera `importance` e reenfileira o Redator; texto igual a outra memória do canal responde `409 MEMORY_DUPLICATE` com `details.existing_id`. Sem mudança efetiva, nada é gravado. Aceita `Idempotency-Key`. `title` grava e trava o título do cliente; `title_locked: false` destrava e enfileira o Redator para gerar um título (com `title` no mesmo corpo → `400`); `title_locked: true` trava o atual. Com título travado, texto novo mantém o título. `tags` substitui (`[]` limpa) sem mexer no `content_hash` nem enfileirar jobs. `origin` grava a origem desta edição em `last_origin` e na revisão.",
         "operationId": "update_memory",
         "parameters": [
           {
@@ -9860,7 +10745,7 @@
           "Memories"
         ],
         "summary": "Lista as revisões de uma memória",
-        "description": "Uma revisão por mudança (`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert`), com texto, título, categoria, status, autor e motivo, da versão mais nova à mais antiga.",
+        "description": "Uma revisão por mudança (`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert`), com texto, título, categoria, status, autor e motivo, da versão mais nova à mais antiga. Cada revisão traz também `title_locked`, `tags` e a `origin` informada nela.",
         "operationId": "memory_history",
         "parameters": [
           {
@@ -10835,7 +11720,7 @@
           "Memories"
         ],
         "summary": "Restaura o conteúdo de uma versão anterior numa revisão nova",
-        "description": "Exige `write` efetivo no canal. Texto, título e categoria da versão pedida voltam numa revisão nova; o histórico nunca é reescrito. O Redator só refaz o título (o texto restaurado fica como está). Conteúdo igual ao atual não muda nada. Aceita `Idempotency-Key`.",
+        "description": "Exige `write` efetivo no canal. Texto, título e categoria da versão pedida voltam numa revisão nova; o histórico nunca é reescrito. O Redator só refaz o título (o texto restaurado fica como está). Conteúdo igual ao atual não muda nada. Aceita `Idempotency-Key`. Também voltam a trava do título (`title_locked`), as tags e a origem da revisão; título travado não é regenerado.",
         "operationId": "revert_memory",
         "parameters": [
           {
@@ -13431,7 +14316,7 @@
           "Network"
         ],
         "summary": "Assina um agente a um canal ou prefixo",
-        "description": "`target` é um canal exato existente (`eng/global`) ou um prefixo terminado em `*` (`eng/*`, `eng/projeto-*`) que vale também para canais criados depois. Com várias assinaturas no mesmo canal, vale a mais específica. `access` só restringe os escopos do token (omitido: os do token). Aceita `Idempotency-Key`. Exige token admin com `write`.",
+        "description": "`target` é um canal exato (`eng/global`) ou um prefixo terminado em `*` (`eng/*`, `eng/projeto-*`) que vale também para canais criados depois. Um canal exato inexistente é criado na mesma transação (nome = slug, sem descrição; `channel_created: true`); prefixos nunca criam canal. Repetir com o mesmo modo, acesso e prioridade devolve a assinatura existente com `200` e `created: false`; com outros campos, `409 SUBSCRIPTION_EXISTS` com `details.existing`. Com várias assinaturas no mesmo canal, vale a mais específica. `access` só restringe os escopos do token (omitido: os do token). Aceita `Idempotency-Key`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "subscribe",
         "parameters": [
           {
@@ -13468,6 +14353,25 @@
           "required": true
         },
         "responses": {
+          "200": {
+            "description": "Assinatura equivalente já existia (`created: false`)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionWrite"
+                }
+              }
+            }
+          },
           "201": {
             "description": "Assinatura criada",
             "headers": {
@@ -13482,7 +14386,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Subscription"
+                  "$ref": "#/components/schemas/SubscriptionWrite"
                 }
               }
             }
@@ -13532,7 +14436,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -13678,7 +14582,7 @@
           "Network"
         ],
         "summary": "Cancela uma assinatura",
-        "description": "O agente deixa de alcançar os canais da assinatura na requisição seguinte. Exige token admin com `write`.",
+        "description": "O agente deixa de alcançar os canais da assinatura na requisição seguinte. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "unsubscribe",
         "parameters": [
           {
@@ -13759,7 +14663,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -13884,7 +14788,7 @@
           "Network"
         ],
         "summary": "Altera modo, acesso ou prioridade de uma assinatura",
-        "description": "Campos omitidos não mudam; `access: null` volta aos escopos do token e `priority: null` à prioridade do canal. Agente e alvo não mudam: cancele e assine de novo. Vale na requisição seguinte. Exige token admin com `write`.",
+        "description": "Campos omitidos não mudam; `access: null` volta aos escopos do token e `priority: null` à prioridade do canal. Agente e alvo não mudam: cancele e assine de novo. Vale na requisição seguinte. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "update_subscription",
         "parameters": [
           {
@@ -13994,7 +14898,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -14140,7 +15044,7 @@
           "Identities"
         ],
         "summary": "Lista os tokens, sem segredos",
-        "description": "Filtra por `app` e `agent`. Mostra o prefixo público, escopos, expiração, último uso e estado; nunca o segredo. Exige token admin com `read`.",
+        "description": "Filtra por `app` e `agent`. Mostra o prefixo público, escopos, expiração, último uso e estado; nunca o segredo. Exige token admin com `read`, ou token app com `read` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "list_tokens",
         "parameters": [
           {
@@ -14256,7 +15160,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -14362,7 +15266,7 @@
           "Identities"
         ],
         "summary": "Emite um token; o segredo aparece só nesta resposta",
-        "description": "Token `agent` exige `agent`; token `admin` aceita um agente do mesmo app. `app` pode ser omitido quando `agent` é informado. Os escopos nunca vão além dos do emissor (`SCOPE_REQUIRED`). Com `Idempotency-Key`, a repetição devolve o token sem `secret`. Exige token admin com `write`.",
+        "description": "Token `agent` exige `agent`; token `admin` aceita um agente do mesmo app. `app` pode ser omitido quando `agent` é informado. Os escopos nunca vão além dos do emissor (`SCOPE_REQUIRED`). Com `Idempotency-Key`, a repetição devolve o token sem `secret`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "issue_token",
         "parameters": [
           {
@@ -14463,7 +15367,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -14609,7 +15513,7 @@
           "Identities"
         ],
         "summary": "Altera rótulo, escopos ou expiração de um token",
-        "description": "Campos omitidos não mudam; `label` e `expires_at` aceitam `null`. Os escopos nunca vão além dos do emissor. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`.",
+        "description": "Campos omitidos não mudam; `label` e `expires_at` aceitam `null`. Os escopos nunca vão além dos do emissor. Recusado com `LAST_ADMIN_TOKEN` se deixaria a rede sem admin com `write`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "update_token",
         "parameters": [
           {
@@ -14719,7 +15623,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -14865,7 +15769,7 @@
           "Identities"
         ],
         "summary": "Revoga um token imediatamente",
-        "description": "O token deixa de autenticar na próxima requisição. Revogar de novo não muda nada. Recusado com `LAST_ADMIN_TOKEN` para o último admin ativo com `write`. Exige token admin com `delete`.",
+        "description": "O token deixa de autenticar na próxima requisição. Revogar de novo não muda nada. Recusado com `LAST_ADMIN_TOKEN` para o último admin ativo com `write`. Exige token admin com `delete`, ou token app com `delete` no próprio app (`403 FOREIGN_APP` fora dele).",
         "operationId": "revoke_token",
         "parameters": [
           {
@@ -14946,7 +15850,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -14985,6 +15889,233 @@
           },
           "409": {
             "description": "`LAST_ADMIN_TOKEN` ou `IDEMPOTENCY_KEY_CONFLICT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "`RATE_LIMITED`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "`DATABASE_UNAVAILABLE`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "`REQUEST_TIMEOUT`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/v1/tokens/{token}/rotate": {
+      "post": {
+        "tags": [
+          "Identities"
+        ],
+        "summary": "Emite um token igual e revoga o antigo; o segredo aparece só nesta resposta",
+        "description": "Na mesma transação, emite um token com o mesmo app, agente, tipo, escopos, rótulo e expiração e revoga o antigo (auditoria `token.rotate`). Só token ativo. Use quando o segredo se perdeu, para não deixar token órfão. Exige token admin com `write` (qualquer token) ou token app com `write` (tokens de agente do próprio app).",
+        "operationId": "rotate_token",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "description": "Id do token (`tk_…`)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Repete a resposta gravada por 24 h (sem o segredo)",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "x-request-id",
+            "in": "header",
+            "description": "Optional UUID correlation identifier. Invalid values are replaced.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Token novo emitido e antigo revogado",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IssuedToken"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`VALIDATION_ERROR` (token não ativo)",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "`AUTH_INVALID`",
+            "headers": {
+              "WWW-Authenticate": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Bearer authentication challenge."
+              },
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "`TOKEN_NOT_FOUND`",
+            "headers": {
+              "x-request-id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "description": "UUID correlation identifier used by this request."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -15484,6 +16615,23 @@
           }
         }
       },
+      "AgentWrite": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Agent"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "created": {
+                "type": "boolean",
+                "description": "Ausente numa resposta gravada antes (idempotência): criado."
+              }
+            }
+          }
+        ],
+        "description": "Resposta de `create_agent`: o agente e se ele nasceu agora (`false` na repetição\nequivalente, que devolve o existente com `200`)."
+      },
       "App": {
         "type": "object",
         "required": [
@@ -15781,6 +16929,37 @@
         },
         "additionalProperties": false
       },
+      "CategoryList": {
+        "type": "object",
+        "required": [
+          "categories"
+        ],
+        "properties": {
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Category"
+            },
+            "description": "Na ordem de `categories.list`; a primeira é a padrão."
+          }
+        }
+      },
+      "CategoryWrite": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Category"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "created": {
+                "type": "boolean"
+              }
+            }
+          }
+        ],
+        "description": "Resposta de `create_category`: a categoria e se ela nasceu agora (`false` na repetição\nequivalente, `200`)."
+      },
       "Channel": {
         "type": "object",
         "required": [
@@ -15802,6 +16981,14 @@
           "created_at": {
             "type": "string",
             "example": "2026-10-30T12:00:00.000Z"
+          },
+          "created_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Slug do app cujo token de app criou o canal ao assinar (ciclo de vida, não dono);\n`null` para canais criados pelo admin ou antes da 0.11.0.",
+            "example": "app-a"
           },
           "description": {
             "type": [
@@ -16261,6 +17448,153 @@
           }
         }
       },
+      "ConsumerChannel": {
+        "type": "object",
+        "required": [
+          "channel",
+          "memory_text_max",
+          "budget_tokens",
+          "category_priorities",
+          "text_max_chars"
+        ],
+        "properties": {
+          "budget_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Teto do canal na faixa de texto completo (o global quando não há sobreposição).",
+            "example": 4000,
+            "minimum": 0
+          },
+          "category_priorities": {
+            "type": "object",
+            "description": "Prioridade efetiva de cada categoria no canal.",
+            "additionalProperties": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "propertyNames": {
+              "type": "string"
+            },
+            "example": {
+              "CONSTRAINTS": 60,
+              "PROJECT_RULES": 50
+            }
+          },
+          "channel": {
+            "type": "string",
+            "example": "eng/global"
+          },
+          "memory_text_max": {
+            "type": "integer",
+            "format": "int64",
+            "example": 4000,
+            "minimum": 0
+          },
+          "text_max_chars": {
+            "type": "integer",
+            "format": "int64",
+            "example": 0,
+            "minimum": 0
+          }
+        }
+      },
+      "ConsumerContext": {
+        "type": "object",
+        "required": [
+          "budget_tokens",
+          "titles_budget_tokens",
+          "default_format",
+          "text_max_chars"
+        ],
+        "properties": {
+          "budget_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "example": 4000,
+            "minimum": 0
+          },
+          "default_format": {
+            "type": "string",
+            "example": "tagged"
+          },
+          "text_max_chars": {
+            "type": "integer",
+            "format": "int64",
+            "description": "0 = sem corte.",
+            "example": 0,
+            "minimum": 0
+          },
+          "titles_budget_tokens": {
+            "type": "integer",
+            "format": "int64",
+            "example": 800,
+            "minimum": 0
+          }
+        }
+      },
+      "ConsumerLimits": {
+        "type": "object",
+        "required": [
+          "max_batch"
+        ],
+        "properties": {
+          "max_batch": {
+            "type": "integer",
+            "format": "int64",
+            "example": 100,
+            "minimum": 0
+          }
+        }
+      },
+      "ConsumerMemory": {
+        "type": "object",
+        "required": [
+          "text_min",
+          "text_max"
+        ],
+        "properties": {
+          "text_max": {
+            "type": "integer",
+            "format": "int64",
+            "example": 4000,
+            "minimum": 0
+          },
+          "text_min": {
+            "type": "integer",
+            "format": "int64",
+            "example": 3,
+            "minimum": 0
+          }
+        }
+      },
+      "ConsumerSettings": {
+        "type": "object",
+        "description": "`get_consumer_settings` (0.11.0, item 10): só o que governa a escrita e o contexto, sem\nsegredo nem configuração de provedor.",
+        "required": [
+          "memory",
+          "limits",
+          "context",
+          "channels"
+        ],
+        "properties": {
+          "channels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConsumerChannel"
+            },
+            "description": "Canais ativos em que o token escreve (token de app: a união dos agentes ativos), com os\nvalores efetivos (sobreposição do canal aplicada), por slug."
+          },
+          "context": {
+            "$ref": "#/components/schemas/ConsumerContext"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ConsumerLimits"
+          },
+          "memory": {
+            "$ref": "#/components/schemas/ConsumerMemory"
+          }
+        }
+      },
       "ContextCategory": {
         "type": "object",
         "required": [
@@ -16393,7 +17727,7 @@
           },
           "text": {
             "type": "string",
-            "description": "Texto da memória, sem alteração."
+            "description": "Texto da memória, sem alteração; com `context.text_max_chars`, sem quebras e cortado\ncom `…`."
           }
         }
       },
@@ -16418,9 +17752,20 @@
         "type": "object",
         "required": [
           "id",
-          "title"
+          "title",
+          "category",
+          "channel"
         ],
         "properties": {
+          "category": {
+            "type": "string",
+            "example": "CONSTRAINTS"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Slug do canal da memória (distingue canais privados dos públicos no mesmo bloco).",
+            "example": "eng/global"
+          },
           "id": {
             "type": "string",
             "example": "m_77aa0100"
@@ -16446,6 +17791,17 @@
           },
           "counts": {
             "$ref": "#/components/schemas/ContextCounts"
+          },
+          "focus_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/FocusMode",
+                "description": "Só com `focus`: como ele foi aplicado (também no cabeçalho `Engramind-Focus-Mode`)."
+              }
+            ]
           },
           "format": {
             "$ref": "#/components/schemas/ContextFormat"
@@ -16535,6 +17891,33 @@
         },
         "additionalProperties": false
       },
+      "CreateCategoryBody": {
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "priority"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Maiúsculas, dígitos e `_`, começando por letra (até 40 caracteres).",
+            "example": "QUESTS"
+          },
+          "label": {
+            "type": "string",
+            "description": "De 1 a 80 caracteres.",
+            "example": "Missões"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int64",
+            "description": "De -1000 a 1000; maior entra antes no contexto.",
+            "example": 25
+          }
+        },
+        "additionalProperties": false
+      },
       "CreateChannelBody": {
         "type": "object",
         "required": [
@@ -16590,6 +17973,14 @@
             "description": "Canal (id `ch_…` ou slug) com `write` efetivo.",
             "example": "eng/global"
           },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Chave natural, única no canal e imutável: 1 a 80 de `A-Z a-z 0-9 : _ -`.",
+            "example": "quest:dragao"
+          },
           "origin": {
             "oneOf": [
               {
@@ -16611,10 +18002,39 @@
               }
             ]
           },
+          "tags": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Até 20 tags de 1 a 40 caracteres (espaços nas pontas e repetidas saem); fora do\n`content_hash`, sem Redator nem embedding.",
+            "example": [
+              "missao",
+              "ativa"
+            ]
+          },
           "text": {
             "type": "string",
             "description": "Um fato durável e curto, entre `memory.text_min` e `memory.text_max` caracteres.",
             "example": "Rode só os testes afetados com cargo nextest; a suíte completa fica no CI."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Título do cliente (3 a 200 caracteres): fica travado e o Redator não o troca. Omitido,\no título é provisório até o Redator.",
+            "example": "A Fraqueza do Dragão"
+          },
+          "upsert": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Com `key` existente no canal: atualiza texto, categoria, título, tags e origem e devolve\n`created: false` (sem revisão se nada mudou). Sem `upsert`, `409 MEMORY_KEY_EXISTS`.\nExige `key`."
           }
         },
         "additionalProperties": false
@@ -16860,22 +18280,47 @@
           "title"
         ]
       },
+      "FocusMode": {
+        "type": "string",
+        "description": "Como o `focus` foi aplicado: `hybrid` (FTS5 + vetor), `text` (só FTS5: embedding\ndesligado, com falha ou fora do prazo) ou `none` (FTS5 também falhou: bloco sem foco).",
+        "enum": [
+          "hybrid",
+          "text",
+          "none"
+        ]
+      },
       "Hint": {
         "type": "object",
         "description": "`#id · título · canal`.",
         "required": [
           "id",
           "title",
-          "channel"
+          "channel",
+          "score",
+          "method",
+          "duplicate"
         ],
         "properties": {
           "channel": {
             "type": "string",
             "example": "eng/global"
           },
+          "duplicate": {
+            "type": "boolean",
+            "description": "Cosseno ≥ `memory.vector_duplicate_threshold` (só `vector`): o texto do turno repete a\nmemória; informativo."
+          },
           "id": {
             "type": "string",
             "example": "m_8f2a1c3d"
+          },
+          "method": {
+            "$ref": "#/components/schemas/SimilarMethod"
+          },
+          "score": {
+            "type": "number",
+            "format": "double",
+            "description": "Cosseno (`vector`) ou Jaccard dos termos (`text`), de 0 a 1.",
+            "example": 0.87
           },
           "title": {
             "type": "string",
@@ -16931,7 +18376,7 @@
             "items": {
               "$ref": "#/components/schemas/Hint"
             },
-            "description": "Da mais parecida à menos parecida; vazia sem embeddings."
+            "description": "Da mais parecida à menos parecida."
           }
         }
       },
@@ -17040,7 +18485,7 @@
               },
               {
                 "$ref": "#/components/schemas/ImportAuthor",
-                "description": "Autor original; omitido, o token que importa."
+                "description": "Autor original; omitido, o token que importa (o token de app: o app, sem agente)."
               }
             ]
           },
@@ -17059,6 +18504,14 @@
             ],
             "description": "Instante original (RFC 3339, não futuro); omitido, agora.",
             "example": "2026-01-10T12:00:00Z"
+          },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Chave natural: existente no canal, o item atualiza a memória (upsert, em `updated`).",
+            "example": "local:pedra-alta"
           },
           "origin": {
             "oneOf": [
@@ -17081,10 +18534,28 @@
               }
             ]
           },
+          "tags": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Até 20 tags de 1 a 40 caracteres."
+          },
           "text": {
             "type": "string",
             "description": "Um fato durável e curto, entre `memory.text_min` e `memory.text_max` caracteres.",
             "example": "Rode só os testes afetados com cargo nextest."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Título do cliente (3 a 200), travado; omitido, provisório até o Redator.",
+            "example": "Vila de Pedra Alta"
           }
         },
         "additionalProperties": false
@@ -17130,6 +18601,13 @@
             "items": {
               "$ref": "#/components/schemas/ImportDuplicate"
             }
+          },
+          "updated": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportCreated"
+            },
+            "description": "Itens com `key` existente no canal, aplicados como edição (upsert)."
           }
         }
       },
@@ -17264,7 +18742,7 @@
               "string",
               "null"
             ],
-            "description": "Em `done`: `applied`, `title_only`, `superseded` ou `skipped`."
+            "description": "Em `done`: `applied`, `title_only`, `superseded`, `skipped` ou `locked` (título do cliente)."
           },
           "payload": {
             "type": "object"
@@ -17676,8 +19154,10 @@
           "category",
           "title",
           "title_state",
+          "title_locked",
           "text",
           "status",
+          "tags",
           "version",
           "embedding_state",
           "author",
@@ -17733,6 +19213,25 @@
             "type": "integer",
             "format": "int64"
           },
+          "key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Chave natural, única no canal e imutável (`create_memory` com `upsert`).",
+            "example": "quest:dragao"
+          },
+          "last_origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Origin",
+                "description": "Origem da revisão mais recente que a informou (criação, edição, importação ou\n`revert`); `null` quando nenhuma informou. O Redator e o consolidador não a mudam."
+              }
+            ]
+          },
           "last_retrieved_at": {
             "type": [
               "string",
@@ -17752,7 +19251,8 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/Origin"
+                "$ref": "#/components/schemas/Origin",
+                "description": "Origem informada na criação."
               }
             ]
           },
@@ -17768,12 +19268,27 @@
           "status": {
             "$ref": "#/components/schemas/MemoryStatus"
           },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tags livres, na ordem gravada; não entram no `content_hash`.",
+            "example": [
+              "missao",
+              "ativa"
+            ]
+          },
           "text": {
             "type": "string"
           },
           "title": {
             "type": "string",
             "example": "Use cargo-nextest localmente"
+          },
+          "title_locked": {
+            "type": "boolean",
+            "description": "`true`: título do cliente, que o Redator não troca (`update_memory` com\n`title_locked: false` destrava)."
           },
           "title_state": {
             "$ref": "#/components/schemas/TitleState"
@@ -17827,6 +19342,29 @@
             "minimum": 0
           }
         }
+      },
+      "MemoryDetail": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Memory"
+          },
+          {
+            "type": "object",
+            "required": [
+              "similar"
+            ],
+            "properties": {
+              "similar": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/SimilarMemory"
+                },
+                "description": "Até três memórias `active`/`permanent` do mesmo canal, da mais parecida à menos."
+              }
+            }
+          }
+        ],
+        "description": "`get_memory`: a memória e as parecidas no mesmo canal, calculadas na leitura (0.11.0):\npor cosseno com o vetor do modelo vigente, ou pelo textual sem vetor."
       },
       "MemoryHistory": {
         "type": "object",
@@ -17894,6 +19432,8 @@
           "text",
           "category",
           "status",
+          "title_locked",
+          "tags",
           "author",
           "reason",
           "created_at"
@@ -17910,6 +19450,17 @@
             "type": "string",
             "example": "2026-10-30T12:00:00.000Z"
           },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Origin",
+                "description": "Origem informada nesta revisão; `null` quando nenhuma."
+              }
+            ]
+          },
           "reason": {
             "type": "string",
             "description": "`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert` ou `redact`\n(texto revisado pelo Redator, autor `system/redator`).",
@@ -17918,11 +19469,20 @@
           "status": {
             "$ref": "#/components/schemas/MemoryStatus"
           },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "text": {
             "type": "string"
           },
           "title": {
             "type": "string"
+          },
+          "title_locked": {
+            "type": "boolean"
           },
           "version": {
             "type": "integer",
@@ -17948,7 +19508,8 @@
           "title",
           "channel",
           "category",
-          "status"
+          "status",
+          "tags"
         ],
         "properties": {
           "category": {
@@ -17966,6 +19527,12 @@
           "status": {
             "$ref": "#/components/schemas/MemoryStatus"
           },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "title": {
             "type": "string",
             "example": "Use cargo-nextest localmente"
@@ -17981,6 +19548,10 @@
           "similar"
         ],
         "properties": {
+          "created": {
+            "type": "boolean",
+            "description": "`true` quando uma memória nova foi gravada; `false` na duplicata, na edição e no upsert\nde uma `key` existente."
+          },
           "duplicate": {
             "type": "boolean",
             "description": "`true` quando o texto já existia no canal e nada foi gravado."
@@ -18491,6 +20062,19 @@
             "type": "string",
             "description": "Texto livre (até 500 caracteres); acentos e caixa são ignorados.",
             "example": "testes locais"
+          },
+          "tags": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Só as memórias com todas estas tags (E lógico).",
+            "example": [
+              "missao"
+            ]
           }
         },
         "additionalProperties": false
@@ -18686,20 +20270,36 @@
             "type": "string",
             "example": "eng/global"
           },
+          "duplicate": {
+            "type": "boolean",
+            "description": "Cosseno ≥ `memory.vector_duplicate_threshold` (só `vector`); informativo, nunca recusa."
+          },
           "id": {
             "type": "string",
             "example": "m_1b2c3d4e"
           },
+          "method": {
+            "$ref": "#/components/schemas/SimilarMethod",
+            "description": "`text` (termos, na escrita e sem vetor) ou `vector` (cosseno, na leitura)."
+          },
           "score": {
             "type": "number",
             "format": "double",
-            "description": "Similaridade de 0 a 1.",
+            "description": "Similaridade de 0 a 1: Jaccard dos termos (`text`) ou cosseno dos vetores (`vector`).",
             "example": 0.91
           },
           "title": {
             "type": "string"
           }
         }
+      },
+      "SimilarMethod": {
+        "type": "string",
+        "description": "Como o `similar` foi calculado.",
+        "enum": [
+          "text",
+          "vector"
+        ]
       },
       "SkipReason": {
         "type": "string",
@@ -18814,7 +20414,7 @@
           },
           "target": {
             "type": "string",
-            "description": "Canal exato existente (`eng/global`) ou prefixo terminado em `*` (`eng/*`,\n`eng/projeto-*`), que vale também para canais criados depois.",
+            "description": "Canal exato (`eng/global`) ou prefixo terminado em `*` (`eng/*`, `eng/projeto-*`), que\nvale também para canais criados depois. Um canal exato inexistente é criado junto (nome =\nslug, sem descrição); prefixos nunca criam canal.",
             "example": "eng/projeto-*"
           }
         },
@@ -18907,6 +20507,25 @@
             "description": "Em ordem de criação."
           }
         }
+      },
+      "SubscriptionWrite": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Subscription"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "channel_created": {
+                "type": "boolean"
+              },
+              "created": {
+                "type": "boolean"
+              }
+            }
+          }
+        ],
+        "description": "Resposta de `subscribe`: a assinatura, se ela nasceu agora (`false` na repetição\nequivalente, `200`) e se o canal exato foi criado junto."
       },
       "Task": {
         "type": "string",
@@ -19122,7 +20741,8 @@
         "description": "Tipo do token.",
         "enum": [
           "agent",
-          "admin"
+          "admin",
+          "app"
         ]
       },
       "TokenList": {
@@ -19195,6 +20815,28 @@
         },
         "additionalProperties": false
       },
+      "UpdateAppWebhookBody": {
+        "type": "object",
+        "description": "Webhook do app (0.11.0): `url: null` remove a URL e o segredo; URL exige segredo (o\nenviado ou o já gravado).",
+        "properties": {
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Segredo do HMAC (32 a 256 caracteres); só gravado e cifrado, nunca devolvido."
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Destino dos eventos (`http://` ou `https://`, sem credenciais); `null` remove.",
+            "example": "https://consumidor.interno/engramind/events"
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateBody": {
         "type": "object",
         "description": "Campos omitidos não mudam; `description: null` limpa; `disabled` desativa ou reativa.",
@@ -19263,7 +20905,7 @@
       },
       "UpdateMemoryBody": {
         "type": "object",
-        "description": "Campos omitidos não mudam; informe ao menos `text` ou `category`.",
+        "description": "Campos omitidos não mudam; informe ao menos `text`, `category`, `title`, `title_locked` ou\n`tags`.",
         "properties": {
           "category": {
             "type": [
@@ -19281,11 +20923,47 @@
             "description": "Versão lida; divergente → `409 MEMORY_VERSION_CONFLICT` com `details.current_version`.",
             "example": 1
           },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Origin",
+                "description": "Origem desta edição (vira `last_origin`); omitida, `last_origin` não muda."
+              }
+            ]
+          },
+          "tags": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Substitui as tags (`[]` limpa); omitido, mantém."
+          },
           "text": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Título do cliente (3 a 200): grava e trava. Junto com `title_locked: false` → `400`.",
+            "example": "A Fraqueza do Dragão"
+          },
+          "title_locked": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` trava o título atual; `false` destrava e o Redator gera um título."
           }
         },
         "additionalProperties": false
@@ -19595,7 +21273,7 @@
     },
     {
       "name": "Identities",
-      "description": "Apps, agentes e tokens (token admin)"
+      "description": "Apps, agentes e tokens (token admin; token app no próprio app)"
     },
     {
       "name": "Channels",
@@ -19603,7 +21281,7 @@
     },
     {
       "name": "Network",
-      "description": "Criação e manutenção de canais e assinaturas (token admin)"
+      "description": "Criação e manutenção de canais e assinaturas (token admin; token app para os próprios agentes)"
     },
     {
       "name": "Context",
@@ -19616,6 +21294,10 @@
     {
       "name": "Search",
       "description": "Busca híbrida (vetorial + FTS) e dicas"
+    },
+    {
+      "name": "Consumer",
+      "description": "O que o app consumidor precisa sem token admin: categorias e limites de escrita e contexto"
     },
     {
       "name": "Settings",
@@ -19631,7 +21313,7 @@
     },
     {
       "name": "Integration",
-      "description": "Importação de memórias de outros sistemas (token admin)"
+      "description": "Importação de memórias de outros sistemas (token admin ou app)"
     },
     {
       "name": "Consolidation",

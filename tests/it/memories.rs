@@ -876,7 +876,7 @@ async fn lists_filter_and_unreachable_memories_look_missing() {
     let item = titles["memories"][0].as_object().expect("item");
     assert_eq!(
         item.keys().map(String::as_str).collect::<Vec<_>>(),
-        vec!["category", "channel", "id", "status", "title"]
+        vec!["category", "channel", "id", "status", "tags", "title"]
     );
     let first = list("?limit=1").await;
     assert_eq!(listed(&first), vec![id(&b)]);
@@ -1016,6 +1016,8 @@ async fn channel_settings_stats_categories_and_channel_deletion() {
             "memory.text_max",
             "context.budget_tokens",
             "context.titles_budget_tokens",
+            "context.category_priorities",
+            "context.text_max_chars",
             "redator.instructions",
             "redator.rewrite_text",
             "consolidation.enabled"

@@ -61,6 +61,7 @@ pub const TAG_NETWORK: &str = "Network";
 pub const TAG_CONTEXT: &str = "Context";
 pub const TAG_MEMORIES: &str = "Memories";
 pub const TAG_SEARCH: &str = "Search";
+pub const TAG_CONSUMER: &str = "Consumer";
 pub const TAG_EMBEDDINGS: &str = "Embeddings";
 pub const TAG_SETTINGS: &str = "Settings";
 pub const TAG_STATUS: &str = "Status";
@@ -660,7 +661,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     ),
     read(
         "get_consumer_settings",
-        TAG_SETTINGS,
+        TAG_CONSUMER,
         "Limites de escrita e orçamento do contexto para o app consumidor",
         RequiredKind::Any,
         "/v1/consumer-settings",
@@ -668,7 +669,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     ),
     read(
         "list_categories",
-        TAG_SETTINGS,
+        TAG_CONSUMER,
         "Lista as categorias de memória",
         RequiredKind::Any,
         "/v1/categories",
@@ -678,7 +679,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         kind: RequiredKind::Any,
         ..mutation(
             "create_category",
-            TAG_SETTINGS,
+            TAG_CONSUMER,
             "Cria uma categoria de memória sem sobrescrever as existentes",
             Scope::Write,
             false,

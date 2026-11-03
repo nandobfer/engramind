@@ -33,11 +33,17 @@ No REST, `PUT /v1/settings` com `{ "limits.rate_per_minute": 1200 }`; no MCP, `u
 | `memory.text_max` | integer | 4000 | 10 a 20000 | sim | Caracteres máximos do texto de uma memória. |
 | `memory.dedupe_exact` | boolean | true | — | não | Texto igual (`content_hash` normalizado) a outra memória do canal devolve a existente com `duplicate: true`. |
 | `memory.similar_threshold` | number | 0.85 | 0 a 1 | não | Similaridade mínima para uma memória aparecer em `similar` na resposta de escrita (Jaccard dos termos dos candidatos do FTS; o cosseno entra com a consolidação). |
+| `memory.vector_similar_threshold` | number | 0.8 | 0 a 1 | não | Cosseno mínimo para uma memória aparecer em `similar` (`method: vector`) de `get_memory` e nas dicas, sobre os vetores do modelo vigente no mesmo canal. |
+| `memory.vector_duplicate_threshold` | number | 0.92 | 0 a 1 | não | Cosseno a partir do qual o `similar` vetorial e a dica marcam `duplicate: true` (informativo; nunca recusa a escrita). |
 | `context.budget_tokens` | integer | 4000 | 0 a 200000 | sim | Tokens da faixa de texto completo do contexto. No canal, é o teto da parte dele nessa faixa; o global continua valendo para o bloco. |
 | `context.titles_budget_tokens` | integer | 800 | 0 a 50000 | sim | Tokens da faixa `#id: título` do contexto. No canal, é o teto da parte dele nessa faixa. |
 | `context.default_format` | enum | `tagged` | `tagged`, `markdown`, `json` | não | Formato do contexto quando `format` não é informado (e do resource `engramind://context`). |
 | `context.token_estimator` | enum | `o200k` | `o200k`, `cl100k` | não | Codificação usada para estimar os tokens do contexto (`o200k_base` ou `cl100k_base`). |
 | `context.overflow_line` | boolean | true | — | não | Mostra a linha de excedente (`<overflow count="N">`) quando sobram memórias fora das duas faixas. |
+| `context.category_priorities` | map | {} | mapa de até 50 chaves de `categories.list` para -1000 a 1000 | sim | Sobrepõe a prioridade das categorias na ordem do contexto, `{ "CONSTRAINTS": 60 }`; as chaves precisam existir em `categories.list` (senão `400 SETTING_INVALID` com `details.unknown`). No canal, vale para as memórias dele; as chaves do canal vencem as globais. |
+| `context.text_max_chars` | integer | 0 | 0 a 4000 | sim | Corta cada linha da faixa de texto completo do contexto em tantos caracteres, sem quebras e com `…` (0 = sem corte). O orçamento conta o texto cortado; a busca e as dicas devolvem o texto inteiro. |
+| `context.focus_min_score` | number | 0.35 | 0 a 1 | não | Cosseno mínimo para uma memória contar como relevante ao `focus` de `get_context` (o FTS5 conta qualquer termo casado). Entra na `version` só dos pedidos com foco. |
+| `context.focus_embed_timeout_ms` | integer | 1500 | 100 a 10000 | não | Prazo do embedding do `focus`; vencido ou com falha, o foco segue só com o FTS5 (`focus_mode: text`). |
 | `redator.enabled` | boolean | true | — | não | Liga o Redator. Desligado (ou sem provedor, modelo e chave), toda memória nova recebe `title_state = fallback`, sem chamar o LLM. |
 | `redator.provider` | enum | — | `openai_compatible`, `anthropic`, `gemini` | não | Provedor do LLM: OpenAI-compatível (`/chat/completions`), Anthropic (`/v1/messages`) ou Gemini (`generateContent`). |
 | `redator.model` | text | — | 1 a 200 caracteres | não | Modelo principal do Redator. |

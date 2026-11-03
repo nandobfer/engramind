@@ -1882,6 +1882,8 @@ mod tests {
                 TEXT_MAX,
                 BUDGET_TOKENS,
                 TITLES_BUDGET_TOKENS,
+                CATEGORY_PRIORITIES,
+                TEXT_MAX_CHARS,
                 REDATOR_INSTRUCTIONS,
                 REDATOR_REWRITE_TEXT,
                 CONSOLIDATION_ENABLED

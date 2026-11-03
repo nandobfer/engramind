@@ -219,6 +219,12 @@ impl Principal {
     pub fn is_app(&self) -> bool {
         self.kind == TokenKind::App
     }
+
+    /// Guias e operações de público `admin` na documentação viva: admin e app (que gere as
+    /// identidades do próprio app).
+    pub fn sees_admin_docs(&self) -> bool {
+        matches!(self.kind, TokenKind::Admin | TokenKind::App)
+    }
 }
 
 #[cfg(test)]

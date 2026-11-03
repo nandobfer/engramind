@@ -279,8 +279,9 @@ async fn hints_respect_threshold_modes_and_context() {
             .expect("hint")
             .keys()
             .collect::<Vec<_>>(),
-        ["channel", "id", "title"]
+        ["channel", "duplicate", "id", "method", "score", "title"]
     );
+    assert_eq!(result["hints"][0]["method"], "vector");
     let (code, _) = context
         .call(
             "POST",
