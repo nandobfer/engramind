@@ -118,6 +118,8 @@ engramind context --if-none-match cv_3f9e1a7c0b2d
 
 O bloco renderizado fica num cache em memória com até 1024 entradas, pela `version`. Tokens com o mesmo alcance usam a mesma entrada.
 
+Com webhooks, cada entrega do bloco gera `memory.consumed` por canal (guia `integracao-gestor`), inclusive o `304`, com os ids do bloco em cache; fora do cache (depois de um reinício, por exemplo), o `304` não emite. O consumo não muda a `version`.
+
 ## Contexto e busca
 
 `search_memories` devolve `context_version`, a `version` de `get_context` sem `format` para a mesma seleção. Com `exclude_context: true`, a busca deixa de fora as memórias com texto completo no contexto; as da faixa de títulos continuam buscáveis. `get_hints` deixa de fora as mesmas memórias (guia `busca-e-dicas`).

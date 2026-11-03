@@ -2,6 +2,18 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.12.0] - 2026-11-04
+
+Evento de consumo das memórias (decisão 0034).
+
+### Adicionado
+
+- Webhook `memory.consumed`: `get_context` (também no `304` com o bloco no cache em memória), `search_memories`, `get_hints` e `get_memory` emitem um evento por canal com os ids entregues, assinado e entregue pela fila `webhook` como os demais. Extras `consumption`, `operation`, `app`, `agent` e, no contexto, `title_ids` e `context_version`. Sem texto, título, `query` ou `focus`.
+
+### Alterado
+
+- O guia `integracao-consumidor` passa a excluir `memory.consumed` da regra "evento `memory.*` marca o contexto como sujo". Guias `integracao-gestor`, `contexto-e-cache` e `busca-e-dicas`, desenho, `aicontext` e `docs/openapi.json` atualizados.
+
 ## [0.11.0] - 2026-11-03
 
 Apps consumidores sem token admin, foco no contexto e campos novos de memória (decisões 0028 a 0033).

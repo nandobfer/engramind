@@ -25,6 +25,7 @@ Guias: `contexto-e-cache`, `integracao-consumidor`, `integracao-mcp`.
 - `importance` só muda junto com `channels.version`: o consolidador grava `importance_pending` e `promote_importance` a promove em toda transação que incrementa a versão do canal (009 D-001, [`consolidation.md`](consolidation.md)).
 - A escolha das memórias é a mesma em todos os formatos; o custo é a linha `tagged`.
 - O texto vai para o bloco escapado (D-002); nunca para logs. `304` é `DEBUG`.
+- `memory.consumed` (decisão 0034): o `200` emite pelos grupos de `Rendered.consumed`; o `304` só pelo bloco que já está no `context_cache`/`focus_cache` (`plan.fingerprint`) e nada fora do cache, para manter o `304` sem banco.
 - `injected_count` e `usage_log` só em respostas com conteúdo; `usage_log.at` é RFC 3339 UTC ordenável.
 
 - 0.11.0: `focus` (`context/focus.rs`, decisão 0029) põe as relevantes logo depois da prioridade do canal; a `version` com foco leva o digest, o modelo, o limiar e o modo, e o bloco degradado não entra em cache (LRU próprio `focus_cache`, 64). `context.category_priorities` e `context.text_max_chars` estão em `CONTEXT_RENDER_KEYS`; a faixa de títulos traz `[CAT] @canal`, e o domínio do hash é `v2` (decisão 0030).

@@ -43,7 +43,7 @@ O bloco é determinístico: a mesma rede, as mesmas memórias e as mesmas config
 
 ## Quando reconstruir o prompt
 
-- **Com webhook**: configure `webhook_url` e `webhook_secret` no app (`update_app` pelo admin, ou `update_app_webhook` com o token de app). Os eventos `memory.*`, `channel.updated` e `subscription.updated` dos canais que os seus agentes assinam chegam assinados com HMAC-SHA256; ao receber um, marque o contexto do canal como sujo e chame `get_context` no próximo turno. Verificação, tipos e retentativas estão no guia `integracao-gestor` (para tokens `admin`).
+- **Com webhook**: configure `webhook_url` e `webhook_secret` no app (`update_app` pelo admin, ou `update_app_webhook` com o token de app). Os eventos `memory.*`, `channel.updated` e `subscription.updated` dos canais que os seus agentes assinam chegam assinados com HMAC-SHA256; ao receber um, marque o contexto do canal como sujo e chame `get_context` no próximo turno. A exceção é `memory.consumed`, que só avisa que memórias foram entregues (por `get_context`, `search_memories`, `get_hints` ou `get_memory`) e não muda nada: use-o para mostrar o consumo ao vivo, nunca para invalidar o contexto. Verificação, tipos e retentativas estão no guia `integracao-gestor` (para tokens `admin`).
 - **Sem webhook**: o `get_context` com `If-None-Match` no início de cada turno já é o aviso: um `304` de poucos bytes quando nada mudou.
 
 ## Ferramentas do agente

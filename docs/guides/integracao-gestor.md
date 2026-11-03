@@ -22,7 +22,7 @@ Os destinatários são calculados quando a mutação acontece:
 - `subscription.updated` vai ao app do agente da assinatura e aos apps admin; `settings.updated` global, só aos apps admin; `identities.updated` ao próprio app (mesmo que o webhook acabe de ser gravado) e aos apps admin;
 - app desativado ou sem URL e segredo não recebe nada.
 
-Com `webhooks.enabled = false`, nenhuma mutação enfileira eventos. Mudanças de apps, agentes e tokens não geram eventos: quem as faz é o próprio gestor.
+Com `webhooks.enabled = false`, nenhuma mutação nem leitura enfileira eventos. Mudanças de apps, agentes e tokens não geram eventos: quem as faz é o próprio gestor.
 
 ## Eventos
 
@@ -43,8 +43,29 @@ O corpo nunca tem textos, títulos nem valores de configuração, só identifica
 | `subscription.updated` | `subscribe`, `update_subscription`, `unsubscribe` | `subscription`, `agent` e `target` (canal ou prefixo); `channel` só com alvo exato |
 | `settings.updated` | `update_settings` e `set_secret` (`channel: null`); `update_channel_settings` (com o canal) | `keys`: as chaves alteradas |
 | `identities.updated` | `update_app_webhook` (`channel: null`) | `app`: o slug do app cujo webhook mudou |
+| `memory.consumed` | `get_context` (inclusive o `304` com o bloco em cache), `search_memories`, `get_hints` e `get_memory` que entregam memórias (um evento por canal) | `consumption`, `operation`, `app`, `agent`; no `get_context`, também `title_ids` e `context_version` (seção Consumo) |
 
 `channel_version` é a versão do canal depois da mudança (`null` em `settings.updated` global). Uma mutação que não muda nada (arquivar o que já está arquivado) e a repetição de uma chamada idempotente não geram evento. A nota de importância e a sinalização de desuso do consolidador e `mark_verified` também não: não mudam a `channel_version` nem o contexto (releia com `list_memories`, por exemplo `stale=true`).
+
+## Consumo
+
+`memory.consumed` avisa que uma leitura entregou memórias a quem chamou. Não é mudança: nenhuma versão muda, `channel_version` é a versão atual do canal (não serve para desempate) e o contexto continua o mesmo, então **não marque o contexto como sujo** ao receber este tipo. Sai um evento por canal com ao menos uma memória entregue, para os mesmos destinatários dos eventos do canal; nenhum app recebe ids de um canal que não alcança.
+
+```json
+{ "id": "evt_9c1d…", "type": "memory.consumed", "channel": "eng/global", "channel_version": 42,
+  "memory_ids": ["m_8f2a1c3d"], "at": "2026-10-30T12:00:00.000Z",
+  "consumption": "cns_4b7e…", "operation": "get_context", "app": "app-a", "agent": "app-a/dev",
+  "title_ids": ["m_77aa01ff"], "context_version": "cv_3f9e1a7c0b2d" }
+```
+
+- `memory_ids`: no `get_context`, as memórias com texto completo (faixa 1) do canal; em `search_memories`, `get_hints` e `get_memory`, as devolvidas.
+- `title_ids` e `context_version` (só no `get_context`): as memórias só com título (faixa 2) do canal e a `version` do bloco entregue. Um canal que só entrou na faixa 2 não gera evento.
+- `consumption`: id comum a todos os eventos da mesma chamada (`cns_` + 16 hex), para agrupar uma leitura de vários canais.
+- `operation`: a leitura (`get_context`, `search_memories`, `get_hints` ou `get_memory`).
+- `app` e `agent`: o slug do app do token e o do agente (`app/agente`); `agent: null` para tokens `app` e `admin`.
+- Um `304` do `get_context` emite de novo, com os ids do bloco que ainda está no cache em memória do serviço; depois de um reinício (ou com o bloco fora do cache), o `304` não emite até o próximo `200`.
+- Leitura sem memória entregue não emite. Uma falha ao gravar o evento não derruba a leitura (aviso `webhooks.consumed_failed` no log).
+- O corpo nunca leva texto, título, `query`, `text` das dicas nem `focus`.
 
 ## Entrega e verificação
 

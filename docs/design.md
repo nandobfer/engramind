@@ -876,6 +876,12 @@ TZ=America/Sao_Paulo
   `memory.updated` (a mantida) e `memory.archived` (a fundida) e o arquivamento por desuso gera
   `memory.archived`; a nota de importância, a sinalização de desuso e `mark_verified` não geram
   evento (não mudam a `channel_version`).
+- **Consumo (0.12.0, decisão 0034).** `memory.consumed` é o único evento de leitura: `get_context`
+  (faixa 1 em `memory_ids`, faixa 2 em `title_ids`, mais `context_version`; também no `304` com o
+  bloco no cache em memória), `search_memories`, `get_hints` e `get_memory` emitem um evento por
+  canal com memória entregue, para os destinatários do canal, com `consumption`, `operation`, `app`
+  e `agent`. Não muda versão nem invalida o contexto; os jobs são gravados numa transação curta da
+  própria leitura, e uma falha não derruba a leitura.
 - Destinatários calculados no enfileiramento, um job `webhook` por app na transação da mutação
   (decisão 0023); `subscription.updated` vai ao app do agente; `settings.updated` global, só aos apps
   admin. Mutações de apps, agentes e tokens não geram eventos.
