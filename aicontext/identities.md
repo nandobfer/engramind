@@ -28,4 +28,8 @@
 - Toda mutação de app, agente ou token chama `network_changed()` (o diretório dos webhooks vive na mesma geração da rede).
 - Rate limit e `last_used_at` são em memória (uma instância por banco); `last_used_at` é gravado a cada 10 s e no encerramento.
 
+- Token `app` (`TokenKind::App`, decisão 0028): sem agente, emitido só pelo admin. `RequiredKind::{AdminOrApp, AgentOrAdmin}` no catálogo; o `core` confere o próprio app com `identities::ensure_own_app` (`403 FOREIGN_APP`) e só deixa o app gerir tokens `agent` dos seus agentes. Alcance = união das assinaturas dos agentes ativos (`access::app_reach`, campos internos `Subscription.agent_app_id`/`agent_disabled`).
+- `create_agent` e `subscribe` têm idempotência natural (`200 created: false` se igual; `409` com `details.existing` se diferente). `rotate_token` grava o novo e revoga o antigo numa transação (`token.rotate`). `update_app_webhook` emite `identities.updated`.
+- Guias e operações de público admin aparecem também para o token de app (`Principal::sees_admin_docs`).
+
 Desenho: §4, §6 e §13. Decisões: `0007`, `0008`, `0009`.

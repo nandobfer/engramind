@@ -2,6 +2,33 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.11.0] - 2026-11-03
+
+Apps consumidores sem token admin, foco no contexto e campos novos de memória (decisões 0028 a 0033).
+
+### Adicionado
+
+- Token `kind: app` (emitido só pelo admin): gere os agentes, os tokens de agente e as assinaturas do próprio app, arquiva e restaura os canais que criou, importa memórias nos canais dos seus agentes, grava o próprio webhook e lê canais, contexto, memórias, busca e categorias. Não escreve memórias individuais nem alcança configurações, segredos, status ou auditoria. Migração `0010` (recria `tokens` preservando os dados).
+- Operações `rotate_token` (`POST /v1/tokens/{token}/rotate`, CLI `tokens rotate`), `update_app_webhook` (`PUT /v1/apps/{app}/webhook`, CLI `apps webhook`), `get_consumer_settings` (`GET /v1/consumer-settings`, CLI `settings consumer`), `list_categories` e `create_category` (`/v1/categories`, CLI `categories list|create`), com a tag OpenAPI `Consumer`.
+- `get_context` com `focus` (REST, MCP e `context --focus`): memórias relevantes por FTS5 e cosseno sobem dentro de cada prioridade de canal, sem LLM; `focus_mode` (`hybrid`, `text`, `none`) na resposta e no cabeçalho `Engramind-Focus-Mode`; a `version` depende do foco.
+- Configurações `context.category_priorities` (por canal), `context.text_max_chars` (por canal), `context.focus_min_score`, `context.focus_embed_timeout_ms`, `memory.vector_similar_threshold` e `memory.vector_duplicate_threshold`.
+- Memórias com `title` do cliente (`title_locked`, que o Redator não troca), `tags` (filtro E lógico em `list_memories` e `search_memories`), `key` única por canal com `upsert`, e `last_origin` (origem da última edição que informou uma); `update_memory` aceita `title`, `title_locked`, `tags` e `origin`; a importação aceita `title`, `tags` e `key` (`updated[]` no resultado). Revisões com `origin`, `title_locked` e `tags`. Migração `0011`.
+- `get_memory` com `similar` calculado na leitura (`method: vector` pelo cosseno, `duplicate`); `SimilarMemory` ganha `method` e `duplicate`; cada dica ganha `score`, `method` e `duplicate`.
+- `subscribe` com alvo exato inexistente cria o canal (`channel_created`); `Channel.created_by` (migração `0012`).
+- Evento `identities.updated`. Códigos de erro `FOREIGN_APP`, `FOCUS_TOO_LONG`, `CATEGORY_CONFLICT`, `CATEGORY_LIMIT_REACHED`, `MEMORY_KEY_EXISTS` e `CHANNEL_SHARED`.
+- Receita "agente com canal próprio" no guia `tokens-e-escopos`, com teste de integração que roda duas vezes.
+
+### Alterado
+
+- **Quebra de contrato:** a faixa de títulos do contexto passa a `#id [CATEGORIA] @canal: título` (`- [CATEGORIA] @canal: título` no `markdown`; `category` e `channel` em cada título do `json`), e o domínio do hash da `version` muda: todo consumidor recarrega o bloco uma vez, e uma `version` da 0.10 nunca recebe `304`.
+- `create_agent`, `subscribe` e `create_category` repetidos com os mesmos campos devolvem o existente com `200` e `created: false`; com campos diferentes, o `409` de antes com `details.existing`.
+- `create_memory` responde `created`; com `key`, o dedupe exato por texto não se aplica.
+- `get_hints` sem embeddings deixa de devolver lista vazia e cai para o critério textual (`method: text`).
+- `get_memory` devolve também `similar`; `list_memories` com `fields=title` traz `tags`.
+- O prompt `memory-writing`, o guia `escrever-memorias` e a skill deixam de proibir códigos de tarefa e URLs: a política de memória do app consumidor prevalece.
+- `list_channels`/`get_channel` mostram ao token de app todos os canais, com `reach` onde os agentes dele chegam. Guias com público admin também aparecem para o token de app.
+- Guias, desenho, `aicontext`, skill e `docs/openapi.json` atualizados.
+
 ## [0.10.0] - 2026-10-31
 
 Correção dos provedores: temperatura configurável, motivo real da recusa e carga do modelo local fora da requisição (decisão 0027).

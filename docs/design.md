@@ -198,6 +198,14 @@ consumidor ainda pode filtrar mais (ex.: expor só `search_memories`).
 
 ---
 
+### Token de app (0.11.0)
+
+Implementado: `kind: app`, vinculado a um app e nunca a um agente, emitido só pelo admin. Gere os
+agentes, os tokens de agente e as assinaturas do próprio app, cria canais ao assinar, arquiva e
+restaura os canais que criou, importa memórias nos canais dos seus agentes e grava o próprio webhook.
+Não escreve memórias individuais nem alcança configurações, segredos, status e auditoria. Regras,
+matriz e alcance: decisões `0028` e `0033` e o guia `tokens-e-escopos`.
+
 ## 5. Canais e assinaturas
 
 ### Canal
@@ -1001,7 +1009,8 @@ TZ=America/Sao_Paulo
 
 ### Tomadas
 
-1. **Tokens `agent` e `admin`**, ambos com escopos `read`/`write`/`delete`.
+1. **Tokens `agent` e `admin`**, ambos com escopos `read`/`write`/`delete`. Desde a 0.11.0, também
+   o token `app`, que gere só o próprio app (decisão 0028).
 2. **Agente curador assina os canais-alvo em modo `manage`**, com `read+write`. A memória pertence
    ao canal, e o curador fica registrado como autor.
 3. **Contexto padrão `tagged`** (`#id: texto` agrupado em tags), em duas faixas e com cache em

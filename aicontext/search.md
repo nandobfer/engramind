@@ -23,4 +23,6 @@ Guia: `busca-e-dicas`.
 - As duas contam `retrieval_count` e gravam `usage_log` (`op` = nome da operação) pelos contadores em lote.
 - `similar` na escrita continua textual (Jaccard, decisão 0012); o cosseno entre memórias é da 009.
 
+- 0.11.0: `get_hints` traz `score`, `method` e `duplicate` e, sem embeddings, cai para o textual; `search_memories` filtra `tags` nos dois ramos (decisão 0031).
+
 Desenho: §9 e §11. Decisões: `0012`, `0018` e `0021`.

@@ -20,4 +20,6 @@
 - `/metrics` exige `admin`·`read` (`Core::metrics_snapshot`); rótulos fechados, nunca slug, id ou URL.
 - Retenção só por `Store::purge_before` com o enum `RetentionTable`, em lotes de 5.000.
 
+- `identities.updated` (0.11.0) só sai de `update_app_webhook`, para o próprio app (mesmo sem webhook anterior) e os admins (`Core::identities_event`); `rotate_token` está em `WITHOUT_EVENTS`.
+
 Guias: `integracao-gestor`, `integracao-consumidor`, `operacao`. Desenho: §6, §12, §17, §20. Decisões: `0022`, `0023`, `0024`.

@@ -30,4 +30,6 @@ Guia: `canais-e-assinaturas`.
 - `Network.channel_settings` traz as sobreposições de configuração por canal; mudá-las chama `network_changed()`. Mutações de memória também invalidam o cache, porque mudam `channels.version`.
 - Na CLI, nenhum subcomando tem argumento `channels` (o global vira o cabeçalho).
 
+- `subscribe` com alvo exato inexistente cria o canal na mesma transação (`NewSubscription.create_channel`); com token de app, grava `channels.created_by_app_id` (DTO `created_by`). O app arquiva/restaura só os próprios canais, e `CHANNEL_SHARED` se agente ativo de outro app os alcança (decisão 0033).
+
 Desenho: §4, §5, §6 e §19. Decisão: `0010`.
