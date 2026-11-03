@@ -6,13 +6,18 @@ Uma memória é um **fato durável e curto** que outros agentes vão seguir: uma
 
 - Um fato por memória, que continue verdadeiro por semanas ou meses.
 - Genérico e autossuficiente: quem lê não tem o contexto da sua conversa.
-- Sem dados sensíveis (segredos, tokens, dados pessoais), sem códigos de tarefa e sem URLs temporárias.
-- Na categoria certa (`categories.list`; as padrão são `PROJECT_RULES`, `ARCHITECTURE`, `CONSTRAINTS`, `CONFIG_VALUES` e `NAMING`). Sem categoria, vale a primeira da lista.
+- Segredos e dados pessoais só com necessidade e no canal certo; códigos de tarefa, URLs, rotas e identificadores podem entrar quando forem úteis e duráveis. A política de memória do app consumidor prevalece sobre estas recomendações: o Engramind não recusa nenhum desses conteúdos.
+- Na categoria certa (`categories.list`; as padrão são `PROJECT_RULES`, `ARCHITECTURE`, `CONSTRAINTS`, `CONFIG_VALUES` e `NAMING`). Sem categoria, vale a primeira da lista. `list_categories` mostra as atuais; qualquer token com `write` cria uma nova com `create_category { key, label, priority }`, que só acrescenta (repetir igual devolve `200 created: false`; a mesma `key` com outro `label` ou `priority`, `409 CATEGORY_CONFLICT`; lista cheia, `409 CATEGORY_LIMIT_REACHED`). Editar e remover continuam com o admin (`update_settings`).
+
+```bash
+engramind categories list --json
+engramind categories create --key QUESTS --label Missões --priority 25 --json
+```
 - Antes de criar, busque. Depois de criar, olhe `similar`: se já existe uma memória parecida, prefira `update_memory` a ter duas quase iguais.
 
 ## Escrever
 
-`create_memory { channel, text, category?, origin?, status? }` exige `write` efetivo no canal. A escrita nunca espera o LLM: a memória nasce na hora com um **título provisório** (a primeira frase, até 100 caracteres, `title_state: pending`), a revisão 1 e a auditoria, e o Redator e o embedding entram numa fila. O Redator troca depois o título provisório por um título de uma linha (`title_state: ready`) e pode revisar o texto numa revisão nova de autor `system/redator`, que o histórico e `revert_memory` preservam; sem Redator configurado, o título provisório fica (`title_state: fallback`).
+`create_memory { channel, text, category?, origin?, status?, title?, tags?, key?, upsert? }` exige `write` efetivo no canal. A escrita nunca espera o LLM: a memória nasce na hora com um **título provisório** (a primeira frase, até 100 caracteres, `title_state: pending`), a revisão 1 e a auditoria, e o Redator e o embedding entram numa fila. O Redator troca depois o título provisório por um título de uma linha (`title_state: ready`) e pode revisar o texto numa revisão nova de autor `system/redator`, que o histórico e `revert_memory` preservam; sem Redator configurado, o título provisório fica (`title_state: fallback`).
 
 - `text` precisa ter entre `memory.text_min` e `memory.text_max` caracteres (o máximo pode ser sobreposto por canal); fora disso, `400 VALIDATION_ERROR` com `details.field: "text"`.
 - Categoria fora de `categories.list` → `400 CATEGORY_NOT_FOUND` com as válidas em `details.valid`.
@@ -21,20 +26,32 @@ Uma memória é um **fato durável e curto** que outros agentes vão seguir: uma
 - **Duplicata exata**: um texto igual a outra memória do canal (comparado sem diferença de caixa, espaços ou forma Unicode) devolve a memória existente com `duplicate: true` e status `200`, sem gravar nada (`memory.dedupe_exact`).
 - **`similar`**: até três memórias do mesmo canal com similaridade de pelo menos `memory.similar_threshold` (de 0 a 1). Até haver embeddings, a nota é a sobreposição dos termos (Jaccard), então só aparecem textos muito parecidos; baixe o limiar se quiser mais sugestões.
 
+- `created`: `true` quando uma memória nova foi gravada; `false` na duplicata e no upsert de uma `key` existente.
+
+### Título, tags, chave e origem
+
+- **`title`** (3 a 200 caracteres, sem quebras de linha): título do cliente, gravado já `ready` e **travado** (`title_locked: true`). O Redator não o troca, nem quando o texto muda; ele só revisa o texto, se `redator.rewrite_text` estiver ligado. Para devolver o título ao Redator, `update_memory` com `title_locked: false` (enfileira só o título).
+- **`tags`** (até 20, de 1 a 40 caracteres; espaços nas pontas e repetidas saem): rótulos livres do consumidor. Não entram no `content_hash`, então trocar só as tags não dispara o Redator nem o embedding (a revisão é gravada). `list_memories` filtra com `tag` repetido (`?tag=missao&tag=ativa`, E lógico) e `search_memories` com `tags: []`.
+- **`key`** (1 a 80 de `A-Z a-z 0-9 : _ -`): chave natural, única no canal e imutável. A mesma `key` de novo → `409 MEMORY_KEY_EXISTS` com `details.existing_id`; com `upsert: true`, a memória existente é editada (texto, categoria, título, tags e origem) e volta com `created: false` e `200`, sem revisão se nada mudou. Com `key`, o dedupe exato por texto não se aplica: a chave é a identidade. O upsert de uma memória arquivada (pela criação ou pela importação) a reativa no status pedido (`active` por padrão), na mesma revisão. `move_memory` leva a `key`; se o destino já tem a mesma, `409 MEMORY_KEY_EXISTS`. Dois upserts simultâneos da mesma chave nunca criam duas memórias. `list_memories` filtra por `key`.
+- **`origin`** na criação fica em `origin`; a origem da **última edição que informou uma** fica em `last_origin` (criação, `update_memory` com `origin`, importação ou `revert` de uma revisão com origem). Cada revisão guarda a própria `origin`. O Redator e o consolidador não mudam `last_origin`; memórias de antes da 0.11.0 ficam com `null` até a próxima edição com origem.
+
 ```bash
 engramind memories create --channel eng/global --category CONSTRAINTS --text "Rode só os testes afetados com cargo nextest; a suíte completa fica no CI." --origin-source curator --json
+engramind memories create --channel dndicas/campanha --title "A Fraqueza do Dragão" --tag missao --key lore:dragao --upsert --text "O dragão teme o gelo eterno." --json
 echo "Texto longo, com várias linhas" | engramind memories create --channel eng/global --text - --json
 ```
 
 ## Editar e reverter
 
-- `update_memory { memory, text?, category?, expected_version? }`. Com `expected_version`, uma versão diferente da atual dá `409 MEMORY_VERSION_CONFLICT` com `details.current_version`: releia e decida, em vez de sobrescrever às cegas.
+- `update_memory { memory, text?, category?, title?, title_locked?, tags?, origin?, expected_version? }`. `title` grava e trava; `title_locked: true` trava o atual e `false` destrava (com `title` no mesmo corpo → `400`); `tags` substitui (`[]` limpa); `origin` vira `last_origin` (sozinho não é edição). Com `expected_version`, uma versão diferente da atual dá `409 MEMORY_VERSION_CONFLICT` com `details.current_version`: releia e decida, em vez de sobrescrever às cegas.
 - Texto novo volta o título e o embedding para `pending`, zera `importance` e reenfileira o Redator. Texto igual a outra memória do canal dá `409 MEMORY_DUPLICATE` com `details.existing_id`. Mudar só a categoria grava uma revisão sem reprocessar. Sem mudança efetiva, nada é gravado.
-- `revert_memory { memory, version }` restaura o texto, o título e a categoria de uma versão do histórico numa **revisão nova**; o histórico nunca é reescrito. Versão inexistente → `404 REVISION_NOT_FOUND`. O Redator só refaz o título, sem reescrever o texto restaurado.
-- `memory_history` lista as revisões, da mais nova à mais antiga, com autor e motivo (`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert`).
+- `revert_memory { memory, version }` restaura o texto, o título, a trava do título, as tags e a categoria de uma versão do histórico numa **revisão nova**; o histórico nunca é reescrito. Versão inexistente → `404 REVISION_NOT_FOUND`. O Redator só refaz o título, sem reescrever o texto restaurado.
+- `memory_history` lista as revisões, da mais nova à mais antiga, com autor, `origin`, `title_locked`, `tags` e motivo (`create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert`).
 
 ```bash
 engramind memories update m_8f2a1c3d --text "Texto revisado" --expected-version 1
+engramind memories update m_8f2a1c3d --tag concluida --origin-source narrador --origin-label "sessão 12"
+engramind memories update m_8f2a1c3d --unlock-title
 engramind memories history m_8f2a1c3d
 engramind memories revert m_8f2a1c3d --version 1
 ```
@@ -46,7 +63,7 @@ engramind memories revert m_8f2a1c3d --version 1
 | `archive_memory` | `write` | Sai do contexto e das dicas; continua buscável com `include_archived`. |
 | `restore_memory` | `write` | A arquivada volta a `active`. |
 | `pin_memory` / `unpin_memory` | `write` | `permanent` entra primeiro no contexto e o consolidador nunca toca; `unpin` volta a `active`. |
-| `move_memory` | `write` na origem e no destino | Troca de canal; duplicata no destino → `409 MEMORY_DUPLICATE`. |
+| `move_memory` | `write` na origem e no destino | Troca de canal levando a `key`; duplicata no destino → `409 MEMORY_DUPLICATE`, `key` já usada no destino → `409 MEMORY_KEY_EXISTS` (ambos com `details.existing_id`). |
 | `mark_verified` | `write` | Registra que alguém conferiu a memória: grava `verified_at` e limpa `stale_candidate`, sem nova revisão, sem mudar a `version` e sem mudar o contexto. |
 | `delete_memory` | `delete` | Apaga a memória e o índice de busca; a auditoria e a última revisão guardam a proveniência. |
 
@@ -63,8 +80,8 @@ Toda mudança de status, canal ou conteúdo grava a revisão (menos a exclusão)
 
 ## Ler e listar
 
-- `get_memory` traz o texto, o título, a autoria, a `origin`, os contadores (`retrieval_count`, gravado em lote a cada poucos segundos), os estados e a `version`. Do consolidador (guia `consolidacao`, token admin) vêm `importance`, `stale_candidate` (sem uso há mais de `consolidation.stale_after_days`; continua no contexto até ser arquivada) e `merged_into` (a memória que recebeu o texto desta numa fusão).
-- `list_memories` lista as memórias dos canais que o token alcança, em qualquer modo, da alteração mais recente à mais antiga. Filtros: `channels` (e o cabeçalho `Engramind-Channels`), `categories`, `status` (padrão `active,permanent`), `author` (app ou agente) `since` (`updated_at`) e `stale` (`true`: só as candidatas por desuso). `fields=title` devolve só `id`, `title`, `channel`, `category` e `status`, para economizar tokens.
+- `get_memory` traz o texto, o título (`title_locked`), a autoria, a `origin` e a `last_origin`, `key`, `tags`, `similar` (calculado na leitura, guia `busca-e-dicas`), os contadores (`retrieval_count`, gravado em lote a cada poucos segundos), os estados e a `version`. Do consolidador (guia `consolidacao`, token admin) vêm `importance`, `stale_candidate` (sem uso há mais de `consolidation.stale_after_days`; continua no contexto até ser arquivada) e `merged_into` (a memória que recebeu o texto desta numa fusão).
+- `list_memories` lista as memórias dos canais que o token alcança, em qualquer modo, da alteração mais recente à mais antiga. Filtros: `channels` (e o cabeçalho `Engramind-Channels`), `categories`, `status` (padrão `active,permanent`), `author` (app ou agente) `since` (`updated_at`), `stale` (`true`: só as candidatas por desuso), `tag` (repetível, E lógico) e `key`. `fields=title` devolve só `id`, `title`, `channel`, `category`, `status` e `tags`, para economizar tokens.
 - Uma memória num canal que o token não alcança, ou fora do `Engramind-Channels`, responde `404 MEMORY_NOT_FOUND`, como se não existisse.
 
 ```bash

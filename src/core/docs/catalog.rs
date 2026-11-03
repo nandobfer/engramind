@@ -81,7 +81,7 @@ const GUIDES: &[GuideSource] = &[
         id: "integracao-consumidor",
         file: "integracao-consumidor.md",
         audience: Audience::All,
-        tags: &[],
+        tags: &["Consumer"],
         content: include_str!("../../../docs/guides/integracao-consumidor.md"),
     },
     GuideSource {

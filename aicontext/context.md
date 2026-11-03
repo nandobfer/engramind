@@ -27,4 +27,6 @@ Guias: `contexto-e-cache`, `integracao-consumidor`, `integracao-mcp`.
 - O texto vai para o bloco escapado (D-002); nunca para logs. `304` é `DEBUG`.
 - `injected_count` e `usage_log` só em respostas com conteúdo; `usage_log.at` é RFC 3339 UTC ordenável.
 
+- 0.11.0: `focus` (`context/focus.rs`, decisão 0029) põe as relevantes logo depois da prioridade do canal; a `version` com foco leva o digest, o modelo, o limiar e o modo, e o bloco degradado não entra em cache (LRU próprio `focus_cache`, 64). `context.category_priorities` e `context.text_max_chars` estão em `CONTEXT_RENDER_KEYS`; a faixa de títulos traz `[CAT] @canal`, e o domínio do hash é `v2` (decisão 0030).
+
 Desenho: §6, §8, §13. Decisões: `0013` e `0014`. Spec: `specs/005-contexto/`.

@@ -86,7 +86,7 @@ pub async fn list(
             );
         }
     }
-    for guide in core.docs().visible_guides(principal.is_admin()) {
+    for guide in core.docs().visible_guides(principal.sees_admin_docs()) {
         resources.push(
             Resource::new(
                 format!("{GUIDE_PREFIX}{}", guide.id),

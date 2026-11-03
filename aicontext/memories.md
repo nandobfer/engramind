@@ -34,4 +34,8 @@ Guia: `escrever-memorias`; skill: `skills/engramind/SKILL.md`.
 - `Memory` expõe `stale_candidate` e `merged_into` (consolidador); `list_memories` filtra por `stale`; `restore_memory` limpa os dois. Edição de texto zera `importance`, `importance_pending` e `stale_candidate`.
 - O texto das memórias nunca vai para logs, auditoria ou mensagens de erro.
 
+- 0.11.0 (decisão 0032): `title` do cliente com `title_locked` (o Redator e a fusão não trocam), `tags` em `memory_tags` (fora do `content_hash`, sem jobs, filtro E lógico), `key` única por canal com `upsert` (o mesmo `patch_memory` na transação do `create_memory`; `409 MEMORY_KEY_EXISTS`) e `last_origin` (só muda com origem informada). As revisões guardam `origin`, `title_locked` e `tags`; `revert` restaura os três. `MemoryWrite.created` diz se nasceu agora.
+- `get_memory` devolve `MemoryDetail` com `similar` vetorial calculado na leitura (decisão 0031).
+- `create_category`/`list_categories` (`core/categories.rs`) para qualquer token com `write`/`read`: só acrescenta a `categories.list`, dentro da transação.
+
 Desenho: §6, §7, §9, §12 e §13. Decisões: `0011` e `0012`.

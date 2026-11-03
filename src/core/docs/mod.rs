@@ -135,7 +135,7 @@ impl<S: Store> Core<S> {
     pub fn get_overview(&self, principal: &Principal) -> Result<DocText, ApiError> {
         self.authorize(principal, "get_overview")?;
         let docs = self.docs();
-        let admin = principal.is_admin();
+        let admin = principal.sees_admin_docs();
         let overview = docs.find_guide("overview", admin)?;
         let mut content = format!(
             "{} {}\n\n{}",
@@ -156,7 +156,7 @@ impl<S: Store> Core<S> {
     pub fn list_guides(&self, principal: &Principal) -> Result<Value, ApiError> {
         self.authorize(principal, "list_guides")?;
         let docs = self.docs();
-        let admin = principal.is_admin();
+        let admin = principal.sees_admin_docs();
         let guides: Vec<Value> = docs
             .visible_guides(admin)
             .map(|guide| {
@@ -196,7 +196,7 @@ impl<S: Store> Core<S> {
         query: GetGuideQuery,
     ) -> Result<DocText, ApiError> {
         self.authorize(principal, "get_guide")?;
-        let guide = self.docs().find_guide(guide, principal.is_admin())?;
+        let guide = self.docs().find_guide(guide, principal.sees_admin_docs())?;
         let Some(heading) = query
             .section
             .as_deref()
@@ -236,7 +236,7 @@ impl<S: Store> Core<S> {
     ) -> Result<Value, ApiError> {
         self.authorize(principal, "search_docs")?;
         let docs = self.docs();
-        let admin = principal.is_admin();
+        let admin = principal.sees_admin_docs();
         let text = query.q.trim();
         let length = text.chars().count();
         if !(2..=MAX_QUERY_CHARS).contains(&length) {
@@ -329,7 +329,7 @@ impl<S: Store> Core<S> {
     ) -> Result<Value, ApiError> {
         self.authorize(principal, "list_operations")?;
         let docs = self.docs();
-        let admin = principal.is_admin();
+        let admin = principal.sees_admin_docs();
         let guide = match query
             .guide
             .as_deref()
@@ -374,7 +374,7 @@ impl<S: Store> Core<S> {
     pub fn get_operation(&self, principal: &Principal, name: &str) -> Result<Value, ApiError> {
         self.authorize(principal, "get_operation")?;
         let docs = self.docs();
-        let admin = principal.is_admin();
+        let admin = principal.sees_admin_docs();
         let name = name.trim();
         let operation = docs.openapi.operation(name, admin).ok_or_else(|| {
             not_found(
@@ -393,7 +393,7 @@ impl<S: Store> Core<S> {
     pub fn get_schema(&self, principal: &Principal, name: &str) -> Result<Value, ApiError> {
         self.authorize(principal, "get_schema")?;
         let docs = self.docs();
-        let admin = principal.is_admin();
+        let admin = principal.sees_admin_docs();
         let name = name.trim();
         if !docs.openapi.schema_visible(name, admin) {
             return Err(not_found(

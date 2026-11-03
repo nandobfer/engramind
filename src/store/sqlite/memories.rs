@@ -19,9 +19,10 @@ use crate::{
         memory_text::hash_hex,
         model::{
             Author, ChannelStats, EmbeddingState, ImportCreated, ImportDuplicate, ImportResult,
-            Memory, MemoryCounts, MemoryFilter, MemoryPatch, MemoryRevision, MemoryStatus,
-            MemoryTarget, MemoryWrite, NewImportedMemory, NewJob, NewMemory, Origin, PendingCounts,
-            Redaction, RetrievalBump, StatusAction, TextQuery, TitleState, WriteContext,
+            Memory, MemoryContent, MemoryCounts, MemoryFilter, MemoryPatch, MemoryRevision,
+            MemoryStatus, MemoryTarget, MemoryWrite, NewImportedMemory, NewJob, NewMemory, Origin,
+            PendingCounts, Redaction, RetrievalBump, StatusAction, TextQuery, TitleChange,
+            TitleState, WriteContext,
         },
         pagination::{Cursor, Page, PageRequest},
     },
@@ -32,7 +33,10 @@ pub(super) const MEMORY_COLUMNS: &str = "m.id, c.slug, m.channel_id, m.category,
      m.text, m.status, m.importance, m.version, m.embedding_state, m.author_app_id, a.slug, \
      m.author_agent_id, ga.slug || '/' || g.slug, m.origin_source, m.origin_label, \
      m.retrieval_count, m.injected_count, m.last_retrieved_at, m.verified_at, m.created_at, \
-     m.updated_at, m.archived_at, m.stale_candidate, m.merged_into";
+     m.updated_at, m.archived_at, m.stale_candidate, m.merged_into, m.title_locked, m.key, \
+     m.last_origin_source, m.last_origin_label, \
+     (SELECT json_group_array(tag) FROM (SELECT tag FROM memory_tags WHERE memory_id = m.id \
+     ORDER BY position))";
 pub(super) const MEMORY_JOINS: &str = "JOIN channels c ON c.id = m.channel_id \
      LEFT JOIN apps a ON a.id = m.author_app_id \
      LEFT JOIN agents g ON g.id = m.author_agent_id \
@@ -88,7 +92,28 @@ pub(super) fn memory_from_row(row: &Row<'_>) -> rusqlite::Result<Memory> {
         archived_at: row.get(23)?,
         stale_candidate: row.get(24)?,
         merged_into: row.get(25)?,
+        title_locked: row.get(26)?,
+        key: row.get(27)?,
+        last_origin: origin_at(row, 28)?,
+        tags: tags_at(row, 30)?,
     })
+}
+
+fn origin_at(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<Origin>> {
+    let source: Option<String> = row.get(index)?;
+    let label: Option<String> = row.get(index + 1)?;
+    Ok(source.map(|source| Origin { source, label }))
+}
+
+/// Lista JSON de tags (`json_group_array` ou a coluna da revisão).
+fn tags_at(row: &Row<'_>, index: usize) -> rusqlite::Result<Vec<String>> {
+    let json: Option<String> = row.get(index)?;
+    match json {
+        None => Ok(Vec::new()),
+        Some(json) => {
+            serde_json::from_str(&json).map_err(|error| invalid(index, error.to_string()))
+        }
+    }
 }
 
 fn revision_from_row(row: &Row<'_>) -> rusqlite::Result<MemoryRevision> {
@@ -106,15 +131,61 @@ fn revision_from_row(row: &Row<'_>) -> rusqlite::Result<MemoryRevision> {
         },
         reason: row.get(9)?,
         created_at: row.get(10)?,
+        title_locked: row.get(11)?,
+        tags: tags_at(row, 12)?,
+        origin: origin_at(row, 13)?,
     })
 }
 
 const REVISION_SELECT: &str = "SELECT r.version, r.title, r.text, r.category, r.status, \
-     r.app_id, a.slug, r.agent_id, ga.slug || '/' || g.slug, r.reason, r.created_at \
+     r.app_id, a.slug, r.agent_id, ga.slug || '/' || g.slug, r.reason, r.created_at, \
+     r.title_locked, r.tags, r.origin_source, r.origin_label \
      FROM memory_revisions r \
      LEFT JOIN apps a ON a.id = r.app_id \
      LEFT JOIN agents g ON g.id = r.agent_id \
      LEFT JOIN apps ga ON ga.id = g.app_id";
+
+/// Uma condição `EXISTS` por tag (E lógico), pelo índice `memory_tags (tag, memory_id)`.
+pub(super) fn push_tags(conditions: &mut Vec<String>, values: &mut Vec<SqlValue>, tags: &[String]) {
+    for tag in tags {
+        conditions.push(
+            "EXISTS (SELECT 1 FROM memory_tags t WHERE t.memory_id = m.id AND t.tag = ?)"
+                .to_owned(),
+        );
+        values.push(SqlValue::Text(tag.clone()));
+    }
+}
+
+/// A memória do canal com essa chave.
+pub(super) fn find_by_key(
+    connection: &Connection,
+    channel_id: &str,
+    key: &str,
+) -> rusqlite::Result<Option<String>> {
+    connection
+        .query_row(
+            "SELECT id FROM memories WHERE channel_id = ?1 AND key = ?2",
+            params![channel_id, key],
+            |row| row.get(0),
+        )
+        .optional()
+}
+
+/// Troca as tags da memória (a ordem é a posição).
+fn write_tags(transaction: &Transaction, id: &str, tags: &[String]) -> Result<(), StoreError> {
+    transaction
+        .execute("DELETE FROM memory_tags WHERE memory_id = ?1", params![id])
+        .map_err(sql_error)?;
+    for (position, tag) in tags.iter().enumerate() {
+        transaction
+            .execute(
+                "INSERT INTO memory_tags (memory_id, tag, position) VALUES (?1, ?2, ?3)",
+                params![id, tag, i64::try_from(position).unwrap_or(i64::MAX)],
+            )
+            .map_err(sql_error)?;
+    }
+    Ok(())
+}
 
 pub(super) fn placeholders(count: usize) -> String {
     vec!["?"; count].join(", ")
@@ -187,6 +258,11 @@ pub(super) fn list_memories(
     }
     if let Some(stale) = filter.stale {
         conditions.push(format!("m.stale_candidate = {}", i64::from(stale)));
+    }
+    push_tags(&mut conditions, &mut values, &filter.tags);
+    if let Some(key) = &filter.key {
+        conditions.push("m.key = ?".to_owned());
+        values.push(SqlValue::Text(key.clone()));
     }
     for (column, value) in [
         ("m.author_app_id = ?", &filter.author_app_id),
@@ -314,6 +390,11 @@ pub(super) fn search_text(
         ));
         values.extend(texts(query.exclude_ids.iter().map(String::as_str)));
     }
+    if !query.only_ids.is_empty() {
+        conditions.push(format!("m.id IN ({})", placeholders(query.only_ids.len())));
+        values.extend(texts(query.only_ids.iter().map(String::as_str)));
+    }
+    push_tags(&mut conditions, &mut values, &query.tags);
     let mut statement = connection.prepare(&format!(
         "SELECT {MEMORY_COLUMNS} FROM memory_fts JOIN memories m ON m.seq = memory_fts.rowid
          {MEMORY_JOINS}
@@ -492,12 +573,23 @@ fn revision(
     reason: &str,
     context: &WriteContext,
 ) -> Result<(), StoreError> {
+    revision_with(transaction, memory, reason, None, context)
+}
+
+/// Revisão com o estado atual da memória (título, trava e tags) e a origem informada.
+fn revision_with(
+    transaction: &Transaction,
+    memory: &Memory,
+    reason: &str,
+    origin: Option<&Origin>,
+    context: &WriteContext,
+) -> Result<(), StoreError> {
     transaction
         .execute(
             "INSERT INTO memory_revisions
                  (memory_id, version, title, text, category, status, app_id, agent_id, reason,
-                  created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                  created_at, title_locked, tags, origin_source, origin_label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 memory.id,
                 memory.version,
@@ -508,8 +600,27 @@ fn revision(
                 context.actor.app_id.as_deref().unwrap_or(SYSTEM_APP),
                 context.actor.agent_id,
                 reason,
-                context.at
+                context.at,
+                memory.title_locked,
+                tags_json(&memory.tags)?,
+                origin.map(|origin| origin.source.as_str()),
+                origin.and_then(|origin| origin.label.as_deref())
             ],
+        )
+        .map_err(sql_error)?;
+    Ok(())
+}
+
+fn tags_json(tags: &[String]) -> Result<String, StoreError> {
+    serde_json::to_string(tags).map_err(|error| StoreError::Internal(error.to_string()))
+}
+
+/// Grava a origem da última edição.
+fn set_last_origin(transaction: &Transaction, id: &str, origin: &Origin) -> Result<(), StoreError> {
+    transaction
+        .execute(
+            "UPDATE memories SET last_origin_source = ?1, last_origin_label = ?2 WHERE id = ?3",
+            params![origin.source, origin.label, id],
         )
         .map_err(sql_error)?;
     Ok(())
@@ -598,12 +709,49 @@ pub(super) fn create_memory(
     context: &WriteContext,
 ) -> Result<MemoryWrite, StoreError> {
     ensure_channel_active(transaction, &new.channel_id)?;
+    // Chave natural (0.11.0): existente → `MEMORY_KEY_EXISTS` ou, com `upsert`, uma edição.
+    if let Some(key) = &new.key
+        && let Some(existing) = find_by_key(transaction, &new.channel_id, key).map_err(sql_error)?
+    {
+        if !new.upsert {
+            return Err(StoreError::Conflict("MEMORY_KEY_EXISTS"));
+        }
+        let before = load(transaction, &existing)?;
+        let mut similar = new.similar.clone();
+        similar.retain(|item| item.id != existing);
+        let patch = MemoryPatch {
+            expected_version: None,
+            content: Some(MemoryContent {
+                title: new.title.clone(),
+                text: new.text.clone(),
+                content_hash: new.content_hash.clone(),
+            }),
+            category: Some(new.category.clone()),
+            title: new.title_locked.then(|| TitleChange {
+                title: Some(new.title.clone()),
+                locked: true,
+            }),
+            tags: new.tags.clone(),
+            origin: new.origin.clone(),
+            dedupe: new.dedupe,
+            // Upsert reafirma o fato: a memória arquivada volta ao status pedido (decisão 0032).
+            restore: Some(new.status),
+            reason: "update",
+            jobs: new.jobs.clone(),
+            similar,
+        };
+        let write = patch_memory(transaction, before, &patch, context)?;
+        journal::remember_as(transaction, context, &write, 200)?;
+        return Ok(write);
+    }
     if new.dedupe
+        && new.key.is_none()
         && let Some(existing) = find_by_hash(transaction, &new.channel_id, &new.content_hash, None)
             .map_err(sql_error)?
     {
         let write = MemoryWrite {
             memory: load(transaction, &existing)?,
+            created: false,
             duplicate: true,
             similar: new.similar.clone(),
         };
@@ -620,9 +768,10 @@ pub(super) fn create_memory(
             "INSERT INTO memories
                  (id, channel_id, category, title, text, status, content_hash, version,
                   title_state, embedding_state, author_app_id, author_agent_id, origin_source,
-                  origin_label, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 'pending', ?13, ?8, ?9, ?10, ?11,
-                     ?12, ?12)",
+                  origin_label, created_at, updated_at, title_locked, key, last_origin_source,
+                  last_origin_label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?14, ?13, ?8, ?9, ?10, ?11,
+                     ?12, ?12, ?15, ?16, ?10, ?11)",
             params![
                 id,
                 new.channel_id,
@@ -636,12 +785,18 @@ pub(super) fn create_memory(
                 origin_source,
                 origin_label,
                 context.at,
-                embedding_state(&new.jobs)
+                embedding_state(&new.jobs),
+                if new.title_locked { "ready" } else { "pending" },
+                new.title_locked,
+                new.key
             ],
         )
-        .map_err(sql_error)?;
+        .map_err(|error| super::unique_conflict(error, "MEMORY_KEY_EXISTS"))?;
+    if let Some(tags) = &new.tags {
+        write_tags(transaction, &id, tags)?;
+    }
     let memory = load(transaction, &id)?;
-    revision(transaction, &memory, "create", context)?;
+    revision_with(transaction, &memory, "create", new.origin.as_ref(), context)?;
     bump_channel(transaction, &new.channel_id)?;
     audit(
         transaction,
@@ -655,6 +810,7 @@ pub(super) fn create_memory(
     journal::emit(transaction, context, std::slice::from_ref(&memory.id))?;
     let write = MemoryWrite {
         memory,
+        created: true,
         duplicate: false,
         similar: new.similar.clone(),
     };
@@ -676,9 +832,48 @@ pub(super) fn import_memories(
     let mut result = ImportResult {
         created: Vec::new(),
         duplicates: Vec::new(),
+        updated: Vec::new(),
     };
+    let mut changed: Vec<String> = Vec::new();
     for item in items {
+        // Chave existente no canal: o item vira uma edição (upsert), com o token como autor.
+        if let Some(key) = &item.key
+            && let Some(existing) = find_by_key(transaction, channel_id, key).map_err(sql_error)?
+        {
+            let before = load(transaction, &existing)?;
+            let patch = MemoryPatch {
+                expected_version: None,
+                content: Some(MemoryContent {
+                    title: item.title.clone(),
+                    text: item.text.clone(),
+                    content_hash: item.content_hash.clone(),
+                }),
+                category: Some(item.category.clone()),
+                title: item.title_locked.then(|| TitleChange {
+                    title: Some(item.title.clone()),
+                    locked: true,
+                }),
+                tags: item.tags.clone(),
+                origin: item.origin.clone(),
+                dedupe,
+                // Como o upsert de `create_memory`: a arquivada volta ao status do item.
+                restore: (item.status != MemoryStatus::Archived).then_some(item.status),
+                reason: "update",
+                jobs: item.jobs.clone(),
+                similar: Vec::new(),
+            };
+            let write = patch_memory_quiet(transaction, before, &patch, context)?;
+            if write.0 {
+                changed.push(existing.clone());
+            }
+            result.updated.push(ImportCreated {
+                index: item.index,
+                id: existing,
+            });
+            continue;
+        }
         if dedupe
+            && item.key.is_none()
             && let Some(existing) = find_by_hash(transaction, channel_id, &item.content_hash, None)
                 .map_err(sql_error)?
         {
@@ -698,9 +893,10 @@ pub(super) fn import_memories(
                 "INSERT INTO memories
                      (id, channel_id, category, title, text, status, content_hash, version,
                       title_state, embedding_state, author_app_id, author_agent_id,
-                      origin_source, origin_label, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 'pending', ?13, ?8, ?9, ?10, ?11,
-                         ?12, ?12)",
+                      origin_source, origin_label, created_at, updated_at, title_locked, key,
+                      last_origin_source, last_origin_label)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?14, ?13, ?8, ?9, ?10, ?11,
+                         ?12, ?12, ?15, ?16, ?10, ?11)",
                 params![
                     id,
                     channel_id,
@@ -714,17 +910,27 @@ pub(super) fn import_memories(
                     origin_source,
                     origin_label,
                     item.created_at,
-                    embedding_state(&item.jobs)
+                    embedding_state(&item.jobs),
+                    if item.title_locked {
+                        "ready"
+                    } else {
+                        "pending"
+                    },
+                    item.title_locked,
+                    item.key
                 ],
             )
-            .map_err(sql_error)?;
+            .map_err(|error| super::unique_conflict(error, "MEMORY_KEY_EXISTS"))?;
+        if let Some(tags) = &item.tags {
+            write_tags(transaction, &id, tags)?;
+        }
         let memory = load(transaction, &id)?;
         transaction
             .execute(
                 "INSERT INTO memory_revisions
                      (memory_id, version, title, text, category, status, app_id, agent_id,
-                      reason, created_at)
-                 VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, 'import', ?8)",
+                      reason, created_at, title_locked, tags, origin_source, origin_label)
+                 VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7, 'import', ?8, ?9, ?10, ?11, ?12)",
                 params![
                     memory.id,
                     memory.title,
@@ -733,7 +939,11 @@ pub(super) fn import_memories(
                     memory.status.as_str(),
                     item.author_app_id,
                     item.author_agent_id,
-                    item.created_at
+                    item.created_at,
+                    memory.title_locked,
+                    tags_json(&memory.tags)?,
+                    origin_source,
+                    origin_label
                 ],
             )
             .map_err(sql_error)?;
@@ -744,7 +954,7 @@ pub(super) fn import_memories(
         });
     }
     let created: Vec<String> = result.created.iter().map(|item| item.id.clone()).collect();
-    if !created.is_empty() {
+    if !created.is_empty() || !changed.is_empty() {
         bump_channel(transaction, channel_id)?;
         journal::audit(
             transaction,
@@ -756,11 +966,14 @@ pub(super) fn import_memories(
                 before: None,
                 after: Some(json!({
                     "created": created,
+                    "updated": changed,
                     "duplicates": result.duplicates.len(),
                 })),
             },
         )?;
-        journal::emit(transaction, context, &created)?;
+        let mut ids = created;
+        ids.extend(changed);
+        journal::emit(transaction, context, &ids)?;
     }
     journal::remember(transaction, context, &result)?;
     Ok(result)
@@ -779,6 +992,20 @@ pub(super) fn update_memory(
     {
         return Err(StoreError::Conflict("MEMORY_VERSION_CONFLICT"));
     }
+    let write = patch_memory(transaction, before, patch, context)?;
+    journal::remember(transaction, context, &write)?;
+    Ok(write)
+}
+
+/// Aplica a edição (sem a idempotência): sem mudança efetiva, nada é gravado (Q-007). O
+/// texto novo volta o título a provisório, salvo título travado; título, trava e tags mudam
+/// sem tocar o `content_hash`; `origin` só vale com alguma mudança.
+fn patch_memory(
+    transaction: &Transaction,
+    before: Memory,
+    patch: &MemoryPatch,
+    context: &WriteContext,
+) -> Result<MemoryWrite, StoreError> {
     ensure_channel_active(transaction, &before.channel_id)?;
     let content = patch
         .content
@@ -788,14 +1015,29 @@ pub(super) fn update_memory(
         .category
         .as_ref()
         .filter(|category| **category != before.category);
-    if content.is_none() && category.is_none() {
-        let write = MemoryWrite {
+    let title = patch.title.as_ref().filter(|change| {
+        change.locked != before.title_locked
+            || change
+                .title
+                .as_ref()
+                .is_some_and(|title| *title != before.title)
+    });
+    let tags = patch.tags.as_ref().filter(|tags| **tags != before.tags);
+    let restore = patch
+        .restore
+        .filter(|_| before.status == MemoryStatus::Archived);
+    if content.is_none()
+        && category.is_none()
+        && title.is_none()
+        && tags.is_none()
+        && restore.is_none()
+    {
+        return Ok(MemoryWrite {
             memory: before,
+            created: false,
             duplicate: false,
             similar: patch.similar.clone(),
-        };
-        journal::remember(transaction, context, &write)?;
-        return Ok(write);
+        });
     }
     if let Some(content) = content
         && patch.dedupe
@@ -811,20 +1053,45 @@ pub(super) fn update_memory(
         return Err(StoreError::Conflict("MEMORY_DUPLICATE"));
     }
     let audit_before = audited(transaction, &before.id)?;
+    let locked_after = title.map_or(before.title_locked, |change| change.locked);
     if let Some(content) = content {
         transaction
             .execute(
-                "UPDATE memories SET title = ?1, text = ?2, content_hash = ?3,
-                     title_state = 'pending', embedding_state = ?5, importance = NULL,
-                     importance_pending = NULL, stale_candidate = 0
-                 WHERE id = ?4",
+                "UPDATE memories SET text = ?1, content_hash = ?2, embedding_state = ?4,
+                     importance = NULL, importance_pending = NULL, stale_candidate = 0
+                 WHERE id = ?3",
                 params![
-                    content.title,
                     content.text,
                     content.content_hash,
                     before.id,
                     embedding_state(&patch.jobs)
                 ],
+            )
+            .map_err(sql_error)?;
+        if !locked_after {
+            // Título provisório até o Redator: só quando não está (nem fica) travado.
+            transaction
+                .execute(
+                    "UPDATE memories SET title = ?1, title_state = 'pending' WHERE id = ?2",
+                    params![content.title, before.id],
+                )
+                .map_err(sql_error)?;
+        }
+    }
+    if let Some(change) = title {
+        if let Some(title) = &change.title {
+            transaction
+                .execute(
+                    "UPDATE memories SET title = ?1 WHERE id = ?2",
+                    params![title, before.id],
+                )
+                .map_err(sql_error)?;
+        }
+        let state = if change.locked { "ready" } else { "pending" };
+        transaction
+            .execute(
+                "UPDATE memories SET title_locked = ?1, title_state = ?2 WHERE id = ?3",
+                params![change.locked, state, before.id],
             )
             .map_err(sql_error)?;
     }
@@ -836,6 +1103,23 @@ pub(super) fn update_memory(
             )
             .map_err(sql_error)?;
     }
+    if let Some(tags) = tags {
+        write_tags(transaction, &before.id, tags)?;
+    }
+    if let Some(status) = restore {
+        // Como `restore_memory`: deixa de ser fundida e volta a ser usada.
+        transaction
+            .execute(
+                "UPDATE memories SET status = ?1, archived_at = NULL, merged_into = NULL,
+                     stale_candidate = 0
+                 WHERE id = ?2",
+                params![status.as_str(), before.id],
+            )
+            .map_err(sql_error)?;
+    }
+    if let Some(origin) = &patch.origin {
+        set_last_origin(transaction, &before.id, origin)?;
+    }
     transaction
         .execute(
             "UPDATE memories SET version = version + 1, updated_at = ?1 WHERE id = ?2",
@@ -843,7 +1127,13 @@ pub(super) fn update_memory(
         )
         .map_err(sql_error)?;
     let after = load(transaction, &before.id)?;
-    revision(transaction, &after, patch.reason, context)?;
+    revision_with(
+        transaction,
+        &after,
+        patch.reason,
+        patch.origin.as_ref(),
+        context,
+    )?;
     bump_channel(transaction, &after.channel_id)?;
     audit(
         transaction,
@@ -853,17 +1143,35 @@ pub(super) fn update_memory(
         Some(audit_before),
         Some(audited(transaction, &after.id)?),
     )?;
-    if content.is_some() {
+    let unlocked = title.is_some_and(|change| !change.locked);
+    if content.is_some() || unlocked {
         enqueue(transaction, &patch.jobs, &after, context)?;
     }
     journal::emit(transaction, context, std::slice::from_ref(&after.id))?;
-    let write = MemoryWrite {
+    Ok(MemoryWrite {
         memory: after,
+        created: false,
         duplicate: false,
         similar: patch.similar.clone(),
+    })
+}
+
+/// `patch_memory` sem o evento por memória (a importação emite um só, com todos os ids);
+/// devolve se algo mudou.
+fn patch_memory_quiet(
+    transaction: &Transaction,
+    before: Memory,
+    patch: &MemoryPatch,
+    context: &WriteContext,
+) -> Result<(bool, MemoryWrite), StoreError> {
+    let version = before.version;
+    let quiet = WriteContext {
+        events: Vec::new(),
+        idempotency: None,
+        ..context.clone()
     };
-    journal::remember(transaction, context, &write)?;
-    Ok(write)
+    let write = patch_memory(transaction, before, patch, &quiet)?;
+    Ok((write.memory.version != version, write))
 }
 
 pub(super) fn set_memory_status(
@@ -950,6 +1258,14 @@ pub(super) fn move_memory(
             return Err(StoreError::Conflict("MEMORY_DUPLICATE"));
         }
     }
+    // A chave é única por canal: a memória leva a chave e colide com a do destino.
+    if let Some(key) = &before.key
+        && find_by_key(transaction, to_channel_id, key)
+            .map_err(sql_error)?
+            .is_some()
+    {
+        return Err(StoreError::Conflict("MEMORY_KEY_EXISTS"));
+    }
     let audit_before = audited(transaction, &before.id)?;
     transaction
         .execute(
@@ -957,7 +1273,7 @@ pub(super) fn move_memory(
              WHERE id = ?3",
             params![to_channel_id, context.at, before.id],
         )
-        .map_err(sql_error)?;
+        .map_err(|error| super::unique_conflict(error, "MEMORY_KEY_EXISTS"))?;
     let after = load(transaction, &before.id)?;
     revision(transaction, &after, "move", context)?;
     bump_channel(transaction, &before.channel_id)?;
@@ -1053,12 +1369,16 @@ pub(super) fn apply_redaction(
         return Err(StoreError::Conflict("MEMORY_CHANGED"));
     }
     let audit_before = audited(transaction, &redaction.memory_id)?;
-    transaction
-        .execute(
-            "UPDATE memories SET title = ?1, title_state = 'ready' WHERE id = ?2",
-            params![redaction.title, redaction.memory_id],
-        )
-        .map_err(sql_error)?;
+    // Título travado (do cliente) nunca é trocado pelo Redator (0.11.0).
+    if let Some(title) = &redaction.title {
+        transaction
+            .execute(
+                "UPDATE memories SET title = ?1, title_state = 'ready'
+                 WHERE id = ?2 AND title_locked = 0",
+                params![title, redaction.memory_id],
+            )
+            .map_err(sql_error)?;
+    }
     let state = if redaction.embed { "pending" } else { "off" };
     if let Some((text, hash)) = &redaction.text {
         transaction
@@ -1115,7 +1435,7 @@ pub(super) fn set_title_fallback(
 ) -> rusqlite::Result<bool> {
     let changed = transaction.execute(
         "UPDATE memories SET title_state = 'fallback'
-         WHERE id = ?1 AND content_hash = ?2 AND title_state = 'pending'",
+         WHERE id = ?1 AND content_hash = ?2 AND title_state = 'pending' AND title_locked = 0",
         params![memory_id, expected_hash],
     )?;
     Ok(changed > 0)
@@ -1204,8 +1524,10 @@ pub(super) fn merge_memories(
     if let Some((text, hash, title)) = &merge.text {
         transaction
             .execute(
-                "UPDATE memories SET text = ?1, content_hash = ?2, title = ?3,
-                     title_state = 'pending', embedding_state = ?4, importance = NULL,
+                "UPDATE memories SET text = ?1, content_hash = ?2,
+                     title = CASE WHEN title_locked = 1 THEN title ELSE ?3 END,
+                     title_state = CASE WHEN title_locked = 1 THEN title_state ELSE 'pending' END,
+                     embedding_state = ?4, importance = NULL,
                      importance_pending = NULL, version = version + 1, updated_at = ?5
                  WHERE id = ?6",
                 params![

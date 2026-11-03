@@ -313,6 +313,18 @@ impl Store for SqliteStore {
             .await
     }
 
+    async fn update_app_webhook(
+        &self,
+        id: String,
+        patch: AppPatch,
+        context: WriteContext,
+    ) -> Result<App, StoreError> {
+        self.mutate(move |transaction| {
+            identities::update_app_webhook(transaction, &id, &patch, &context)
+        })
+        .await
+    }
+
     async fn delete_app(&self, id: String, context: WriteContext) -> Result<App, StoreError> {
         self.mutate(move |transaction| identities::delete_app(transaction, &id, &context))
             .await
@@ -392,6 +404,18 @@ impl Store for SqliteStore {
     async fn revoke_token(&self, id: String, context: WriteContext) -> Result<Token, StoreError> {
         self.mutate(move |transaction| identities::revoke_token(transaction, &id, &context))
             .await
+    }
+
+    async fn rotate_token(
+        &self,
+        old_id: String,
+        new: NewToken,
+        context: WriteContext,
+    ) -> Result<Token, StoreError> {
+        self.mutate(move |transaction| {
+            identities::rotate_token(transaction, &old_id, &new, &context)
+        })
+        .await
     }
 
     async fn bootstrap(
@@ -518,6 +542,15 @@ impl Store for SqliteStore {
             memories::find_by_hash(connection, &channel_id, &content_hash, exclude.as_deref())
         })
         .await
+    }
+
+    async fn find_memory_by_key(
+        &self,
+        channel_id: String,
+        key: String,
+    ) -> Result<Option<String>, StoreError> {
+        self.read(move |connection| memories::find_by_key(connection, &channel_id, &key))
+            .await
     }
 
     async fn list_memories(
@@ -650,6 +683,19 @@ impl Store for SqliteStore {
 
     async fn get_settings(&self) -> Result<Vec<SettingRow>, StoreError> {
         self.read(settings::get_settings).await
+    }
+
+    async fn create_category(
+        &self,
+        category: crate::core::settings::Category,
+        default_json: String,
+        max: usize,
+        context: WriteContext,
+    ) -> Result<crate::core::model::CategoryAppend, StoreError> {
+        self.mutate(move |transaction| {
+            settings::create_category(transaction, &category, &default_json, max, &context)
+        })
+        .await
     }
 
     async fn update_settings(
@@ -836,6 +882,15 @@ impl Store for SqliteStore {
         state: EmbeddingState,
     ) -> Result<u64, StoreError> {
         self.write(move |transaction| vectors::mark_embedding(transaction, &ids, state.as_str()))
+            .await
+    }
+
+    async fn memory_vector(
+        &self,
+        memory_id: String,
+        model_id: String,
+    ) -> Result<Option<Vec<f32>>, StoreError> {
+        self.read(move |connection| vectors::memory_vector(connection, &memory_id, &model_id))
             .await
     }
 

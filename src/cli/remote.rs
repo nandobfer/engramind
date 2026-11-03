@@ -8,10 +8,10 @@ use serde_json::{Map, Value, json};
 use zeroize::Zeroize as _;
 
 use super::{
-    AgentsCommand, AppsCommand, AuditCommand, ChannelSettingsCommand, ChannelsCommand, Command,
-    ConnectionArgs, ConsolidationCommand, DocsCommand, EmbeddingsCommand, JobsCommand,
-    LlmCallsCommand, MemoriesCommand, ProfilesCommand, SecretsCommand, SettingsCommand,
-    SubscriptionsCommand, TokensCommand, UpdateArgs,
+    AgentsCommand, AppsCommand, AuditCommand, CategoriesCommand, ChannelSettingsCommand,
+    ChannelsCommand, Command, ConnectionArgs, ConsolidationCommand, DocsCommand, EmbeddingsCommand,
+    JobsCommand, LlmCallsCommand, MemoriesCommand, ProfilesCommand, SecretsCommand,
+    SettingsCommand, SubscriptionsCommand, TokensCommand, UpdateArgs,
     client::{self, ApiRequest, Connection, Outcome, segment},
     output,
     profiles::{self, Profile},
@@ -126,9 +126,17 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             author,
             since,
             stale,
+            tags,
+            key,
             fields,
             page,
-        } => ApiRequest::new(Method::GET, "/v1/memories".to_owned())
+        } => tags
+            .into_iter()
+            .fold(
+                ApiRequest::new(Method::GET, "/v1/memories".to_owned()),
+                |request, tag| request.query("tag", Some(tag)),
+            )
+            .query("key", key)
             .query("categories", categories)
             .query("status", status)
             .query("author", author)
@@ -145,10 +153,14 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             include_archived,
             exclude_ids,
             exclude_context,
+            tags,
             fields,
         } => {
             let mut body = Map::new();
             body.insert("query".to_owned(), json!(query.join(" ")));
+            if !tags.is_empty() {
+                body.insert("tags".to_owned(), json!(tags));
+            }
             if let Some(categories) = list(categories) {
                 body.insert("categories".to_owned(), categories);
             }
@@ -182,10 +194,26 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             status,
             origin_source,
             origin_label,
+            title,
+            tags,
+            key,
+            upsert,
             idempotency,
         } => {
             let mut body = Map::new();
             body.insert("channel".to_owned(), json!(channel));
+            if let Some(title) = title {
+                body.insert("title".to_owned(), json!(title));
+            }
+            if !tags.is_empty() {
+                body.insert("tags".to_owned(), json!(tags));
+            }
+            if let Some(key) = key {
+                body.insert("key".to_owned(), json!(key));
+            }
+            if upsert {
+                body.insert("upsert".to_owned(), json!(true));
+            }
             body.insert("text".to_owned(), json!(text));
             if let Some(category) = category {
                 body.insert("category".to_owned(), json!(category));
@@ -207,10 +235,37 @@ fn memories_request(command: MemoriesCommand) -> ApiRequest {
             memory,
             text,
             category,
+            title,
+            lock_title,
+            unlock_title,
+            tags,
+            clear_tags,
+            origin_source,
+            origin_label,
             expected_version,
             idempotency,
         } => {
             let mut body = Map::new();
+            if let Some(title) = title {
+                body.insert("title".to_owned(), json!(title));
+            }
+            if lock_title {
+                body.insert("title_locked".to_owned(), json!(true));
+            }
+            if unlock_title {
+                body.insert("title_locked".to_owned(), json!(false));
+            }
+            if clear_tags {
+                body.insert("tags".to_owned(), json!([]));
+            } else if !tags.is_empty() {
+                body.insert("tags".to_owned(), json!(tags));
+            }
+            if let Some(source) = origin_source {
+                body.insert(
+                    "origin".to_owned(),
+                    json!({ "source": source, "label": origin_label }),
+                );
+            }
             if let Some(text) = text {
                 body.insert("text".to_owned(), json!(text));
             }
@@ -381,6 +436,11 @@ fn read_stdin_text(command: Command) -> Result<Command, String> {
                 webhook_secret_stdin: true,
                 webhook_secret,
                 ..
+            }
+            | AppsCommand::Webhook {
+                webhook_secret_stdin: true,
+                webhook_secret,
+                ..
             },
         ) => *webhook_secret = Some(read_secret_stdin()?),
         Command::Memories(MemoriesCommand::Import {
@@ -432,9 +492,11 @@ pub fn request(command: Command) -> ApiRequest {
         Command::Whoami => ApiRequest::new(Method::GET, "/v1/whoami".to_owned()),
         Command::Context {
             format,
+            focus,
             if_none_match,
         } => ApiRequest::new(Method::GET, "/v1/context".to_owned())
             .query("format", format)
+            .query("focus", focus)
             .if_none_match(if_none_match),
         Command::Apps(command) => match command {
             AppsCommand::List { page } => ApiRequest::new(Method::GET, "/v1/apps".to_owned())
@@ -493,6 +555,15 @@ pub fn request(command: Command) -> ApiRequest {
                 ApiRequest::new(Method::DELETE, format!("/v1/apps/{}", segment(&app)))
                     .idempotency(idempotency.idempotency_key)
             }
+            AppsCommand::Webhook {
+                app,
+                webhook_url,
+                webhook_secret,
+                idempotency,
+                ..
+            } => ApiRequest::new(Method::PUT, format!("/v1/apps/{}/webhook", segment(&app)))
+                .body(json!({ "url": webhook_url, "secret": webhook_secret }))
+                .idempotency(idempotency.idempotency_key),
         },
         Command::Agents(command) => match command {
             AgentsCommand::List { app, page } => {
@@ -588,6 +659,14 @@ pub fn request(command: Command) -> ApiRequest {
             } => ApiRequest::new(
                 Method::POST,
                 format!("/v1/tokens/{}/revoke", segment(&token)),
+            )
+            .idempotency(idempotency.idempotency_key),
+            TokensCommand::Rotate {
+                token_id: token,
+                idempotency,
+            } => ApiRequest::new(
+                Method::POST,
+                format!("/v1/tokens/{}/rotate", segment(&token)),
             )
             .idempotency(idempotency.idempotency_key),
         },
@@ -753,9 +832,23 @@ pub fn request(command: Command) -> ApiRequest {
             )
             .idempotency(idempotency.idempotency_key),
         },
+        Command::Categories(command) => match command {
+            CategoriesCommand::List => ApiRequest::new(Method::GET, "/v1/categories".to_owned()),
+            CategoriesCommand::Create {
+                key,
+                label,
+                priority,
+                idempotency,
+            } => ApiRequest::new(Method::POST, "/v1/categories".to_owned())
+                .body(json!({ "key": key, "label": label, "priority": priority }))
+                .idempotency(idempotency.idempotency_key),
+        },
         Command::Settings(command) => match command {
             SettingsCommand::Get { key } => {
                 ApiRequest::new(Method::GET, "/v1/settings".to_owned()).query("key", key)
+            }
+            SettingsCommand::Consumer => {
+                ApiRequest::new(Method::GET, "/v1/consumer-settings".to_owned())
             }
             SettingsCommand::Set {
                 key,

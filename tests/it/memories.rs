@@ -876,7 +876,7 @@ async fn lists_filter_and_unreachable_memories_look_missing() {
     let item = titles["memories"][0].as_object().expect("item");
     assert_eq!(
         item.keys().map(String::as_str).collect::<Vec<_>>(),
-        vec!["category", "channel", "id", "status", "title"]
+        vec!["category", "channel", "id", "status", "tags", "title"]
     );
     let first = list("?limit=1").await;
     assert_eq!(listed(&first), vec![id(&b)]);
@@ -1016,6 +1016,8 @@ async fn channel_settings_stats_categories_and_channel_deletion() {
             "memory.text_max",
             "context.budget_tokens",
             "context.titles_budget_tokens",
+            "context.category_priorities",
+            "context.text_max_chars",
             "redator.instructions",
             "redator.rewrite_text",
             "consolidation.enabled"
@@ -1330,4 +1332,496 @@ async fn mcp_and_cli_share_the_memory_contract() {
     .await;
     let stats: Value = serde_json::from_slice(&output.stdout).expect("json");
     assert_eq!(stats["memories"]["total"], 1);
+}
+
+async fn write(context: &TestContext, token: &str, body: Value) -> (StatusCode, Value) {
+    context
+        .call("POST", "/v1/memories", Some(token), Some(body))
+        .await
+}
+
+async fn patch(context: &TestContext, token: &str, id: &str, body: Value) -> (StatusCode, Value) {
+    context
+        .call(
+            "PATCH",
+            &format!("/v1/memories/{id}"),
+            Some(token),
+            Some(body),
+        )
+        .await
+}
+
+async fn history(context: &TestContext, token: &str, id: &str) -> Vec<Value> {
+    let (status, body) = context
+        .call(
+            "GET",
+            &format!("/v1/memories/{id}/history"),
+            Some(token),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["revisions"].as_array().expect("revisions").clone()
+}
+
+fn listed_ids(body: &Value) -> Vec<String> {
+    body["memories"]
+        .as_array()
+        .expect("memories")
+        .iter()
+        .map(|memory| memory["id"].as_str().expect("id").to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn tags_filter_replace_clear_and_revert_without_touching_the_content() {
+    let context = TestContext::new().await;
+    let token = setup(&context).await;
+    let (status, a) = write(&context, &token, json!({ "channel": "eng/global", "text": "Missão do dragão ativa no turno 3.", "tags": [" missao ", "ativa", "missao"] })).await;
+    assert_eq!(status, StatusCode::CREATED, "{a}");
+    assert_eq!(a["memory"]["tags"], json!(["missao", "ativa"]));
+    let a = a["memory"]["id"].as_str().expect("id").to_owned();
+    let (_, b) = write(&context, &token, json!({ "channel": "eng/global", "text": "Missão da vila concluída.", "tags": ["missao", "concluida"] })).await;
+    let b = b["memory"]["id"].as_str().expect("id").to_owned();
+    let list = |query: &'static str| {
+        let context = &context;
+        let token = token.clone();
+        async move {
+            context
+                .call("GET", &format!("/v1/memories{query}"), Some(&token), None)
+                .await
+                .1
+        }
+    };
+    let mut both = listed_ids(&list("?tag=missao").await);
+    both.sort();
+    let mut expected = vec![a.clone(), b.clone()];
+    expected.sort();
+    assert_eq!(both, expected);
+    assert_eq!(
+        listed_ids(&list("?tag=missao&tag=ativa").await),
+        vec![a.clone()]
+    );
+    assert!(listed_ids(&list("?tag=ativa&tag=concluida").await).is_empty());
+    let (_, search) = context
+        .call(
+            "POST",
+            "/v1/memories/search",
+            Some(&token),
+            Some(json!({ "query": "missao", "tags": ["concluida"] })),
+        )
+        .await;
+    assert_eq!(search["results"].as_array().expect("results").len(), 1);
+
+    // Trocar as tags não muda o hash nem enfileira jobs, mas cria revisão.
+    let hash = |id: &str| {
+        context
+            .db()
+            .query_row(
+                "SELECT hex(content_hash) FROM memories WHERE id = ?1",
+                [id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("hash")
+    };
+    let jobs = || context.count("SELECT COUNT(*) FROM jobs WHERE kind <> 'webhook'");
+    let (before_hash, before_jobs) = (hash(&a), jobs());
+    let (status, replaced) = patch(&context, &token, &a, json!({ "tags": ["concluida"] })).await;
+    assert_eq!(status, StatusCode::OK, "{replaced}");
+    assert_eq!(replaced["memory"]["tags"], json!(["concluida"]));
+    assert_eq!(hash(&a), before_hash);
+    assert_eq!(
+        jobs(),
+        before_jobs,
+        "tags não enfileiram Redator nem embedding"
+    );
+    assert_eq!(replaced["memory"]["title_state"], "pending");
+    let (_, kept) = patch(&context, &token, &a, json!({ "category": "NAMING" })).await;
+    assert_eq!(
+        kept["memory"]["tags"],
+        json!(["concluida"]),
+        "sem tags mantém"
+    );
+    let (_, cleared) = patch(&context, &token, &a, json!({ "tags": [] })).await;
+    assert_eq!(cleared["memory"]["tags"], json!([]));
+    let revisions = history(&context, &token, &a).await;
+    assert_eq!(
+        revisions.last().expect("v1")["tags"],
+        json!(["missao", "ativa"])
+    );
+    let (status, reverted) = context
+        .call(
+            "POST",
+            &format!("/v1/memories/{a}/revert"),
+            Some(&token),
+            Some(json!({ "version": 1 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{reverted}");
+    assert_eq!(reverted["tags"], json!(["missao", "ativa"]));
+
+    for invalid in [
+        json!([""]),
+        json!(["x".repeat(41)]),
+        json!((0..21).map(|n| format!("t{n}")).collect::<Vec<_>>()),
+    ] {
+        let (status, body) = write(&context, &token, json!({ "channel": "eng/global", "text": "Texto com tags inválidas.", "tags": invalid })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn keys_upsert_or_conflict_and_never_duplicate() {
+    let context = TestContext::new().await;
+    let token = setup(&context).await;
+    let body = |text: &str, upsert: bool| json!({ "channel": "eng/global", "text": text, "key": "combat:42", "upsert": upsert, "tags": ["combate"] });
+    let (status, first) = write(
+        &context,
+        &token,
+        body("Combate 42 começou na ponte.", false),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    assert_eq!(
+        (first["created"].clone(), first["memory"]["key"].clone()),
+        (json!(true), json!("combat:42"))
+    );
+    let id = first["memory"]["id"].as_str().expect("id").to_owned();
+    let (status, conflict) = write(
+        &context,
+        &token,
+        body("Combate 42 começou na ponte.", false),
+    )
+    .await;
+    assert_eq!(
+        (status, conflict["error"]["code"].clone()),
+        (StatusCode::CONFLICT, json!("MEMORY_KEY_EXISTS"))
+    );
+    assert_eq!(conflict["error"]["details"]["existing_id"], json!(id));
+    // Mesmo texto com upsert: a mesma memória, sem revisão nova.
+    let (status, same) = write(&context, &token, body("Combate 42 começou na ponte.", true)).await;
+    assert_eq!(status, StatusCode::OK, "{same}");
+    assert_eq!(
+        (
+            same["created"].clone(),
+            same["memory"]["id"].clone(),
+            same["memory"]["version"].clone()
+        ),
+        (json!(false), json!(id), json!(1))
+    );
+    // Texto novo: revisão nova.
+    let (status, changed) = write(
+        &context,
+        &token,
+        body("Combate 42 terminou com vitória.", true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{changed}");
+    assert_eq!(
+        (
+            changed["memory"]["id"].clone(),
+            changed["memory"]["version"].clone()
+        ),
+        (json!(id), json!(2))
+    );
+    assert_eq!(history(&context, &token, &id).await.len(), 2);
+    // Outra chave ou outro canal: memória nova.
+    let (status, other) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/outro", "text": "Combate 42 em outro canal.", "key": "combat:42" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{other}");
+    assert_ne!(other["memory"]["id"], json!(id));
+    // Validação.
+    for invalid in [
+        json!({ "channel": "eng/global", "text": "Sem chave.", "upsert": true }),
+        json!({ "channel": "eng/global", "text": "Chave inválida.", "key": "com espaço" }),
+        json!({ "channel": "eng/global", "text": "Chave longa.", "key": "k".repeat(81) }),
+    ] {
+        let (status, response) = write(&context, &token, invalid).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    }
+    let (status, _) = patch(&context, &token, &id, json!({ "key": "outra" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "a chave é imutável");
+    // Upserts concorrentes com chave nova não duplicam.
+    let race = |text: &'static str| {
+        let context = &context;
+        let token = token.clone();
+        async move {
+            write(
+                context,
+                &token,
+                json!({ "channel": "eng/global", "text": text, "key": "race:1", "upsert": true }),
+            )
+            .await
+        }
+    };
+    let (one, two) = tokio::join!(race("Corrida número um."), race("Corrida número dois."));
+    assert!(one.0.is_success() && two.0.is_success(), "{one:?} {two:?}");
+    assert_eq!(
+        context.count("SELECT COUNT(*) FROM memories WHERE key = 'race:1'"),
+        1
+    );
+    let (_, by_key) = context
+        .call("GET", "/v1/memories?key=race:1", Some(&token), None)
+        .await;
+    assert_eq!(by_key["memories"].as_array().expect("list").len(), 1);
+}
+
+#[tokio::test]
+async fn the_last_origin_follows_the_edits_that_inform_one() {
+    let context = TestContext::new().await;
+    let token = setup(&context).await;
+    let (_, created) = write(&context, &token, json!({ "channel": "eng/global", "text": "Origem rastreada desde a criação.", "origin": { "source": "ui", "label": "A" } })).await;
+    assert_eq!(
+        created["memory"]["last_origin"],
+        json!({ "source": "ui", "label": "A" })
+    );
+    let id = created["memory"]["id"].as_str().expect("id").to_owned();
+    let (_, edited) = patch(&context, &token, &id, json!({ "text": "Origem rastreada na edição.", "origin": { "source": "narrador", "label": "B" } })).await;
+    assert_eq!(
+        edited["memory"]["last_origin"],
+        json!({ "source": "narrador", "label": "B" })
+    );
+    assert_eq!(
+        edited["memory"]["origin"],
+        json!({ "source": "ui", "label": "A" })
+    );
+    let (_, plain) = patch(&context, &token, &id, json!({ "category": "NAMING" })).await;
+    assert_eq!(
+        plain["memory"]["last_origin"]["label"], "B",
+        "sem origem não muda"
+    );
+    let origins: Vec<Value> = history(&context, &token, &id)
+        .await
+        .iter()
+        .map(|revision| revision["origin"].clone())
+        .collect();
+    assert_eq!(
+        origins,
+        vec![
+            Value::Null,
+            json!({ "source": "narrador", "label": "B" }),
+            json!({ "source": "ui", "label": "A" })
+        ]
+    );
+    let (_, list) = context
+        .call("GET", "/v1/memories", Some(&token), None)
+        .await;
+    assert_eq!(list["memories"][0]["last_origin"]["label"], "B");
+    let (status, _) = patch(
+        &context,
+        &token,
+        &id,
+        json!({ "text": "Origem vazia.", "origin": { "source": "" } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = patch(
+        &context,
+        &token,
+        &id,
+        json!({ "origin": { "source": "so-origem" } }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "origem sozinha não é edição"
+    );
+}
+
+#[tokio::test]
+async fn client_titles_are_validated_and_locked() {
+    let context = TestContext::new().await;
+    let token = setup(&context).await;
+    let (status, created) = write(&context, &token, json!({ "channel": "eng/global", "text": "O dragão teme o gelo eterno.", "title": "A Fraqueza do Dragão" })).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let memory = &created["memory"];
+    assert_eq!(
+        (
+            memory["title"].clone(),
+            memory["title_locked"].clone(),
+            memory["title_state"].clone()
+        ),
+        (json!("A Fraqueza do Dragão"), json!(true), json!("ready"))
+    );
+    let id = memory["id"].as_str().expect("id").to_owned();
+    let (_, edited) = patch(
+        &context,
+        &token,
+        &id,
+        json!({ "text": "O dragão teme o gelo eterno e o fogo azul." }),
+    )
+    .await;
+    assert_eq!(
+        (
+            edited["memory"]["title"].clone(),
+            edited["memory"]["title_state"].clone()
+        ),
+        (json!("A Fraqueza do Dragão"), json!("ready"))
+    );
+    for invalid in [
+        json!({ "channel": "eng/global", "text": "Título curto demais.", "title": "ab" }),
+        json!({ "channel": "eng/global", "text": "Título longo demais.", "title": "x".repeat(201) }),
+        json!({ "channel": "eng/global", "text": "Título com quebra.", "title": "linha\nnova" }),
+    ] {
+        let (status, body) = write(&context, &token, invalid).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    let (status, conflict) = patch(
+        &context,
+        &token,
+        &id,
+        json!({ "title": "Outro título", "title_locked": false }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{conflict}");
+    let (_, retitled) = patch(
+        &context,
+        &token,
+        &id,
+        json!({ "title": "O Medo do Dragão" }),
+    )
+    .await;
+    assert_eq!(retitled["memory"]["title"], "O Medo do Dragão");
+    let revisions = history(&context, &token, &id).await;
+    assert_eq!(revisions[0]["title"], "O Medo do Dragão");
+    assert_eq!(revisions[0]["title_locked"], true);
+}
+
+/// Regressão: o upsert (criação e importação) reativa a memória arquivada, e o `move` não leva
+/// uma `key` que o destino já usa.
+#[tokio::test]
+async fn keys_survive_archive_import_and_move() {
+    let context = TestContext::new().await;
+    let token = setup(&context).await;
+    let (status, first) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/global", "text": "O dragão dorme na caverna.", "key": "quest:dragao" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    let id = first["memory"]["id"].as_str().expect("id").to_owned();
+    let archive = |id: String| {
+        let context = &context;
+        let token = token.clone();
+        async move {
+            let (status, body) = context
+                .call(
+                    "POST",
+                    &format!("/v1/memories/{id}/archive"),
+                    Some(&token),
+                    None,
+                )
+                .await;
+            assert_eq!(
+                (status, body["status"].clone()),
+                (StatusCode::OK, json!("archived"))
+            );
+        }
+    };
+    let in_context = |id: String| {
+        let context = &context;
+        let token = token.clone();
+        async move {
+            let (_, body) = context
+                .call("GET", "/v1/context?channels=eng/global", Some(&token), None)
+                .await;
+            body["content"].as_str().expect("content").contains(&id)
+        }
+    };
+    archive(id.clone()).await;
+    assert!(!in_context(id.clone()).await);
+    // Upsert pela criação: mesma memória, ativa de novo e no contexto.
+    let (status, upserted) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/global", "text": "O dragão acordou.", "key": "quest:dragao", "upsert": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{upserted}");
+    assert_eq!(
+        (
+            upserted["created"].clone(),
+            upserted["memory"]["id"].clone(),
+            upserted["memory"]["status"].clone()
+        ),
+        (json!(false), json!(id), json!("active"))
+    );
+    assert!(in_context(id.clone()).await);
+    // Upsert pela importação: idem.
+    archive(id.clone()).await;
+    let (status, _, imported) = context
+        .call_with(
+            "POST",
+            "/v1/memories/import",
+            Some(ADMIN_TOKEN),
+            Some(json!({
+                "channel": "eng/global",
+                "memories": [{ "text": "O dragão voou para o sul.", "key": "quest:dragao" }]
+            })),
+            &[("Idempotency-Key", "lote-dragao")],
+        )
+        .await;
+    assert!(status.is_success(), "{imported}");
+    assert_eq!(imported["updated"][0]["id"], json!(id));
+    let (_, memory) = context
+        .call("GET", &format!("/v1/memories/{id}"), Some(&token), None)
+        .await;
+    assert_eq!(
+        (memory["status"].clone(), memory["text"].clone()),
+        (json!("active"), json!("O dragão voou para o sul."))
+    );
+    assert!(in_context(id.clone()).await);
+    // Move: a mesma chave no destino → 409 com o id que já a tem; nada muda.
+    let (_, other) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/outro", "text": "Outro dragão no outro canal.", "key": "quest:dragao" }),
+    )
+    .await;
+    let other_id = other["memory"]["id"].as_str().expect("id").to_owned();
+    let (status, conflict) = context
+        .call(
+            "POST",
+            &format!("/v1/memories/{id}/move"),
+            Some(&token),
+            Some(json!({ "to": "eng/outro" })),
+        )
+        .await;
+    assert_eq!(
+        (status, conflict["error"]["code"].clone()),
+        (StatusCode::CONFLICT, json!("MEMORY_KEY_EXISTS")),
+        "{conflict}"
+    );
+    assert_eq!(conflict["error"]["details"]["existing_id"], json!(other_id));
+    let (_, unchanged) = context
+        .call("GET", &format!("/v1/memories/{id}"), Some(&token), None)
+        .await;
+    assert_eq!(unchanged["channel"], "eng/global");
+    // Sem colisão, a memória leva a chave.
+    let (_, free) = write(
+        &context,
+        &token,
+        json!({ "channel": "eng/global", "text": "A espada está no lago.", "key": "item:espada" }),
+    )
+    .await;
+    let free_id = free["memory"]["id"].as_str().expect("id").to_owned();
+    let (status, moved) = context
+        .call(
+            "POST",
+            &format!("/v1/memories/{free_id}/move"),
+            Some(&token),
+            Some(json!({ "to": "eng/outro" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{moved}");
+    assert_eq!(
+        (moved["channel"].clone(), moved["key"].clone()),
+        (json!("eng/outro"), json!("item:espada"))
+    );
 }

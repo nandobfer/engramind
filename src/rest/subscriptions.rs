@@ -7,7 +7,7 @@ use crate::{
     AppState,
     auth::Auth,
     core::{
-        model::Subscription,
+        model::{Subscription, SubscriptionWrite},
         subscriptions::{
             ListSubscriptionsQuery, SubscribeBody, SubscriptionList, UpdateSubscriptionBody,
         },
@@ -54,15 +54,16 @@ pub async fn list_subscriptions(
     operation_id = "subscribe",
     tag = "Network",
     summary = "Assina um agente a um canal ou prefixo",
-    description = "`target` é um canal exato existente (`eng/global`) ou um prefixo terminado em `*` (`eng/*`, `eng/projeto-*`) que vale também para canais criados depois. Com várias assinaturas no mesmo canal, vale a mais específica. `access` só restringe os escopos do token (omitido: os do token). Aceita `Idempotency-Key`. Exige token admin com `write`.",
+    description = "`target` é um canal exato (`eng/global`) ou um prefixo terminado em `*` (`eng/*`, `eng/projeto-*`) que vale também para canais criados depois. Um canal exato inexistente é criado na mesma transação (nome = slug, sem descrição; `channel_created: true`); prefixos nunca criam canal. Repetir com o mesmo modo, acesso e prioridade devolve a assinatura existente com `200` e `created: false`; com outros campos, `409 SUBSCRIPTION_EXISTS` com `details.existing`. Com várias assinaturas no mesmo canal, vale a mais específica. `access` só restringe os escopos do token (omitido: os do token). Aceita `Idempotency-Key`. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")),
     request_body = SubscribeBody,
     security(("bearerAuth" = [])),
     responses(
-        (status = 201, description = "Assinatura criada", body = Subscription),
+        (status = 201, description = "Assinatura criada", body = SubscriptionWrite),
+        (status = 200, description = "Assinatura equivalente já existia (`created: false`)", body = SubscriptionWrite),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`AGENT_NOT_FOUND` ou `CHANNEL_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`SUBSCRIPTION_EXISTS` ou `IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
@@ -81,7 +82,12 @@ pub async fn subscribe(
         .core
         .subscribe(&principal, body, key.as_deref())
         .await?;
-    Ok(mutation(StatusCode::CREATED, result))
+    let status = if result.value.created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok(mutation(status, result))
 }
 
 #[utoipa::path(
@@ -90,7 +96,7 @@ pub async fn subscribe(
     operation_id = "update_subscription",
     tag = "Network",
     summary = "Altera modo, acesso ou prioridade de uma assinatura",
-    description = "Campos omitidos não mudam; `access: null` volta aos escopos do token e `priority: null` à prioridade do canal. Agente e alvo não mudam: cancele e assine de novo. Vale na requisição seguinte. Exige token admin com `write`.",
+    description = "Campos omitidos não mudam; `access: null` volta aos escopos do token e `priority: null` à prioridade do canal. Agente e alvo não mudam: cancele e assine de novo. Vale na requisição seguinte. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(
         ("subscription" = String, Path, description = "Id da assinatura (`sub_…`)"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")
@@ -101,7 +107,7 @@ pub async fn subscribe(
         (status = 200, description = "Assinatura alterada", body = Subscription),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`SUBSCRIPTION_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
@@ -130,7 +136,7 @@ pub async fn update_subscription(
     operation_id = "unsubscribe",
     tag = "Network",
     summary = "Cancela uma assinatura",
-    description = "O agente deixa de alcançar os canais da assinatura na requisição seguinte. Exige token admin com `write`.",
+    description = "O agente deixa de alcançar os canais da assinatura na requisição seguinte. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(
         ("subscription" = String, Path, description = "Id da assinatura (`sub_…`)"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada por 24 h")
@@ -139,7 +145,7 @@ pub async fn update_subscription(
     responses(
         (status = 200, description = "Assinatura cancelada (estado anterior)", body = Subscription),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`SUBSCRIPTION_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),

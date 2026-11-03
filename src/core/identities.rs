@@ -11,8 +11,8 @@ use super::{
     idempotency::Mutation,
     ids,
     model::{
-        Agent, AgentLookup, App, AppPatch, Lookup, NewAgent, NewApp, NewToken, Token, TokenFilter,
-        TokenPatch, double_option,
+        Agent, AgentLookup, AgentWrite, App, AppPatch, Lookup, NewAgent, NewApp, NewToken, Token,
+        TokenFilter, TokenPatch, TokenStatus, double_option,
     },
     pagination::{Page, PageRequest},
     principal::{AgentRef, AppRef, Principal, Scope, ScopeSet, TokenKind},
@@ -96,6 +96,18 @@ pub struct UpdateAppBody {
     /// Segredo do HMAC dos eventos (32 a 256 caracteres); só gravado, nunca devolvido.
     #[serde(default, deserialize_with = "double_option")]
     pub webhook_secret: Option<Option<String>>,
+}
+
+/// Webhook do app (0.11.0): `url: null` remove a URL e o segredo; URL exige segredo (o
+/// enviado ou o já gravado).
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateAppWebhookBody {
+    /// Destino dos eventos (`http://` ou `https://`, sem credenciais); `null` remove.
+    #[schema(example = "https://consumidor.interno/engramind/events")]
+    pub url: Option<String>,
+    /// Segredo do HMAC (32 a 256 caracteres); só gravado e cifrado, nunca devolvido.
+    pub secret: Option<String>,
 }
 
 /// Campos omitidos não mudam; `description: null` limpa; `disabled` desativa ou reativa.
@@ -376,6 +388,45 @@ pub fn agent_not_found() -> ApiError {
     ApiError::not_found("AGENT_NOT_FOUND", "Agente nao encontrado")
 }
 
+/// `403 FOREIGN_APP`: o token de app tentou operar algo de outro app.
+pub fn foreign_app(app: Option<&str>) -> ApiError {
+    let error = ApiError::new(
+        "FOREIGN_APP",
+        "O token de app so opera o proprio app, seus agentes e tokens",
+    );
+    match app {
+        Some(app) => error.with_details(json!({ "app": app })),
+        None => error,
+    }
+}
+
+/// O token de app só alcança o próprio app; os demais tipos passam.
+pub(crate) fn ensure_own_app(principal: &Principal, app: &AppRef) -> Result<(), ApiError> {
+    if principal.is_app() && principal.app.id != app.id {
+        return Err(foreign_app(Some(&app.slug)));
+    }
+    Ok(())
+}
+
+/// O token de app só gere tokens `agent` do próprio app (nunca o próprio, um `admin` ou outro
+/// `app`).
+fn ensure_manageable(principal: &Principal, token: &Token) -> Result<(), ApiError> {
+    if !principal.is_app() {
+        return Ok(());
+    }
+    ensure_own_app(principal, &token.app)?;
+    if token.kind != TokenKind::Agent {
+        return Err(admin_kind_required("gerir tokens que nao sao de agente"));
+    }
+    Ok(())
+}
+
+/// `403 SCOPE_REQUIRED` com `required_kind: admin` para o que só o admin faz.
+fn admin_kind_required(what: &str) -> ApiError {
+    ApiError::new("SCOPE_REQUIRED", format!("So um token admin pode {what}"))
+        .with_details(json!({ "required_kind": "admin", "required_scope": "write" }))
+}
+
 pub fn token_not_found() -> ApiError {
     ApiError::not_found("TOKEN_NOT_FOUND", "Token nao encontrado")
 }
@@ -615,8 +666,12 @@ impl<S: Store> Core<S> {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
-            Some(app) => Some(self.find_app(app).await?.id),
-            None => None,
+            Some(app) => {
+                let app = self.find_app(app).await?;
+                ensure_own_app(principal, &app.reference())?;
+                Some(app.id)
+            }
+            None => principal.is_app().then(|| principal.app.id.clone()),
         };
         let page = self.store().list_agents(app_id, page).await?;
         Ok(AgentList {
@@ -627,7 +682,16 @@ impl<S: Store> Core<S> {
 
     pub async fn get_agent(&self, principal: &Principal, agent: &str) -> Result<Agent, ApiError> {
         self.authorize(principal, "get_agent")?;
-        self.find_agent(agent).await
+        let agent = self.find_agent(agent).await?;
+        ensure_own_app(principal, &agent.app)?;
+        Ok(agent)
+    }
+
+    /// Agente citado numa mutação, conferido contra o app do token de app.
+    async fn own_agent(&self, principal: &Principal, agent: &str) -> Result<Agent, ApiError> {
+        let agent = self.find_agent(agent).await?;
+        ensure_own_app(principal, &agent.app)?;
+        Ok(agent)
     }
 
     pub async fn create_agent(
@@ -635,7 +699,7 @@ impl<S: Store> Core<S> {
         principal: &Principal,
         body: CreateAgentBody,
         key: Option<&str>,
-    ) -> Result<Mutation<Agent>, ApiError> {
+    ) -> Result<Mutation<AgentWrite>, ApiError> {
         let operation = self.authorize(principal, "create_agent")?;
         let slug = body.slug.trim().to_owned();
         validate_slug(&slug)?;
@@ -644,6 +708,7 @@ impl<S: Store> Core<S> {
             optional_text("description", body.description.as_deref(), MAX_DESCRIPTION)?;
         let core = self.clone();
         let app = body.app.clone();
+        let principal_owned = principal.clone();
         self.mutate(
             principal,
             operation,
@@ -652,6 +717,28 @@ impl<S: Store> Core<S> {
             201,
             |context| async move {
                 let app = core.find_app(&app).await?;
+                ensure_own_app(&principal_owned, &app.reference())?;
+                // Idempotência natural (decisão 0028): mesmo slug e mesmos campos → o existente.
+                if let Some(existing) = core
+                    .store()
+                    .get_agent(AgentLookup::Slug {
+                        app: app.slug.clone(),
+                        agent: slug.clone(),
+                    })
+                    .await?
+                {
+                    if existing.name == name && existing.description == description {
+                        return Ok(AgentWrite {
+                            agent: existing,
+                            created: false,
+                        });
+                    }
+                    return Err(ApiError::new(
+                        "SLUG_ALREADY_EXISTS",
+                        "Ja existe um agente com esse slug no app, com outros campos",
+                    )
+                    .with_details(json!({ "existing": existing })));
+                }
                 let new = NewAgent {
                     app_id: app.id,
                     slug,
@@ -661,6 +748,10 @@ impl<S: Store> Core<S> {
                 core.store()
                     .create_agent(new, context)
                     .await
+                    .map(|agent| AgentWrite {
+                        agent,
+                        created: true,
+                    })
                     .map_err(|error| store_error(error, app_not_found))
             },
         )
@@ -680,6 +771,7 @@ impl<S: Store> Core<S> {
         agent_lookup(agent)?;
         let input = json!({ "agent": agent, "body": body });
         let core = self.clone();
+        let principal_owned = principal.clone();
         let agent = agent.to_owned();
         self.mutate(
             principal,
@@ -688,7 +780,7 @@ impl<S: Store> Core<S> {
             &input,
             200,
             |context| async move {
-                let id = core.find_agent(&agent).await?.id;
+                let id = core.own_agent(&principal_owned, &agent).await?.id;
                 core.store()
                     .update_agent(id, patch, context)
                     .await
@@ -709,6 +801,7 @@ impl<S: Store> Core<S> {
         agent_lookup(agent)?;
         let input = json!({ "agent": agent });
         let core = self.clone();
+        let principal_owned = principal.clone();
         let agent = agent.to_owned();
         self.mutate(
             principal,
@@ -717,7 +810,7 @@ impl<S: Store> Core<S> {
             &input,
             200,
             |context| async move {
-                let id = core.find_agent(&agent).await?.id;
+                let id = core.own_agent(&principal_owned, &agent).await?.id;
                 core.store()
                     .delete_agent(id, context)
                     .await
@@ -741,14 +834,21 @@ impl<S: Store> Core<S> {
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
-            filter.app_id = Some(self.find_app(app).await?.id);
+            let app = self.find_app(app).await?;
+            ensure_own_app(principal, &app.reference())?;
+            filter.app_id = Some(app.id);
+        }
+        if principal.is_app() {
+            filter.app_id = Some(principal.app.id.clone());
         }
         if let Some(agent) = query
             .agent
             .as_deref()
             .filter(|value| !value.trim().is_empty())
         {
-            filter.agent_id = Some(self.find_agent(agent).await?.id);
+            let agent = self.find_agent(agent).await?;
+            ensure_own_app(principal, &agent.app)?;
+            filter.agent_id = Some(agent.id);
         }
         let page = self.store().list_tokens(filter, page).await?;
         Ok(TokenList {
@@ -772,6 +872,12 @@ impl<S: Store> Core<S> {
         if body.kind == TokenKind::Agent && agent_value.is_none() {
             return Err(ApiError::validation("token agent exige agent"));
         }
+        if body.kind == TokenKind::App && agent_value.is_some() {
+            return Err(ApiError::validation("token app nao aceita agent"));
+        }
+        if principal.is_app() && body.kind != TokenKind::Agent {
+            return Err(admin_kind_required("emitir tokens admin ou app"));
+        }
         if let Some(agent) = &agent_value {
             agent_lookup(agent)?;
         }
@@ -783,6 +889,7 @@ impl<S: Store> Core<S> {
         let digest = generated.digest.clone();
         let core = self.clone();
         let kind = body.kind;
+        let principal_owned = principal.clone();
         let mutation = self
             .mutate(
                 principal,
@@ -806,6 +913,9 @@ impl<S: Store> Core<S> {
                         (None, Some(agent)) => agent.app.id.clone(),
                         (None, None) => return Err(ApiError::validation("informe app ou agent")),
                     };
+                    if principal_owned.is_app() && app_id != principal_owned.app.id {
+                        return Err(foreign_app(None));
+                    }
                     let new = NewToken {
                         id: None,
                         app_id,
@@ -871,6 +981,7 @@ impl<S: Store> Core<S> {
         };
         let input = json!({ "token": id, "body": body });
         let core = self.clone();
+        let principal_owned = principal.clone();
         self.mutate(
             principal,
             operation,
@@ -878,6 +989,7 @@ impl<S: Store> Core<S> {
             &input,
             200,
             |context| async move {
+                core.manageable_token(&principal_owned, &id).await?;
                 core.store()
                     .update_token(id, patch, context)
                     .await
@@ -898,6 +1010,7 @@ impl<S: Store> Core<S> {
         let id = token_id(token)?;
         let input = json!({ "token": id });
         let core = self.clone();
+        let principal_owned = principal.clone();
         self.mutate(
             principal,
             operation,
@@ -905,6 +1018,7 @@ impl<S: Store> Core<S> {
             &input,
             200,
             |context| async move {
+                core.manageable_token(&principal_owned, &id).await?;
                 core.store()
                     .revoke_token(id, context)
                     .await
@@ -913,6 +1027,148 @@ impl<S: Store> Core<S> {
         )
         .await
         .inspect(|_| self.network_changed())
+    }
+
+    /// O webhook do app: admin em qualquer app, token de app só no próprio (decisão 0028).
+    pub async fn update_app_webhook(
+        &self,
+        principal: &Principal,
+        app: &str,
+        body: UpdateAppWebhookBody,
+        key: Option<&str>,
+    ) -> Result<Mutation<App>, ApiError> {
+        let operation = self.authorize(principal, "update_app_webhook")?;
+        let url = body.url.as_deref().map(webhook_url).transpose()?;
+        let secret = body.secret.as_deref().map(webhook_secret).transpose()?;
+        if url.is_none() && secret.is_some() {
+            return Err(
+                ApiError::validation("secret exige url; url: null remove os dois")
+                    .with_details(json!({ "field": "secret" })),
+            );
+        }
+        // O segredo nunca entra na entrada da idempotência: só se veio ou não.
+        let input = json!({ "app": app, "url": url, "secret": secret.is_some() });
+        let core = self.clone();
+        let app = app.to_owned();
+        let principal_owned = principal.clone();
+        self.mutate(
+            principal,
+            operation,
+            key,
+            &input,
+            200,
+            |mut context| async move {
+                let found = core.find_app(&app).await?;
+                ensure_own_app(&principal_owned, &found.reference())?;
+                let configured = match &secret {
+                    Some(_) => true,
+                    None => core
+                        .store()
+                        .webhook_target(found.id.clone())
+                        .await?
+                        .is_some_and(|target| target.secret_enc.is_some()),
+                };
+                if url.is_some() && !configured {
+                    return Err(ApiError::validation("url exige secret (nenhum gravado)")
+                        .with_details(json!({ "field": "secret" })));
+                }
+                let patch = AppPatch {
+                    webhook_secret: match (&url, secret) {
+                        (None, _) => Some(None),
+                        (Some(_), Some(secret)) => Some(Some(
+                            core.vault()
+                                .seal(&webhook_secret_name(&found.slug), &secret),
+                        )),
+                        (Some(_), None) => None,
+                    },
+                    webhook_url: Some(url.clone()),
+                    ..AppPatch::default()
+                };
+                context.events = core
+                    .identities_event(&found.id, &found.slug, url.is_some())
+                    .await?;
+                core.store()
+                    .update_app_webhook(found.id, patch, context)
+                    .await
+                    .map_err(|error| store_error(error, app_not_found))
+            },
+        )
+        .await
+        .inspect(|_| self.network_changed())
+    }
+
+    /// Token alvo de uma mutação, conferido contra o app do token de app.
+    async fn manageable_token(&self, principal: &Principal, id: &str) -> Result<Token, ApiError> {
+        let token = self
+            .store()
+            .get_token(id.to_owned())
+            .await?
+            .ok_or_else(token_not_found)?;
+        ensure_manageable(principal, &token)?;
+        Ok(token)
+    }
+
+    /// Emite um token igual (app, agente, tipo, escopos, rótulo e expiração) e revoga o antigo
+    /// na mesma transação; o segredo aparece só nesta resposta.
+    pub async fn rotate_token(
+        &self,
+        principal: &Principal,
+        token: &str,
+        key: Option<&str>,
+    ) -> Result<Mutation<IssuedToken>, ApiError> {
+        let operation = self.authorize(principal, "rotate_token")?;
+        let id = token_id(token)?;
+        let input = json!({ "token": id });
+        let generated = self.tokens().generate();
+        let digest = generated.digest.clone();
+        let core = self.clone();
+        let principal_owned = principal.clone();
+        let mutation = self
+            .mutate(
+                principal,
+                operation,
+                key,
+                &input,
+                201,
+                |context| async move {
+                    let old = core.manageable_token(&principal_owned, &id).await?;
+                    if old.status != TokenStatus::Active {
+                        return Err(ApiError::validation(
+                            "So um token ativo pode ser rotacionado; emita um novo",
+                        )
+                        .with_details(json!({ "status": old.status })));
+                    }
+                    ensure_grantable(&principal_owned, scopes(&old.scopes)?)?;
+                    let new = NewToken {
+                        id: None,
+                        app_id: old.app.id.clone(),
+                        agent_id: old.agent.as_ref().map(|agent| agent.id.clone()),
+                        kind: old.kind,
+                        scopes: old.scopes.clone(),
+                        label: old.label.clone(),
+                        expires_at: old.expires_at.clone(),
+                        digest,
+                    };
+                    core.store()
+                        .rotate_token(old.id, new, context)
+                        .await
+                        .map_err(|error| store_error(error, token_not_found))
+                },
+            )
+            .await?;
+        self.network_changed();
+        let secret = (!mutation.replayed).then(|| {
+            TokenService::plaintext(&mutation.value.id, &generated.secret)
+                .expose()
+                .to_owned()
+        });
+        Ok(Mutation {
+            value: IssuedToken {
+                token: mutation.value,
+                secret,
+            },
+            replayed: mutation.replayed,
+        })
     }
 }
 

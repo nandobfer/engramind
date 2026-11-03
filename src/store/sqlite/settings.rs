@@ -80,6 +80,11 @@ pub(super) fn update_settings(
             },
         )?;
     }
+    if let Some(retained) = retained_categories
+        && priorities_outside(transaction, retained)?
+    {
+        return Err(StoreError::Conflict("CATEGORY_IN_USE"));
+    }
     if let Some(embedding) = embedding {
         super::vectors::switch(transaction, embedding, &context.at).map_err(sql_error)?;
     }
@@ -87,6 +92,100 @@ pub(super) fn update_settings(
     let rows = get_settings(transaction).map_err(sql_error)?;
     journal::remember(transaction, context, &rows)?;
     Ok(rows)
+}
+
+/// `context.category_priorities` (global ou de algum canal) cita categoria fora de `retained`.
+fn priorities_outside(transaction: &Transaction, retained: &[String]) -> Result<bool, StoreError> {
+    const KEY: &str = crate::core::settings::CATEGORY_PRIORITIES;
+    let mut maps: Vec<serde_json::Value> = Vec::new();
+    let global: Option<String> = rusqlite::OptionalExtension::optional(transaction.query_row(
+        "SELECT value_json FROM settings WHERE key = ?1",
+        params![KEY],
+        |row| row.get(0),
+    ))
+    .map_err(sql_error)?;
+    if let Some(global) = global.and_then(|json| serde_json::from_str(&json).ok()) {
+        maps.push(global);
+    }
+    let mut statement = transaction
+        .prepare("SELECT settings_json FROM channels WHERE settings_json <> '{}'")
+        .map_err(sql_error)?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(sql_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(sql_error)?;
+    for json in rows {
+        if let Ok(serde_json::Value::Object(mut overrides)) = serde_json::from_str(&json)
+            && let Some(map) = overrides.remove(KEY)
+        {
+            maps.push(map);
+        }
+    }
+    Ok(maps.iter().any(|map| {
+        map.as_object()
+            .is_some_and(|map| map.keys().any(|key| !retained.contains(key)))
+    }))
+}
+
+pub(super) fn create_category(
+    transaction: &Transaction,
+    category: &crate::core::settings::Category,
+    default_json: &str,
+    max: usize,
+    context: &WriteContext,
+) -> Result<crate::core::model::CategoryAppend, StoreError> {
+    use crate::core::{
+        model::CategoryAppend,
+        settings::{CATEGORIES, Category},
+    };
+    let stored: Option<String> = rusqlite::OptionalExtension::optional(transaction.query_row(
+        "SELECT value_json FROM settings WHERE key = ?1",
+        params![CATEGORIES],
+        |row| row.get(0),
+    ))
+    .map_err(sql_error)?;
+    let before = stored.clone().unwrap_or_else(|| default_json.to_owned());
+    let mut list: Vec<Category> =
+        serde_json::from_str(&before).map_err(|error| StoreError::Internal(error.to_string()))?;
+    if let Some(existing) = list.iter().find(|item| item.key == category.key) {
+        return Ok(CategoryAppend::Existing(existing.clone()));
+    }
+    if list.len() >= max {
+        return Err(StoreError::Conflict("CATEGORY_LIMIT_REACHED"));
+    }
+    list.push(category.clone());
+    let after =
+        serde_json::to_string(&list).map_err(|error| StoreError::Internal(error.to_string()))?;
+    transaction
+        .execute(
+            "INSERT INTO settings (key, value_json, updated_by_app, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (key) DO UPDATE SET value_json = excluded.value_json,
+                 updated_by_app = excluded.updated_by_app, updated_at = excluded.updated_at",
+            params![CATEGORIES, after, context.actor.app_id, context.at],
+        )
+        .map_err(sql_error)?;
+    journal::audit(
+        transaction,
+        context,
+        Entry {
+            action: "category.create",
+            entity: "category",
+            entity_id: Some(&category.key),
+            before: None,
+            after: Some(
+                serde_json::to_value(category)
+                    .map_err(|error| StoreError::Internal(error.to_string()))?,
+            ),
+        },
+    )?;
+    journal::emit(transaction, context, &[])?;
+    let mut remembered =
+        serde_json::to_value(category).map_err(|error| StoreError::Internal(error.to_string()))?;
+    remembered["created"] = serde_json::Value::Bool(true);
+    journal::remember(transaction, context, &remembered)?;
+    Ok(CategoryAppend::Created)
 }
 
 fn audit_from_row(row: &Row<'_>) -> rusqlite::Result<AuditEvent> {

@@ -1,5 +1,6 @@
-//! Canais (desenho §5): criação e manutenção só por token `admin`; leitura por qualquer token,
-//! limitada ao que ele alcança (FR-011).
+//! Canais (desenho §5): criação e manutenção por token `admin`; leitura por qualquer token,
+//! limitada ao que ele alcança (FR-011). O token `app` vê todos os canais (para assinar) e
+//! arquiva ou restaura só os que criou ao assinar, sem assinatura de outro app (decisão 0033).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ use super::{
     access::{self, Purpose, Reach},
     events::EventType,
     idempotency::Mutation,
-    identities::{MAX_DESCRIPTION, MAX_NAME, next_cursor, optional_text, text},
+    identities::{MAX_DESCRIPTION, MAX_NAME, foreign_app, next_cursor, optional_text, text},
     ids,
     model::{Channel, ChannelPatch, ChannelStats, Lookup, Network, NewChannel, double_option},
     pagination::{Cursor, PageRequest, paginate},
@@ -155,21 +156,34 @@ impl<S: Store> Core<S> {
         let selection = Selection::parse(header, query.channels.as_deref())?;
         let page = PageRequest::new(query.cursor.as_deref(), query.limit)?;
         let network = self.network().await?;
-        let reaches = access::resolve(
-            &network,
-            principal,
-            &selection,
-            Purpose::Explicit,
-            query.include_archived.unwrap_or(false),
-        );
-        let page = paginate(
-            reaches.iter().map(Reach::view).collect(),
-            &page,
-            |channel| Cursor {
-                key: channel.slug.clone(),
-                id: channel.id.clone(),
-            },
-        );
+        let include_archived = query.include_archived.unwrap_or(false);
+        let channels: Vec<Channel> = if principal.is_app() {
+            network
+                .channels
+                .iter()
+                .filter(|channel| selection.admits(&channel.slug))
+                .filter(|channel| channel.archived_at.is_none() || include_archived)
+                .map(|channel| {
+                    access::reach_in(&network, principal, channel)
+                        .map_or_else(|| channel.clone(), |reach| reach.view())
+                })
+                .collect()
+        } else {
+            access::resolve(
+                &network,
+                principal,
+                &selection,
+                Purpose::Explicit,
+                include_archived,
+            )
+            .iter()
+            .map(Reach::view)
+            .collect()
+        };
+        let page = paginate(channels, &page, |channel| Cursor {
+            key: channel.slug.clone(),
+            id: channel.id.clone(),
+        });
         Ok(ChannelList {
             next_cursor: next_cursor(&page),
             channels: page.items,
@@ -186,6 +200,10 @@ impl<S: Store> Core<S> {
         let selection = Selection::parse(header, None)?;
         let network = self.network().await?;
         let channel = find_in(&network, channel)?;
+        if principal.is_app() && selection.admits(&channel.slug) {
+            return Ok(access::reach_in(&network, principal, channel)
+                .map_or_else(|| channel.clone(), |reach| reach.view()));
+        }
         Ok(access::reach_channel(&network, principal, &selection, channel)?.view())
     }
 
@@ -225,6 +243,7 @@ impl<S: Store> Core<S> {
                 MAX_DESCRIPTION,
             )?,
             priority: priority(body.priority.unwrap_or(0))?,
+            created_by_app_id: None,
         };
         let core = self.clone();
         let result = self
@@ -262,6 +281,7 @@ impl<S: Store> Core<S> {
         let input = json!({ "channel": channel, "body": body });
         let core = self.clone();
         let channel = channel.to_owned();
+        let principal_owned = principal.clone();
         let result = self
             .mutate(
                 principal,
@@ -271,6 +291,9 @@ impl<S: Store> Core<S> {
                 200,
                 |mut context| async move {
                     let found = core.find_channel(&channel).await?;
+                    if principal_owned.is_app() {
+                        core.ensure_app_lifecycle(&principal_owned, &found).await?;
+                    }
                     context.events = core
                         .channel_event(EventType::ChannelUpdated, &found.slug)
                         .await?;
@@ -319,6 +342,7 @@ impl<S: Store> Core<S> {
         let input = json!({ "channel": channel });
         let core = self.clone();
         let channel = channel.to_owned();
+        let principal_owned = principal.clone();
         let result = self
             .mutate(
                 principal,
@@ -328,6 +352,9 @@ impl<S: Store> Core<S> {
                 200,
                 |mut context| async move {
                     let found = core.find_channel(&channel).await?;
+                    if principal_owned.is_app() {
+                        core.ensure_app_lifecycle(&principal_owned, &found).await?;
+                    }
                     context.events = core
                         .channel_event(EventType::ChannelUpdated, &found.slug)
                         .await?;
@@ -343,6 +370,44 @@ impl<S: Store> Core<S> {
         result
     }
 
+    /// O token de app só arquiva ou restaura o canal que criou, e só sem assinatura de agente
+    /// ativo de outro app que o alcance (exata ou por prefixo).
+    async fn ensure_app_lifecycle(
+        &self,
+        principal: &Principal,
+        channel: &Channel,
+    ) -> Result<(), ApiError> {
+        if channel.created_by_app_id.as_deref() != Some(principal.app.id.as_str()) {
+            return Err(foreign_app(channel.created_by.as_deref())
+                .with_details(json!({ "app": channel.created_by, "channel": channel.slug })));
+        }
+        let network = self.network().await?;
+        let mut apps: Vec<String> = network
+            .subscriptions
+            .iter()
+            .filter(|subscription| {
+                subscription.agent_app_id != principal.app.id
+                    && !subscription.agent_disabled
+                    && access::subscription_pattern(subscription).matches(&channel.slug)
+            })
+            .filter_map(|subscription| subscription.agent.slug.split('/').next())
+            .map(str::to_owned)
+            .collect();
+        apps.sort();
+        apps.dedup();
+        if !apps.is_empty() {
+            return Err(ApiError::new(
+                "CHANNEL_SHARED",
+                format!(
+                    "O canal {} e assinado por agentes de outro app; so o admin o arquiva ou restaura",
+                    channel.slug
+                ),
+            )
+            .with_details(json!({ "channel": channel.slug, "apps": apps })));
+        }
+        Ok(())
+    }
+
     pub async fn delete_channel(
         &self,
         principal: &Principal,
@@ -354,6 +419,7 @@ impl<S: Store> Core<S> {
         let input = json!({ "channel": channel });
         let core = self.clone();
         let channel = channel.to_owned();
+        let principal_owned = principal.clone();
         let result = self
             .mutate(
                 principal,
@@ -363,6 +429,9 @@ impl<S: Store> Core<S> {
                 200,
                 |mut context| async move {
                     let found = core.find_channel(&channel).await?;
+                    if principal_owned.is_app() {
+                        core.ensure_app_lifecycle(&principal_owned, &found).await?;
+                    }
                     context.events = core
                         .channel_event(EventType::ChannelUpdated, &found.slug)
                         .await?;

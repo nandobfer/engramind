@@ -19,7 +19,7 @@ Os destinatários são calculados quando a mutação acontece:
 
 - apps com um agente ativo cuja assinatura (exata ou por prefixo, em qualquer modo) alcança o canal afetado;
 - apps com um token `admin` ativo (não revogado e não expirado) recebem todos os eventos;
-- `subscription.updated` vai ao app do agente da assinatura e aos apps admin; `settings.updated` global, só aos apps admin;
+- `subscription.updated` vai ao app do agente da assinatura e aos apps admin; `settings.updated` global, só aos apps admin; `identities.updated` ao próprio app (mesmo que o webhook acabe de ser gravado) e aos apps admin;
 - app desativado ou sem URL e segredo não recebe nada.
 
 Com `webhooks.enabled = false`, nenhuma mutação enfileira eventos. Mudanças de apps, agentes e tokens não geram eventos: quem as faz é o próprio gestor.
@@ -42,6 +42,7 @@ O corpo nunca tem textos, títulos nem valores de configuração, só identifica
 | `channel.updated` | `create_channel`, `update_channel`, `archive_channel`, `restore_channel`, `delete_channel` | — |
 | `subscription.updated` | `subscribe`, `update_subscription`, `unsubscribe` | `subscription`, `agent` e `target` (canal ou prefixo); `channel` só com alvo exato |
 | `settings.updated` | `update_settings` e `set_secret` (`channel: null`); `update_channel_settings` (com o canal) | `keys`: as chaves alteradas |
+| `identities.updated` | `update_app_webhook` (`channel: null`) | `app`: o slug do app cujo webhook mudou |
 
 `channel_version` é a versão do canal depois da mudança (`null` em `settings.updated` global). Uma mutação que não muda nada (arquivar o que já está arquivado) e a repetição de uma chamada idempotente não geram evento. A nota de importância e a sinalização de desuso do consolidador e `mark_verified` também não: não mudam a `channel_version` nem o contexto (releia com `list_memories`, por exemplo `stale=true`).
 

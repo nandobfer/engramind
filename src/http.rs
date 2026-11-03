@@ -49,6 +49,48 @@ where
     }
 }
 
+/// Query com um parâmetro repetível (`tag=a&tag=b`): os valores dele vêm à parte e o resto
+/// é lido como `ApiQuery` (o `serde_urlencoded` não aceita chave repetida).
+pub struct ApiQueryRepeated<T>(pub T, pub Vec<String>);
+
+/// Nome do parâmetro repetível de `ApiQueryRepeated`.
+pub const REPEATED_PARAM: &str = "tag";
+
+impl<S, T> FromRequestParts<S> for ApiQueryRepeated<T>
+where
+    S: Send + Sync,
+    T: DeserializeOwned,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let raw = parts.uri.query().unwrap_or_default();
+        let mut url =
+            reqwest::Url::parse("http://query.invalid/").map_err(|_| ApiError::internal())?;
+        url.set_query(Some(raw));
+        let mut repeated = Vec::new();
+        let mut rest = Vec::new();
+        for (name, value) in url.query_pairs() {
+            if name == REPEATED_PARAM {
+                repeated.push(value.into_owned());
+            } else {
+                rest.push((name.into_owned(), value.into_owned()));
+            }
+        }
+        let mut rebuilt =
+            reqwest::Url::parse("http://query.invalid/").map_err(|_| ApiError::internal())?;
+        if !rest.is_empty() {
+            rebuilt.query_pairs_mut().extend_pairs(rest);
+        }
+        let uri: axum::http::Uri = format!("/?{}", rebuilt.query().unwrap_or_default())
+            .parse()
+            .map_err(|_| ApiError::validation("Parametros de query invalidos"))?;
+        Query::<T>::try_from_uri(&uri)
+            .map(|Query(value)| Self(value, repeated))
+            .map_err(map_query_rejection)
+    }
+}
+
 pub struct ApiPath<T>(pub T);
 
 impl<S, T> FromRequestParts<S> for ApiPath<T>

@@ -7,6 +7,7 @@ pub mod auth;
 pub mod authz;
 pub mod background;
 pub mod bootstrap;
+pub mod categories;
 pub mod channels;
 pub mod consolidation;
 pub mod context;
@@ -76,6 +77,9 @@ struct Inner<S> {
     counters: Counters,
     network: NetworkCache,
     context: ContextCache,
+    /// Blocos com `focus` (0.11.0): LRU pequeno e separado, para o foco de cada turno não
+    /// expulsar os blocos sem foco.
+    focus_context: ContextCache,
     database: DatabaseSettings,
     vault: Vault,
     http: reqwest::Client,
@@ -114,6 +118,7 @@ impl<S: Store> Core<S> {
                 counters: Counters::default(),
                 network: NetworkCache::default(),
                 context: ContextCache::default(),
+                focus_context: ContextCache::new(crate::core::context::cache::FOCUS_CAPACITY),
                 database,
                 vault: Vault::new(secrets_key),
                 http: crate::providers::llm::http_client(),
@@ -161,6 +166,10 @@ impl<S: Store> Core<S> {
 
     pub(crate) fn context_cache(&self) -> &ContextCache {
         &self.inner.context
+    }
+
+    pub(crate) fn focus_cache(&self) -> &ContextCache {
+        &self.inner.focus_context
     }
 
     pub(crate) fn directory_cache(&self) -> &DirectoryCache {

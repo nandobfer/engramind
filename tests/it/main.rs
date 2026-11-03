@@ -4,6 +4,7 @@
 mod channels;
 mod cli;
 mod consolidation;
+mod consumer;
 mod context;
 mod contract;
 mod docs;

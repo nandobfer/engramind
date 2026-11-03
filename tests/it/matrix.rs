@@ -1,5 +1,5 @@
 //! Matriz tipo × escopo × operação nas três vias (REST, MCP e CLI): cada operação do catálogo
-//! é chamada por tokens `agent` e `admin` com as quatro combinações de escopos.
+//! é chamada por tokens `agent`, `app` e `admin` com as quatro combinações de escopos.
 
 use std::{
     process::Command,
@@ -63,7 +63,7 @@ async fn callers(context: &TestContext) -> Vec<Caller> {
         .subscribe("matrix/agente", "matrix/canal", "inject", None)
         .await;
     let mut callers = Vec::new();
-    for kind in [TokenKind::Agent, TokenKind::Admin] {
+    for kind in [TokenKind::Agent, TokenKind::App, TokenKind::Admin] {
         for scopes in SCOPE_SETS {
             let agent = (kind == TokenKind::Agent).then_some("matrix/agente");
             let secret = context.issue("matrix", agent, kind.as_str(), scopes).await;
@@ -124,7 +124,7 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
         "issue_token" => (
             "POST",
             "/v1/tokens".into(),
-            Some(json!({ "app": "matrix", "kind": "admin", "scopes": ["read"] })),
+            Some(json!({ "agent": "matrix/agente", "kind": "agent", "scopes": ["read"] })),
         ),
         "update_token" => (
             "PATCH",
@@ -132,6 +132,19 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
             Some(json!({ "label": "x" })),
         ),
         "revoke_token" => ("POST", "/v1/tokens/tk_ffffffff/revoke".into(), None),
+        "rotate_token" => ("POST", "/v1/tokens/tk_ffffffff/rotate".into(), None),
+        "update_app_webhook" => (
+            "PUT",
+            "/v1/apps/nao-existe/webhook".into(),
+            Some(json!({ "url": null })),
+        ),
+        "get_consumer_settings" => ("GET", "/v1/consumer-settings".into(), None),
+        "list_categories" => ("GET", "/v1/categories".into(), None),
+        "create_category" => (
+            "POST",
+            "/v1/categories".into(),
+            Some(json!({ "key": "MATRIX", "label": "Matriz", "priority": 0 })),
+        ),
         "list_channels" => ("GET", "/v1/channels".into(), None),
         "get_channel" => ("GET", "/v1/channels/matrix%2Fcanal".into(), None),
         "create_channel" => (
@@ -273,7 +286,10 @@ fn mcp_arguments(name: &str) -> Value {
         "create_agent" => json!({ "app": "matrix", "slug": format!("a-{n}"), "name": "A" }),
         "update_agent" => json!({ "agent": "matrix/agente", "name": "Agente" }),
         "delete_agent" => json!({ "agent": "matrix/nao-existe" }),
-        "issue_token" => json!({ "app": "matrix", "kind": "admin", "scopes": ["read"] }),
+        "issue_token" => json!({ "agent": "matrix/agente", "kind": "agent", "scopes": ["read"] }),
+        "rotate_token" => json!({ "token": "tk_ffffffff" }),
+        "update_app_webhook" => json!({ "app": "nao-existe", "url": null }),
+        "create_category" => json!({ "key": "MATRIX", "label": "Matriz", "priority": 0 }),
         "update_token" => json!({ "token": "tk_ffffffff", "label": "x" }),
         "revoke_token" => json!({ "token": "tk_ffffffff" }),
         "get_channel" => json!({ "channel": "matrix/canal" }),
@@ -374,12 +390,29 @@ fn cli_arguments(name: &str) -> Vec<String> {
         "issue_token" => vec![
             "tokens".into(),
             "issue".into(),
-            "--app".into(),
-            "matrix".into(),
+            "--agent".into(),
+            "matrix/agente".into(),
             "--kind".into(),
-            "admin".into(),
+            "agent".into(),
             "--scopes".into(),
             "read".into(),
+        ],
+        "rotate_token" => vec!["tokens".into(), "rotate".into(), "tk_ffffffff".into()],
+        "update_app_webhook" => vec![
+            "apps".into(),
+            "webhook".into(),
+            "nao-existe".into(),
+            "--remove".into(),
+        ],
+        "create_category" => vec![
+            "categories".into(),
+            "create".into(),
+            "--key".into(),
+            "MATRIX".into(),
+            "--label".into(),
+            "Matriz".into(),
+            "--priority".into(),
+            "0".into(),
         ],
         "update_token" => vec![
             "tokens".into(),

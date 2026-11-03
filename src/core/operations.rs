@@ -6,10 +6,14 @@ use super::principal::Scope;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequiredKind {
-    /// Qualquer token (`agent` ou `admin`).
+    /// Qualquer token (`agent`, `app` ou `admin`).
     Any,
     /// Só token `admin`.
     Admin,
+    /// Token `admin` ou `app` (o `app` só no próprio app, conferido no `core`).
+    AdminOrApp,
+    /// Token `agent` ou `admin`: escrita individual de memórias, que o `app` não tem.
+    AgentOrAdmin,
 }
 
 impl RequiredKind {
@@ -17,6 +21,18 @@ impl RequiredKind {
         match self {
             Self::Any => "any",
             Self::Admin => "admin",
+            Self::AdminOrApp => "admin_or_app",
+            Self::AgentOrAdmin => "agent_or_admin",
+        }
+    }
+
+    pub fn admits(self, kind: super::principal::TokenKind) -> bool {
+        use super::principal::TokenKind;
+        match self {
+            Self::Any => true,
+            Self::Admin => kind == TokenKind::Admin,
+            Self::AdminOrApp => matches!(kind, TokenKind::Admin | TokenKind::App),
+            Self::AgentOrAdmin => matches!(kind, TokenKind::Agent | TokenKind::Admin),
         }
     }
 }
@@ -45,6 +61,7 @@ pub const TAG_NETWORK: &str = "Network";
 pub const TAG_CONTEXT: &str = "Context";
 pub const TAG_MEMORIES: &str = "Memories";
 pub const TAG_SEARCH: &str = "Search";
+pub const TAG_CONSUMER: &str = "Consumer";
 pub const TAG_EMBEDDINGS: &str = "Embeddings";
 pub const TAG_SETTINGS: &str = "Settings";
 pub const TAG_STATUS: &str = "Status";
@@ -117,7 +134,8 @@ const fn mutation(
     }
 }
 
-/// Mutação de qualquer token; o acesso efetivo no canal é conferido no `core`.
+/// Mutação individual de memória (`agent` ou `admin`); o acesso efetivo no canal é conferido
+/// no `core`.
 #[allow(clippy::too_many_arguments)]
 const fn any_mutation(
     name: &'static str,
@@ -131,7 +149,36 @@ const fn any_mutation(
     cli: &'static [&'static str],
 ) -> OperationSpec {
     OperationSpec {
-        kind: RequiredKind::Any,
+        kind: RequiredKind::AgentOrAdmin,
+        ..mutation(
+            name,
+            tag,
+            summary,
+            scope,
+            destructive,
+            idempotent,
+            method,
+            path,
+            cli,
+        )
+    }
+}
+
+/// Mutação administrativa que o token `app` também faz no próprio app.
+#[allow(clippy::too_many_arguments)]
+const fn app_mutation(
+    name: &'static str,
+    tag: &'static str,
+    summary: &'static str,
+    scope: Scope,
+    destructive: bool,
+    idempotent: bool,
+    method: &'static str,
+    path: &'static str,
+    cli: &'static [&'static str],
+) -> OperationSpec {
+    OperationSpec {
+        kind: RequiredKind::AdminOrApp,
         ..mutation(
             name,
             tag,
@@ -194,6 +241,17 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/apps/{app}",
         &["apps", "update"],
     ),
+    app_mutation(
+        "update_app_webhook",
+        TAG_IDENTITIES,
+        "Grava ou remove o webhook de um app",
+        Scope::Write,
+        false,
+        true,
+        "PUT",
+        "/v1/apps/{app}/webhook",
+        &["apps", "webhook"],
+    ),
     mutation(
         "delete_app",
         TAG_IDENTITIES,
@@ -209,7 +267,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "list_agents",
         TAG_IDENTITIES,
         "Lista os agentes",
-        Admin,
+        RequiredKind::AdminOrApp,
         "/v1/agents",
         &["agents", "list"],
     ),
@@ -217,11 +275,11 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "get_agent",
         TAG_IDENTITIES,
         "Mostra um agente",
-        Admin,
+        RequiredKind::AdminOrApp,
         "/v1/agents/{agent}",
         &["agents", "get"],
     ),
-    mutation(
+    app_mutation(
         "create_agent",
         TAG_IDENTITIES,
         "Cria um agente num app",
@@ -232,7 +290,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/agents",
         &["agents", "create"],
     ),
-    mutation(
+    app_mutation(
         "update_agent",
         TAG_IDENTITIES,
         "Altera ou desativa um agente",
@@ -243,7 +301,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/agents/{agent}",
         &["agents", "update"],
     ),
-    mutation(
+    app_mutation(
         "delete_agent",
         TAG_IDENTITIES,
         "Exclui um agente com seus tokens",
@@ -258,11 +316,11 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "list_tokens",
         TAG_IDENTITIES,
         "Lista os tokens, sem segredos",
-        Admin,
+        RequiredKind::AdminOrApp,
         "/v1/tokens",
         &["tokens", "list"],
     ),
-    mutation(
+    app_mutation(
         "issue_token",
         TAG_IDENTITIES,
         "Emite um token; o segredo aparece só nesta resposta",
@@ -273,7 +331,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/tokens",
         &["tokens", "issue"],
     ),
-    mutation(
+    app_mutation(
         "update_token",
         TAG_IDENTITIES,
         "Altera rótulo, escopos ou expiração de um token",
@@ -284,7 +342,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/tokens/{token}",
         &["tokens", "update"],
     ),
-    mutation(
+    app_mutation(
         "revoke_token",
         TAG_IDENTITIES,
         "Revoga um token imediatamente",
@@ -294,6 +352,17 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "POST",
         "/v1/tokens/{token}/revoke",
         &["tokens", "revoke"],
+    ),
+    app_mutation(
+        "rotate_token",
+        TAG_IDENTITIES,
+        "Emite um token igual e revoga o antigo; o segredo aparece só nesta resposta",
+        Scope::Write,
+        false,
+        false,
+        "POST",
+        "/v1/tokens/{token}/rotate",
+        &["tokens", "rotate"],
     ),
     read(
         "list_channels",
@@ -341,7 +410,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/channels/{channel}",
         &["channels", "update"],
     ),
-    mutation(
+    app_mutation(
         "archive_channel",
         TAG_NETWORK,
         "Arquiva um canal",
@@ -352,7 +421,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/channels/{channel}/archive",
         &["channels", "archive"],
     ),
-    mutation(
+    app_mutation(
         "restore_channel",
         TAG_NETWORK,
         "Restaura um canal arquivado",
@@ -382,7 +451,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/subscriptions",
         &["subscriptions", "list"],
     ),
-    mutation(
+    app_mutation(
         "subscribe",
         TAG_NETWORK,
         "Assina um agente a um canal ou prefixo",
@@ -393,7 +462,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/subscriptions",
         &["subscriptions", "add"],
     ),
-    mutation(
+    app_mutation(
         "update_subscription",
         TAG_NETWORK,
         "Altera modo, acesso ou prioridade de uma assinatura",
@@ -404,7 +473,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/subscriptions/{subscription}",
         &["subscriptions", "update"],
     ),
-    mutation(
+    app_mutation(
         "unsubscribe",
         TAG_NETWORK,
         "Cancela uma assinatura",
@@ -579,7 +648,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/memories/{memory}",
         &["memories", "delete"],
     ),
-    mutation(
+    app_mutation(
         "import_memories",
         TAG_INTEGRATION,
         "Importa memórias em lote preservando data, autoria e origem",
@@ -590,6 +659,36 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/memories/import",
         &["memories", "import"],
     ),
+    read(
+        "get_consumer_settings",
+        TAG_CONSUMER,
+        "Limites de escrita e orçamento do contexto para o app consumidor",
+        RequiredKind::Any,
+        "/v1/consumer-settings",
+        &["settings", "consumer"],
+    ),
+    read(
+        "list_categories",
+        TAG_CONSUMER,
+        "Lista as categorias de memória",
+        RequiredKind::Any,
+        "/v1/categories",
+        &["categories", "list"],
+    ),
+    OperationSpec {
+        kind: RequiredKind::Any,
+        ..mutation(
+            "create_category",
+            TAG_CONSUMER,
+            "Cria uma categoria de memória sem sobrescrever as existentes",
+            Scope::Write,
+            false,
+            false,
+            "POST",
+            "/v1/categories",
+            &["categories", "create"],
+        )
+    },
     read(
         "get_settings",
         TAG_SETTINGS,
@@ -856,9 +955,17 @@ mod tests {
                 assert!(!operation.destructive && operation.idempotent);
                 assert!(matches!(operation.scope, None | Some(Scope::Read)));
             } else {
+                // Escrita individual de memória: `agent` ou `admin`; o `app` só importa.
+                assert_eq!(
+                    operation.kind == RequiredKind::AgentOrAdmin,
+                    operation.tag == TAG_MEMORIES && operation.name != "import_memories",
+                    "{}",
+                    operation.name
+                );
+                // Única mutação de qualquer token fora das memórias: criar categoria.
                 assert_eq!(
                     operation.kind == RequiredKind::Any,
-                    operation.tag == TAG_MEMORIES,
+                    operation.name == "create_category",
                     "{}",
                     operation.name
                 );

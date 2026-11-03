@@ -11,7 +11,10 @@ use super::{
     events::EventType,
     idempotency::Mutation,
     ids,
-    memories::{category, content_jobs, initial_status, memory_error, memory_text, origin},
+    memories::{
+        category, client_title, content_jobs, initial_status, memory_error, memory_key,
+        memory_text, origin, tags,
+    },
     memory_text::{content_hash, provisional_title},
     model::{ImportResult, MemoryStatus, NewImportedMemory, Origin},
     principal::{Principal, Scope},
@@ -44,9 +47,17 @@ pub struct ImportItem {
     /// Instante original (RFC 3339, não futuro); omitido, agora.
     #[schema(example = "2026-01-10T12:00:00Z")]
     pub created_at: Option<String>,
-    /// Autor original; omitido, o token que importa.
+    /// Autor original; omitido, o token que importa (o token de app: o app, sem agente).
     pub author: Option<ImportAuthor>,
     pub origin: Option<Origin>,
+    /// Título do cliente (3 a 200), travado; omitido, provisório até o Redator.
+    #[schema(example = "Vila de Pedra Alta")]
+    pub title: Option<String>,
+    /// Até 20 tags de 1 a 40 caracteres.
+    pub tags: Option<Vec<String>>,
+    /// Chave natural: existente no canal, o item atualiza a memória (upsert, em `updated`).
+    #[schema(example = "local:pedra-alta")]
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, JsonSchema)]
@@ -151,7 +162,7 @@ impl<S: Store> Core<S> {
                             .map_err(|error| at_index(error, index))?;
                         let (author_app_id, author_agent_id) = match &item.author {
                             Some(author) => core
-                                .import_author(author)
+                                .import_author(&principal_owned, author)
                                 .await
                                 .map_err(|error| at_index(error, index))?,
                             None => (
@@ -159,11 +170,30 @@ impl<S: Store> Core<S> {
                                 principal_owned.agent.as_ref().map(|agent| agent.id.clone()),
                             ),
                         };
+                        let title = item
+                            .title
+                            .as_deref()
+                            .map(client_title)
+                            .transpose()
+                            .map_err(|error| at_index(error, index))?;
                         items.push(NewImportedMemory {
                             index,
                             category: category(&snapshot, item.category.as_deref())
                                 .map_err(|error| at_index(error, index))?,
-                            title: provisional_title(&text),
+                            title_locked: title.is_some(),
+                            title: title.unwrap_or_else(|| provisional_title(&text)),
+                            tags: item
+                                .tags
+                                .as_deref()
+                                .map(tags)
+                                .transpose()
+                                .map_err(|error| at_index(error, index))?,
+                            key: item
+                                .key
+                                .as_deref()
+                                .map(memory_key)
+                                .transpose()
+                                .map_err(|error| at_index(error, index))?,
                             content_hash: content_hash(&text),
                             status: initial_status(item.status)
                                 .map_err(|error| at_index(error, index))?,
@@ -204,9 +234,12 @@ impl<S: Store> Core<S> {
     /// App e agente autores de um item importado (Q-003).
     async fn import_author(
         &self,
+        principal: &Principal,
         author: &ImportAuthor,
     ) -> Result<(String, Option<String>), ApiError> {
         let app = self.find_app(&author.app).await?;
+        // O token de app só importa em nome do próprio app (decisão 0028).
+        super::identities::ensure_own_app(principal, &app.reference())?;
         let Some(agent) = author
             .agent
             .as_deref()

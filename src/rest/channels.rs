@@ -166,7 +166,7 @@ pub async fn update_channel(
     operation_id = "archive_channel",
     tag = "Network",
     summary = "Arquiva um canal",
-    description = "O canal sai do contexto, da busca e das dicas padrão e de `list_channels` sem `include_archived`; continua legível quando citado pelo slug. Arquivar um canal já arquivado não muda nada. Exige token admin com `write`.",
+    description = "O canal sai do contexto, da busca e das dicas padrão e de `list_channels` sem `include_archived`; continua legível quando citado pelo slug. Arquivar um canal já arquivado não muda nada. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(
         ("channel" = String, Path, description = "Id (`ch_…`) ou slug do canal"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada por 24 h")
@@ -176,7 +176,7 @@ pub async fn update_channel(
         (status = 200, description = "Canal arquivado", body = Channel),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`CHANNEL_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
@@ -203,7 +203,7 @@ pub async fn archive_channel(
     operation_id = "restore_channel",
     tag = "Network",
     summary = "Restaura um canal arquivado",
-    description = "O canal volta ao contexto, à busca e às listagens. Restaurar um canal ativo não muda nada. Exige token admin com `write`.",
+    description = "O canal volta ao contexto, à busca e às listagens. Restaurar um canal ativo não muda nada. Exige token admin com `write`, ou token app com `write` no próprio app (`403 FOREIGN_APP` fora dele).",
     params(
         ("channel" = String, Path, description = "Id (`ch_…`) ou slug do canal"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada por 24 h")
@@ -213,7 +213,7 @@ pub async fn archive_channel(
         (status = 200, description = "Canal restaurado", body = Channel),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`CHANNEL_NOT_FOUND`", body = ErrorResponse),
         (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),

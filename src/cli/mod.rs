@@ -122,6 +122,9 @@ pub enum Command {
         /// `tagged`, `markdown` ou `json` (padrão `context.default_format`).
         #[arg(long)]
         format: Option<String>,
+        /// Texto da tarefa ou da conversa: as memórias relevantes vêm antes (até 2000).
+        #[arg(long)]
+        focus: Option<String>,
         /// `version` já em uso: sem mudança, nada é impresso (`--json`: `not_modified: true`)
         /// e a saída é 0.
         #[arg(long)]
@@ -139,7 +142,10 @@ pub enum Command {
         #[arg(long)]
         limit: Option<u32>,
     },
-    /// Configurações (token admin).
+    /// Categorias de memória (listar com `read`, criar com `write`).
+    #[command(subcommand)]
+    Categories(CategoriesCommand),
+    /// Configurações (token admin; `settings consumer` para qualquer token).
     #[command(subcommand)]
     Settings(SettingsCommand),
     /// Segredos de configuração (token admin).
@@ -251,6 +257,24 @@ pub enum AppsCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
+    /// Grava ou remove o webhook de um app (admin: qualquer app; token app: o próprio).
+    Webhook {
+        app: String,
+        /// Destino dos eventos (http/https); exige um segredo (o lido ou o já gravado).
+        #[arg(long, required_unless_present = "remove")]
+        webhook_url: Option<String>,
+        /// Lê o segredo (32 a 256 caracteres) da entrada padrão.
+        #[arg(long, requires = "webhook_url")]
+        webhook_secret_stdin: bool,
+        /// Remove a URL e o segredo.
+        #[arg(long, conflicts_with_all = ["webhook_url", "webhook_secret_stdin"])]
+        remove: bool,
+        /// Segredo lido da entrada padrão.
+        #[arg(skip)]
+        webhook_secret: Option<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
 }
 
 /// Campos de `update` de apps e agentes.
@@ -329,7 +353,7 @@ pub enum TokensCommand {
         /// Agente (id ou app/agente); obrigatório para --kind agent.
         #[arg(long)]
         agent: Option<String>,
-        /// `agent` ou `admin`.
+        /// `agent`, `admin` ou `app` (`app` exige --app e não aceita --agent).
         #[arg(long, default_value = "agent")]
         kind: String,
         /// `read`, `read,write`, `read,delete` ou `read,write,delete`.
@@ -363,6 +387,14 @@ pub enum TokensCommand {
     },
     /// Revoga um token imediatamente.
     Revoke {
+        /// Id do token (`tk_…`).
+        #[arg(value_name = "TOKEN_ID")]
+        token_id: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Emite um token igual e revoga o antigo; o segredo aparece só nesta resposta.
+    Rotate {
         /// Id do token (`tk_…`).
         #[arg(value_name = "TOKEN_ID")]
         token_id: String,
@@ -477,6 +509,12 @@ pub enum MemoriesCommand {
         /// Só as candidatas por desuso (`--stale false`: só as demais).
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         stale: Option<bool>,
+        /// Só as com esta tag; repita para exigir todas (E lógico).
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Só a memória com esta chave.
+        #[arg(long)]
+        key: Option<String>,
         #[command(flatten)]
         fields: FieldsArgs,
         #[command(flatten)]
@@ -507,6 +545,9 @@ pub enum MemoriesCommand {
         /// Deixa de fora as memórias com texto completo no contexto (`engramind context`).
         #[arg(long)]
         exclude_context: bool,
+        /// Só as com esta tag; repita para exigir todas (E lógico).
+        #[arg(long = "tag")]
+        tags: Vec<String>,
         #[command(flatten)]
         fields: FieldsArgs,
     },
@@ -537,10 +578,22 @@ pub enum MemoriesCommand {
         /// Referência da origem, por exemplo o caso que gerou a memória.
         #[arg(long, requires = "origin_source")]
         origin_label: Option<String>,
+        /// Título do cliente (3 a 200), travado: o Redator não o troca.
+        #[arg(long)]
+        title: Option<String>,
+        /// Tag (até 20); repita para várias.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Chave natural, única no canal (1 a 80 de A-Z a-z 0-9 : _ -).
+        #[arg(long)]
+        key: Option<String>,
+        /// Com --key existente no canal, atualiza a memória em vez de dar MEMORY_KEY_EXISTS.
+        #[arg(long, requires = "key")]
+        upsert: bool,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Importa memórias em lote (token admin), preservando data, autoria e origem.
+    /// Importa memórias em lote (token admin ou app), preservando data, autoria e origem.
     Import {
         /// Canal de destino (id ou slug).
         #[arg(long)]
@@ -556,7 +609,7 @@ pub enum MemoriesCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Edita o texto ou a categoria de uma memória.
+    /// Edita o texto, a categoria, o título, as tags ou a origem de uma memória.
     Update {
         /// Id da memória (`m_…`).
         memory: String,
@@ -565,6 +618,27 @@ pub enum MemoriesCommand {
         text: Option<String>,
         #[arg(long)]
         category: Option<String>,
+        /// Título do cliente (3 a 200): grava e trava.
+        #[arg(long, conflicts_with = "unlock_title")]
+        title: Option<String>,
+        /// Trava o título atual.
+        #[arg(long, conflicts_with_all = ["unlock_title", "title"])]
+        lock_title: bool,
+        /// Destrava o título; o Redator gera um novo.
+        #[arg(long)]
+        unlock_title: bool,
+        /// Substitui as tags (repita para várias).
+        #[arg(long = "tag", conflicts_with = "clear_tags")]
+        tags: Vec<String>,
+        /// Remove todas as tags.
+        #[arg(long)]
+        clear_tags: bool,
+        /// Origem desta edição, por exemplo `curator`.
+        #[arg(long)]
+        origin_source: Option<String>,
+        /// Referência da origem.
+        #[arg(long, requires = "origin_source")]
+        origin_label: Option<String>,
         /// Versão lida; divergente dá MEMORY_VERSION_CONFLICT.
         #[arg(long)]
         expected_version: Option<i64>,
@@ -701,9 +775,31 @@ pub enum SubscriptionsCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum CategoriesCommand {
+    /// Lista as categorias de memória.
+    List,
+    /// Cria uma categoria de memória sem sobrescrever as existentes.
+    Create {
+        /// Maiúsculas, dígitos e `_`, começando por letra (até 40).
+        #[arg(long)]
+        key: String,
+        /// De 1 a 80 caracteres.
+        #[arg(long)]
+        label: String,
+        /// De -1000 a 1000; maior entra antes no contexto.
+        #[arg(long, allow_hyphen_values = true)]
+        priority: i64,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum SettingsCommand {
     /// Lê as configurações (todas ou uma chave).
     Get { key: Option<String> },
+    /// Limites de escrita e orçamento do contexto para o consumidor (qualquer token com read).
+    Consumer,
     /// Altera uma configuração; o valor é lido como JSON (`600`, `true`, `null` volta ao padrão).
     Set {
         key: String,

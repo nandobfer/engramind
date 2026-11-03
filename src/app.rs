@@ -61,8 +61,8 @@ fn routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
 /// Rotas protegidas por `require_auth`: uma entrada por operação do catálogo e `/metrics`.
 fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
     use rest::{
-        audit, channels, consolidation, context, docs, embeddings, identities, integration, jobs,
-        memories, search, settings, status, subscriptions,
+        audit, categories, channels, consolidation, context, docs, embeddings, identities,
+        integration, jobs, memories, search, settings, status, subscriptions,
     };
     vec![
         ("/v1/whoami", get(identities::whoami)),
@@ -92,6 +92,11 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         ),
         ("/v1/tokens/{token}", patch(identities::update_token)),
         ("/v1/tokens/{token}/revoke", post(identities::revoke_token)),
+        ("/v1/tokens/{token}/rotate", post(identities::rotate_token)),
+        (
+            "/v1/apps/{app}/webhook",
+            put(identities::update_app_webhook),
+        ),
         (
             "/v1/channels",
             get(channels::list_channels).post(channels::create_channel),
@@ -163,6 +168,14 @@ fn protected_routes() -> Vec<(&'static str, MethodRouter<AppState>)> {
         (
             "/v1/settings",
             get(settings::get_settings).put(settings::update_settings),
+        ),
+        (
+            "/v1/consumer-settings",
+            get(settings::get_consumer_settings),
+        ),
+        (
+            "/v1/categories",
+            get(categories::list_categories).post(categories::create_category),
         ),
         ("/v1/secrets/{key}", put(settings::set_secret)),
         ("/v1/settings/redator/test", post(settings::test_redator)),

@@ -25,7 +25,10 @@ Para ler de uma vez as memórias que valem para você (os canais em modo `inject
 ```bash
 engramind context
 engramind context --json
+engramind context --focus "o que você vai fazer agora" --json
 ```
+
+Com `--focus`, as memórias relevantes à tarefa vêm primeiro dentro de cada canal (`focus_mode` diz se o sentido entrou, `hybrid`, ou só as palavras, `text`). Cada título da segunda faixa traz a categoria e o canal (`#id [CATEGORIA] @canal: título`).
 
 ## Quando buscar
 
@@ -56,8 +59,8 @@ engramind memories list --fields title --channels eng/global --json
 Grave quando descobrir um fato que continuará verdadeiro por semanas e que outro agente precisaria saber. Uma boa memória:
 
 - tem **um** fato, curto e autossuficiente (quem lê não tem o contexto da sua conversa);
-- é genérica: sem dados sensíveis (segredos, tokens, dados pessoais), sem códigos de tarefa e sem URLs temporárias;
-- está na categoria certa: `PROJECT_RULES`, `ARCHITECTURE`, `CONSTRAINTS`, `CONFIG_VALUES` ou `NAMING`.
+- é durável: segredos e dados pessoais só com necessidade; códigos de tarefa, URLs e identificadores podem entrar quando úteis (a política de memória do app que você usa prevalece);
+- está na categoria certa: veja as atuais com `engramind categories list --json` (as padrão são `PROJECT_RULES`, `ARCHITECTURE`, `CONSTRAINTS`, `CONFIG_VALUES` e `NAMING`); falta uma, crie com `engramind categories create --key QUESTS --label Missões --priority 25 --json`, que nunca sobrescreve as existentes.
 
 Busque antes de criar. Depois de criar, confira `similar` na resposta: se aparecer uma memória parecida, prefira editá-la e excluir a nova.
 
@@ -66,6 +69,8 @@ engramind memories create --channel eng/global --category CONSTRAINTS --text "Ro
 ```
 
 - `duplicate: true` na resposta: o texto já existia e nada foi gravado.
+- `--title` grava um título seu, que o Redator não troca; `--tag` (repetível) rotula sem mexer no conteúdo.
+- Fato que você atualiza sempre (um placar, um estado)? Dê uma chave e use upsert: `engramind memories create --channel eng/global --key estado:deploy --upsert --text "…" --json` edita a mesma memória em vez de criar outra (`created: false`).
 - Para texto com várias linhas, passe `--text -` e mande o texto pela entrada padrão.
 
 ## Editar
@@ -90,6 +95,8 @@ Em erro, a saída é `{ "error": { "code", "message", "details" } }` e o código
 |---|---|
 | `MEMORY_VERSION_CONFLICT` | Outro agente mudou a memória. Releia com `engramind memories get`, refaça a edição e use o novo `version`. |
 | `MEMORY_DUPLICATE` | O texto já existe em `details.existing_id`; use ou edite aquela memória. |
+| `MEMORY_KEY_EXISTS` | A chave já existe em `details.existing_id`; repita com `--upsert` para editar aquela memória. |
+| `CATEGORY_CONFLICT` | A categoria já existe com outro rótulo ou prioridade; use a existente. |
 | `CATEGORY_NOT_FOUND` | Use uma categoria de `details.valid`. |
 | `VALIDATION_ERROR` com `details.field: "text"` | O texto está curto ou longo demais; veja `details.min` e `details.max`. |
 | `SCOPE_REQUIRED` | Seu token ou sua assinatura não permitem a operação nesse canal; não insista. |

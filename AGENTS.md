@@ -42,9 +42,9 @@ Quando um arquivo obrigatório ainda não existir, registre a lacuna antes de im
 ## Segurança
 
 - Todo acesso é por Bearer token `eng.<token_id>.<segredo>`; o segredo é comparado em tempo constante com o HMAC-SHA256 que usa o `TOKEN_PEPPER` como chave e aparece uma única vez, na emissão.
-- Tipos `agent` e `admin`; escopos `read`, `write`, `delete` (`write` e `delete` exigem `read`).
+- Tipos `agent`, `app` (gere só o próprio app, emitido pelo admin) e `admin`; escopos `read`, `write`, `delete` (`write` e `delete` exigem `read`).
 - **Acesso efetivo = escopos do token ∩ acesso da assinatura.** A assinatura restringe, nunca amplia. Aplique isso no `core`, nunca só no adaptador.
-- Token `agent` nunca alcança ferramentas administrativas nem cria canais.
+- Token `agent` nunca alcança ferramentas administrativas nem cria canais; token `app` só opera o próprio app (`403 FOREIGN_APP`) e nunca escreve memórias individuais.
 - Falhe fechado: token ausente, inválido, expirado ou revogado → `401`; escopo insuficiente → `403 SCOPE_REQUIRED`; canal não assinado → `403 CHANNEL_NOT_SUBSCRIBED`.
 - `BOOTSTRAP_ADMIN_TOKEN` só é aceito com o banco vazio.
 - Segredos de configuração (chaves de API, segredos de webhook) são cifrados com AES-GCM (`SECRETS_KEY`), mantidos com `zeroize` em memória e só gravados; a leitura mostra `{ configured, updated_at }`.

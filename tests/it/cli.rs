@@ -531,6 +531,86 @@ async fn serve_bootstraps_the_first_admin_and_the_cli_provisions_an_agent() {
     assert_eq!(whoami["agent"]["slug"], "app-a/curador");
     assert_eq!(whoami["kind"], "agent");
 
+    // 0.11.0: o token de app provisiona sem admin; o agente usa os campos novos.
+    let json_of = |output: &Output| -> serde_json::Value {
+        assert!(output.status.success(), "{}", text(output));
+        serde_json::from_slice(&output.stdout).expect("json")
+    };
+    let app = json_of(
+        &cli(
+            words("tokens issue --app app-a --kind app --scopes read,write"),
+            BOOTSTRAP.to_owned(),
+        )
+        .await
+        .expect("join"),
+    )["secret"]
+        .as_str()
+        .expect("secret")
+        .to_owned();
+    let subscribed = json_of(
+        &cli(
+            words("subscriptions add --agent app-a/curador --target app-a/privado --mode inject"),
+            app.clone(),
+        )
+        .await
+        .expect("join"),
+    );
+    assert_eq!(subscribed["channel_created"], true);
+    let consumer = json_of(
+        &cli(words("settings consumer"), app.clone())
+            .await
+            .expect("join"),
+    );
+    assert_eq!(consumer["channels"][0]["channel"], "app-a/privado");
+    let category = json_of(
+        &cli(
+            words("categories create --key QUESTS --label Missoes --priority -5"),
+            secret.clone(),
+        )
+        .await
+        .expect("join"),
+    );
+    assert_eq!(
+        (category["key"].clone(), category["priority"].clone()),
+        (serde_json::json!("QUESTS"), serde_json::json!(-5))
+    );
+    let mut create = words(
+        "memories create --channel app-a/privado --category QUESTS --tag missao --key quest:1 --upsert --text",
+    );
+    create.push("O dragao teme o gelo.".to_owned());
+    create.push("--title".to_owned());
+    create.push("A Fraqueza do Dragao".to_owned());
+    let created = json_of(&cli(create.clone(), secret.clone()).await.expect("join"));
+    assert_eq!(
+        (
+            created["created"].clone(),
+            created["memory"]["title_locked"].clone()
+        ),
+        (serde_json::json!(true), serde_json::json!(true))
+    );
+    let again = json_of(&cli(create, secret.clone()).await.expect("join"));
+    assert_eq!(again["created"], false);
+    let listed = json_of(
+        &cli(
+            words("memories list --tag missao --key quest:1"),
+            secret.clone(),
+        )
+        .await
+        .expect("join"),
+    );
+    assert_eq!(listed["memories"].as_array().expect("list").len(), 1);
+    let mut focus = words("context --format json --focus");
+    focus.push("dragao gelo".to_owned());
+    let block = json_of(&cli(focus, secret.clone()).await.expect("join"));
+    assert!(block["focus_mode"].is_string(), "{block}");
+    let id = issued["token"]["id"].as_str().expect("id").to_owned();
+    let rotated = json_of(
+        &cli(vec!["tokens".into(), "rotate".into(), id], app.clone())
+            .await
+            .expect("join"),
+    );
+    assert!(rotated["secret"].is_string());
+
     server.kill().expect("kill");
     let output = server.wait_with_output().expect("output");
     let logs = String::from_utf8_lossy(&output.stdout);

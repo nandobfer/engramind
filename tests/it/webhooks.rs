@@ -574,6 +574,7 @@ const WITHOUT_EVENTS: &[&str] = &[
     "issue_token",
     "update_token",
     "revoke_token",
+    "rotate_token",
     "test_redator",
     "test_embedding",
     "list_embedding_models",
@@ -715,6 +716,16 @@ async fn exercise(
             "PUT",
             "/v1/secrets/redator.api_key".into(),
             Some(json!({ "value": format!("sk-{n}") })),
+        ),
+        "update_app_webhook" => (
+            "PUT",
+            "/v1/apps/app-c/webhook".into(),
+            Some(json!({ "url": "http://127.0.0.1:9/eventos", "secret": "s".repeat(40) })),
+        ),
+        "create_category" => (
+            "POST",
+            "/v1/categories".into(),
+            Some(json!({ "key": format!("COBERTURA_{n}"), "label": "Cobertura", "priority": 1 })),
         ),
         other => panic!("operacao de escrita sem caso de evento: {other}"),
     }

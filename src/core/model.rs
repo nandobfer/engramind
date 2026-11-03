@@ -77,6 +77,21 @@ pub struct Agent {
     pub disabled_at: Option<String>,
 }
 
+/// Resposta de `create_agent`: o agente e se ele nasceu agora (`false` na repetição
+/// equivalente, que devolve o existente com `200`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct AgentWrite {
+    #[serde(flatten)]
+    pub agent: Agent,
+    /// Ausente numa resposta gravada antes (idempotência): criado.
+    #[serde(default = "created_default")]
+    pub created: bool,
+}
+
+pub(crate) fn created_default() -> bool {
+    true
+}
+
 impl Agent {
     pub fn reference(&self) -> AgentRef {
         AgentRef {
@@ -370,6 +385,13 @@ pub struct Channel {
     pub created_at: String,
     /// Preenchido quando o canal foi arquivado.
     pub archived_at: Option<String>,
+    /// Slug do app cujo token de app criou o canal ao assinar (ciclo de vida, não dono);
+    /// `null` para canais criados pelo admin ou antes da 0.11.0.
+    #[schema(example = "app-a")]
+    pub created_by: Option<String>,
+    /// Id do app de `created_by` (uso interno).
+    #[serde(skip)]
+    pub created_by_app_id: Option<String>,
     /// Alcance do token em `list_channels` e `get_channel`; ausente nas respostas de mutação.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reach: Option<ChannelReach>,
@@ -396,6 +418,12 @@ pub struct Subscription {
     #[serde(default)]
     #[schema(example = json!(["eng/global", "eng/projeto-atlas"]))]
     pub reaches: Vec<String>,
+    /// App do agente (uso interno: alcance do token de app).
+    #[serde(skip)]
+    pub agent_app_id: String,
+    /// Agente desativado (uso interno: não conta no alcance do token de app).
+    #[serde(skip)]
+    pub agent_disabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -404,6 +432,8 @@ pub struct NewChannel {
     pub name: String,
     pub description: Option<String>,
     pub priority: i64,
+    /// App do token de app que criou o canal ao assinar (decisão 0033).
+    pub created_by_app_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -422,6 +452,20 @@ pub struct NewSubscription {
     pub mode: Mode,
     pub access: Option<Vec<Scope>>,
     pub priority: Option<i64>,
+    /// Canal exato a criar na mesma transação quando ainda não existe (0.11.0).
+    pub create_channel: Option<NewChannel>,
+}
+
+/// Resposta de `subscribe`: a assinatura, se ela nasceu agora (`false` na repetição
+/// equivalente, `200`) e se o canal exato foi criado junto.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SubscriptionWrite {
+    #[serde(flatten)]
+    pub subscription: Subscription,
+    #[serde(default = "created_default")]
+    pub created: bool,
+    #[serde(default)]
+    pub channel_created: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -444,6 +488,15 @@ pub struct Network {
 /// `id do canal → chave → valor`.
 pub type ChannelOverrides =
     std::collections::BTreeMap<String, std::collections::BTreeMap<String, serde_json::Value>>;
+
+/// Resultado de acrescentar uma categoria a `categories.list` (`create_category`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CategoryAppend {
+    /// Gravada (a idempotência guarda `{ ...categoria, created: true }`).
+    Created,
+    /// A `key` já existia: nada foi gravado.
+    Existing(super::settings::Category),
+}
 
 /// Estado de uma memória (desenho §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema, JsonSchema)]
@@ -565,8 +618,17 @@ pub struct Memory {
     #[schema(example = "Use cargo-nextest localmente")]
     pub title: String,
     pub title_state: TitleState,
+    /// `true`: título do cliente, que o Redator não troca (`update_memory` com
+    /// `title_locked: false` destrava).
+    pub title_locked: bool,
     pub text: String,
     pub status: MemoryStatus,
+    /// Chave natural, única no canal e imutável (`create_memory` com `upsert`).
+    #[schema(example = "quest:dragao")]
+    pub key: Option<String>,
+    /// Tags livres, na ordem gravada; não entram no `content_hash`.
+    #[schema(example = json!(["missao", "ativa"]))]
+    pub tags: Vec<String>,
     /// Calculada pelo consolidador; `null` até lá e depois de cada edição do texto.
     pub importance: Option<f64>,
     /// Cresce a cada mudança; base do `expected_version`.
@@ -574,7 +636,11 @@ pub struct Memory {
     pub version: i64,
     pub embedding_state: EmbeddingState,
     pub author: Author,
+    /// Origem informada na criação.
     pub origin: Option<Origin>,
+    /// Origem da revisão mais recente que a informou (criação, edição, importação ou
+    /// `revert`); `null` quando nenhuma informou. O Redator e o consolidador não a mudam.
+    pub last_origin: Option<Origin>,
     /// Gravado em lote a cada 5 s; pode atrasar alguns segundos.
     pub retrieval_count: i64,
     pub injected_count: i64,
@@ -604,6 +670,7 @@ pub struct MemoryTitle {
     #[schema(example = "CONSTRAINTS")]
     pub category: String,
     pub status: MemoryStatus,
+    pub tags: Vec<String>,
 }
 
 impl Memory {
@@ -614,6 +681,7 @@ impl Memory {
             channel: self.channel.clone(),
             category: self.category.clone(),
             status: self.status,
+            tags: self.tags.clone(),
         }
     }
 }
@@ -626,15 +694,35 @@ pub struct SimilarMemory {
     pub title: String,
     #[schema(example = "eng/global")]
     pub channel: String,
-    /// Similaridade de 0 a 1.
+    /// Similaridade de 0 a 1: Jaccard dos termos (`text`) ou cosseno dos vetores (`vector`).
     #[schema(example = 0.91)]
     pub score: f64,
+    /// `text` (termos, na escrita e sem vetor) ou `vector` (cosseno, na leitura).
+    #[serde(default)]
+    pub method: SimilarMethod,
+    /// Cosseno ≥ `memory.vector_duplicate_threshold` (só `vector`); informativo, nunca recusa.
+    #[serde(default)]
+    pub duplicate: bool,
+}
+
+/// Como o `similar` foi calculado.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SimilarMethod {
+    #[default]
+    Text,
+    Vector,
 }
 
 /// Resposta de `create_memory` e `update_memory`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct MemoryWrite {
     pub memory: Memory,
+    /// `true` quando uma memória nova foi gravada; `false` na duplicata, na edição e no upsert
+    /// de uma `key` existente. Respostas gravadas antes da 0.11.0 (replay) recebem o valor do
+    /// status gravado (`idempotency::with_created`).
+    #[serde(default = "created_default")]
+    pub created: bool,
     /// `true` quando o texto já existia no canal e nada foi gravado.
     pub duplicate: bool,
     /// Até três memórias do mesmo canal com similaridade ≥ `memory.similar_threshold`.
@@ -650,6 +738,10 @@ pub struct MemoryRevision {
     #[schema(example = "CONSTRAINTS")]
     pub category: String,
     pub status: MemoryStatus,
+    pub title_locked: bool,
+    pub tags: Vec<String>,
+    /// Origem informada nesta revisão; `null` quando nenhuma.
+    pub origin: Option<Origin>,
     pub author: Author,
     /// `create`, `update`, `archive`, `restore`, `pin`, `unpin`, `move`, `revert` ou `redact`
     /// (texto revisado pelo Redator, autor `system/redator`).
@@ -672,11 +764,19 @@ pub struct NewJob {
 pub struct NewMemory {
     pub channel_id: String,
     pub category: String,
+    /// Provisório, ou o do cliente quando `title_locked`.
     pub title: String,
+    pub title_locked: bool,
     pub text: String,
     pub status: MemoryStatus,
     pub content_hash: Vec<u8>,
     pub origin: Option<Origin>,
+    /// `None`: nenhuma informada (no upsert, mantém as atuais).
+    pub tags: Option<Vec<String>>,
+    pub key: Option<String>,
+    /// Com `key` existente no canal: atualiza (`created: false`) em vez de `MEMORY_KEY_EXISTS`.
+    pub upsert: bool,
+    /// Dedupe exato; ignorado com `key` (a chave é a identidade).
     pub dedupe: bool,
     pub jobs: Vec<NewJob>,
     pub similar: Vec<SimilarMemory>,
@@ -704,10 +804,28 @@ pub struct MemoryPatch {
     pub expected_version: Option<i64>,
     pub content: Option<MemoryContent>,
     pub category: Option<String>,
+    /// Título do cliente e trava (0.11.0).
+    pub title: Option<TitleChange>,
+    /// `Some`: substitui as tags (`[]` limpa).
+    pub tags: Option<Vec<String>>,
+    /// Origem desta edição; só grava `last_origin` quando algo muda.
+    pub origin: Option<Origin>,
     pub dedupe: bool,
+    /// `Some`: a memória arquivada volta a esse status na mesma revisão (upsert por `key`).
+    pub restore: Option<MemoryStatus>,
     pub reason: &'static str,
+    /// Enfileirados quando o texto muda ou o título é destravado.
     pub jobs: Vec<NewJob>,
     pub similar: Vec<SimilarMemory>,
+}
+
+/// Mudança de título numa edição. `title: Some` grava o título; `locked` decide a trava:
+/// travado fica `ready` e o Redator não o troca; destravado volta a `pending` para o Redator
+/// gerar (com o job `redact` `title_only`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TitleChange {
+    pub title: Option<String>,
+    pub locked: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -734,6 +852,10 @@ impl StatusAction {
 pub struct MemoryFilter {
     pub channel_ids: Vec<String>,
     pub categories: Vec<String>,
+    /// Todas estas tags (E lógico).
+    pub tags: Vec<String>,
+    /// Chave exata.
+    pub key: Option<String>,
     pub statuses: Vec<MemoryStatus>,
     pub author_app_id: Option<String>,
     pub author_agent_id: Option<String>,
@@ -749,8 +871,12 @@ pub struct TextQuery {
     pub terms: Vec<String>,
     pub channel_ids: Vec<String>,
     pub categories: Vec<String>,
+    /// Todas estas tags (E lógico).
+    pub tags: Vec<String>,
     pub statuses: Vec<MemoryStatus>,
     pub exclude_ids: Vec<String>,
+    /// Não vazio: só estes ids (o foco reordena, numa busca só, os candidatos de cada canal).
+    pub only_ids: Vec<String>,
     pub limit: u32,
 }
 
@@ -896,7 +1022,7 @@ pub struct Job {
     pub locked_until: Option<String>,
     /// Motivo curto da última falha (sem texto de memória nem segredo).
     pub last_error: Option<String>,
-    /// Em `done`: `applied`, `title_only`, `superseded` ou `skipped`.
+    /// Em `done`: `applied`, `title_only`, `superseded`, `skipped` ou `locked` (título do cliente).
     pub outcome: Option<String>,
     #[schema(example = "2026-10-30T12:00:00.000Z")]
     pub created_at: String,
@@ -1018,7 +1144,8 @@ pub struct LlmActivity {
 pub struct Redaction {
     pub memory_id: String,
     pub expected_hash: Vec<u8>,
-    pub title: String,
+    /// `None` com título travado (do cliente): o Redator só revisa o texto.
+    pub title: Option<String>,
     /// Texto revisado e o `content_hash` dele: nova revisão `system/redator`.
     pub text: Option<(String, Vec<u8>)>,
     /// Embeddings ligados: o título (e o texto) novo reenfileira o job `embed`; desligados,
@@ -1067,6 +1194,8 @@ pub struct VectorQuery {
     pub model_id: String,
     pub channel_ids: Vec<String>,
     pub categories: Vec<String>,
+    /// Todas estas tags (E lógico).
+    pub tags: Vec<String>,
     pub statuses: Vec<MemoryStatus>,
     pub exclude_ids: Vec<String>,
     pub limit: u32,
@@ -1164,10 +1293,14 @@ pub struct WebhookTarget {
 /// Memória importada (008 FR-009): autor, data e origem preservados.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewImportedMemory {
-    /// Posição no lote, devolvida em `created`/`duplicates`.
+    /// Posição no lote, devolvida em `created`/`duplicates`/`updated`.
     pub index: usize,
     pub category: String,
     pub title: String,
+    pub title_locked: bool,
+    pub tags: Option<Vec<String>>,
+    /// Com chave existente no canal, o item atualiza a memória (upsert).
+    pub key: Option<String>,
     pub text: String,
     pub status: MemoryStatus,
     pub content_hash: Vec<u8>,
@@ -1200,6 +1333,9 @@ pub struct ImportDuplicate {
 pub struct ImportResult {
     pub created: Vec<ImportCreated>,
     pub duplicates: Vec<ImportDuplicate>,
+    /// Itens com `key` existente no canal, aplicados como edição (upsert).
+    #[serde(default)]
+    pub updated: Vec<ImportCreated>,
 }
 
 /// Agrupamento de `get_usage`.

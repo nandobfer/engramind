@@ -535,6 +535,31 @@ fn apply_webhook(
     Ok(())
 }
 
+pub(super) fn update_app_webhook(
+    transaction: &Transaction,
+    id: &str,
+    patch: &AppPatch,
+    context: &WriteContext,
+) -> Result<App, StoreError> {
+    let before = load_app(transaction, id)?;
+    apply_webhook(transaction, id, patch, &context.at)?;
+    let after = load_app(transaction, id)?;
+    journal::audit(
+        transaction,
+        context,
+        Entry {
+            action: "app.webhook_updated",
+            entity: "app",
+            entity_id: Some(id),
+            before: Some(to_value(&before)?),
+            after: Some(to_value(&after)?),
+        },
+    )?;
+    journal::emit(transaction, context, &[])?;
+    journal::remember(transaction, context, &after)?;
+    Ok(after)
+}
+
 /// Apps, agentes e tokens `admin` não revogados, para calcular destinatários.
 pub(super) fn webhook_directory(connection: &Connection) -> rusqlite::Result<WebhookDirectory> {
     let mut statement = connection.prepare(
@@ -876,6 +901,41 @@ pub(super) fn revoke_token(
     )?;
     journal::remember(transaction, context, &after)?;
     Ok(after)
+}
+
+pub(super) fn rotate_token(
+    transaction: &Transaction,
+    old_id: &str,
+    new: &NewToken,
+    context: &WriteContext,
+) -> Result<Token, StoreError> {
+    let before = load_token(transaction, old_id)?;
+    let token = insert_token(transaction, new, &context.at)?;
+    let changed = transaction
+        .execute(
+            "UPDATE tokens SET revoked_at = ?1 WHERE id = ?2 AND revoked_at IS NULL",
+            params![context.at, old_id],
+        )
+        .map_err(sql_error)?;
+    if changed == 0 {
+        return Err(StoreError::NotFound);
+    }
+    let revoked = load_token(transaction, old_id)?;
+    journal::audit(
+        transaction,
+        context,
+        Entry {
+            action: "token.rotate",
+            entity: "token",
+            entity_id: Some(old_id),
+            before: Some(to_value(&before)?),
+            after: Some(
+                serde_json::json!({ "revoked": to_value(&revoked)?, "issued": to_value(&token)? }),
+            ),
+        },
+    )?;
+    journal::remember(transaction, context, &token)?;
+    Ok(token)
 }
 
 pub(super) fn bootstrap(

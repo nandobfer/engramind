@@ -52,6 +52,9 @@ pub enum SettingType {
     Cron,
     /// Lista de 1 a todos os textos da lista, sem repetição (009).
     ChoiceList(&'static [&'static str]),
+    /// Mapa `{ "<CATEGORIA>": prioridade }` (-1000 a 1000); as chaves precisam existir em
+    /// `categories.list` (0.11.0).
+    CategoryPriorities,
 }
 
 impl SettingType {
@@ -68,6 +71,7 @@ impl SettingType {
             Self::Secret => "secret",
             Self::Cron => "cron",
             Self::ChoiceList(_) => "list",
+            Self::CategoryPriorities => "map",
         }
     }
 
@@ -89,6 +93,9 @@ impl SettingType {
                 format!("até {max_items} itens de 1 a {max_len} caracteres")
             }
             Self::Secret => "só gravado (`set_secret`)".to_owned(),
+            Self::CategoryPriorities => format!(
+                "mapa de até {MAX_CATEGORIES} chaves de `categories.list` para -1000 a 1000"
+            ),
             Self::Cron => "expressão cron de 5 campos, em UTC".to_owned(),
             Self::ChoiceList(choices) => format!(
                 "1 a {} itens sem repetição entre {}",
@@ -112,6 +119,7 @@ impl SettingType {
             Self::Boolean | Self::Choice(_) | Self::Url | Self::Secret | Self::Cron => (None, None),
             Self::ChoiceList(choices) => (Some(1.into()), Some((choices.len() as u64).into())),
             Self::Categories => (Some(1.into()), Some((MAX_CATEGORIES as u64).into())),
+            Self::CategoryPriorities => (Some(0.into()), Some((MAX_CATEGORIES as u64).into())),
             Self::Text { max } => (Some(1.into()), Some((max as u64).into())),
             Self::TextList { max_items, .. } => (Some(0.into()), Some((max_items as u64).into())),
         }
@@ -142,6 +150,12 @@ pub const TITLES_BUDGET_TOKENS: &str = "context.titles_budget_tokens";
 pub const DEFAULT_FORMAT: &str = "context.default_format";
 pub const TOKEN_ESTIMATOR: &str = "context.token_estimator";
 pub const OVERFLOW_LINE: &str = "context.overflow_line";
+pub const CATEGORY_PRIORITIES: &str = "context.category_priorities";
+pub const TEXT_MAX_CHARS: &str = "context.text_max_chars";
+pub const FOCUS_MIN_SCORE: &str = "context.focus_min_score";
+pub const FOCUS_EMBED_TIMEOUT_MS: &str = "context.focus_embed_timeout_ms";
+pub const VECTOR_SIMILAR_THRESHOLD: &str = "memory.vector_similar_threshold";
+pub const VECTOR_DUPLICATE_THRESHOLD: &str = "memory.vector_duplicate_threshold";
 pub const REDATOR_ENABLED: &str = "redator.enabled";
 pub const REDATOR_PROVIDER: &str = "redator.provider";
 pub const REDATOR_MODEL: &str = "redator.model";
@@ -206,11 +220,13 @@ pub const CONTEXT_RENDER_KEYS: &[&str] = &[
     TOKEN_ESTIMATOR,
     OVERFLOW_LINE,
     CATEGORIES,
+    CATEGORY_PRIORITIES,
+    TEXT_MAX_CHARS,
 ];
 
 pub const MAX_CATEGORIES: usize = 50;
-const MAX_CATEGORY_KEY: usize = 40;
-const MAX_CATEGORY_LABEL: usize = 80;
+pub(crate) const MAX_CATEGORY_KEY: usize = 40;
+pub(crate) const MAX_CATEGORY_LABEL: usize = 80;
 
 pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
@@ -276,6 +292,22 @@ pub const SETTINGS: &[SettingSpec] = &[
         since: "0.4.0",
     },
     SettingSpec {
+        key: VECTOR_SIMILAR_THRESHOLD,
+        kind: SettingType::Number { min: 0.0, max: 1.0 },
+        default: "0.8",
+        channel_override: false,
+        description: "Cosseno mínimo para uma memória aparecer em `similar` (`method: vector`) de `get_memory` e nas dicas, sobre os vetores do modelo vigente no mesmo canal.",
+        since: "0.11.0",
+    },
+    SettingSpec {
+        key: VECTOR_DUPLICATE_THRESHOLD,
+        kind: SettingType::Number { min: 0.0, max: 1.0 },
+        default: "0.92",
+        channel_override: false,
+        description: "Cosseno a partir do qual o `similar` vetorial e a dica marcam `duplicate: true` (informativo; nunca recusa a escrita).",
+        since: "0.11.0",
+    },
+    SettingSpec {
         key: BUDGET_TOKENS,
         kind: SettingType::Integer {
             min: 0,
@@ -320,6 +352,41 @@ pub const SETTINGS: &[SettingSpec] = &[
         channel_override: false,
         description: "Mostra a linha de excedente (`<overflow count=\"N\">`) quando sobram memórias fora das duas faixas.",
         since: "0.5.0",
+    },
+    SettingSpec {
+        key: CATEGORY_PRIORITIES,
+        kind: SettingType::CategoryPriorities,
+        default: "{}",
+        channel_override: true,
+        description: "Sobrepõe a prioridade das categorias na ordem do contexto, `{ \"CONSTRAINTS\": 60 }`; as chaves precisam existir em `categories.list`. No canal, vale para as memórias dele (as chaves do canal vencem as globais).",
+        since: "0.11.0",
+    },
+    SettingSpec {
+        key: TEXT_MAX_CHARS,
+        kind: SettingType::Integer { min: 0, max: 4000 },
+        default: "0",
+        channel_override: true,
+        description: "Corta cada linha da faixa de texto completo do contexto em tantos caracteres, com `…` (0 = sem corte). O orçamento conta o texto cortado; a busca e as dicas devolvem o texto inteiro.",
+        since: "0.11.0",
+    },
+    SettingSpec {
+        key: FOCUS_MIN_SCORE,
+        kind: SettingType::Number { min: 0.0, max: 1.0 },
+        default: "0.35",
+        channel_override: false,
+        description: "Cosseno mínimo para uma memória contar como relevante ao `focus` de `get_context` (o FTS conta qualquer termo casado). Entra na `version` só dos pedidos com foco.",
+        since: "0.11.0",
+    },
+    SettingSpec {
+        key: FOCUS_EMBED_TIMEOUT_MS,
+        kind: SettingType::Integer {
+            min: 100,
+            max: 10_000,
+        },
+        default: "1500",
+        channel_override: false,
+        description: "Prazo do embedding do `focus` de `get_context`; vencido ou com falha, o foco segue só com o FTS (`focus_mode: text`).",
+        since: "0.11.0",
     },
     SettingSpec {
         key: REDATOR_ENABLED,
@@ -722,7 +789,37 @@ pub struct Category {
     pub priority: i64,
 }
 
-fn valid_category_key(key: &str) -> bool {
+/// `{ "<CATEGORIA>": prioridade }`: chaves com o formato de `categories.list`, valores de -1000
+/// a 1000, até `MAX_CATEGORIES` entradas. A existência das chaves é conferida na gravação.
+pub(crate) fn parse_category_priorities(value: &Value) -> Result<BTreeMap<String, i64>, String> {
+    let map = value
+        .as_object()
+        .ok_or_else(|| "um objeto { CATEGORIA: prioridade }".to_owned())?;
+    if map.len() > MAX_CATEGORIES {
+        return Err(format!("ate {MAX_CATEGORIES} categorias"));
+    }
+    let mut priorities = BTreeMap::new();
+    for (key, priority) in map {
+        if !valid_category_key(key) {
+            return Err(format!(
+                "key {key:?} deve ter maiusculas, digitos e _, comecando por letra (ate {MAX_CATEGORY_KEY})"
+            ));
+        }
+        match priority.as_i64() {
+            Some(priority) if (-1000..=1000).contains(&priority) => {
+                priorities.insert(key.clone(), priority);
+            }
+            _ => {
+                return Err(format!(
+                    "prioridade de {key} deve ser um inteiro de -1000 a 1000"
+                ));
+            }
+        }
+    }
+    Ok(priorities)
+}
+
+pub(crate) fn valid_category_key(key: &str) -> bool {
     let mut chars = key.chars();
     key.len() <= MAX_CATEGORY_KEY
         && chars.next().is_some_and(|first| first.is_ascii_uppercase())
@@ -848,6 +945,13 @@ pub fn validate(spec: &SettingSpec, value: &Value) -> Result<(), ApiError> {
                 json!({ "key": spec.key, "type": "cron" }),
             ),
         },
+        SettingType::CategoryPriorities => match parse_category_priorities(value) {
+            Ok(_) => Ok(()),
+            Err(reason) => invalid(
+                format!("{} invalida: {reason}", spec.key),
+                json!({ "key": spec.key, "type": "map", "reason": reason }),
+            ),
+        },
         SettingType::ChoiceList(choices) => {
             let items = value
                 .as_array()
@@ -883,6 +987,32 @@ fn valid_url(url: &str) -> bool {
             && url.len() <= 2000
             && !url.chars().any(|c| c.is_whitespace() || c.is_control())
     })
+}
+
+/// As chaves de `context.category_priorities` precisam existir em `categories.list`.
+fn ensure_known_categories(value: &Value, categories: &[Category]) -> Result<(), ApiError> {
+    let Ok(priorities) = parse_category_priorities(value) else {
+        return Ok(());
+    };
+    let unknown: Vec<&String> = priorities
+        .keys()
+        .filter(|key| !categories.iter().any(|category| &category.key == *key))
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    Err(ApiError::new(
+        "SETTING_INVALID",
+        format!(
+            "{CATEGORY_PRIORITIES} cita categorias fora de {CATEGORIES}: {}",
+            unknown
+                .iter()
+                .map(|key| key.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    )
+    .with_details(json!({ "key": CATEGORY_PRIORITIES, "type": "map", "unknown": unknown })))
 }
 
 /// Segredos não passam por `update_settings` (`400 SETTING_IS_SECRET`).
@@ -1083,6 +1213,58 @@ impl SettingsSnapshot {
             }
         }
         Self { values }
+    }
+
+    /// Prioridades de categoria no canal: `categories.list`, sobreposta pela
+    /// `context.category_priorities` global e depois pela do canal. Chaves fora de
+    /// `categories.list` são ignoradas.
+    pub fn category_priorities(
+        &self,
+        overrides: Option<&BTreeMap<String, Value>>,
+    ) -> BTreeMap<String, i64> {
+        let mut priorities: BTreeMap<String, i64> = self
+            .categories()
+            .into_iter()
+            .map(|category| (category.key, category.priority))
+            .collect();
+        let global =
+            parse_category_priorities(&self.value(CATEGORY_PRIORITIES)).unwrap_or_default();
+        let channel = overrides
+            .and_then(|overrides| overrides.get(CATEGORY_PRIORITIES))
+            .and_then(|value| parse_category_priorities(value).ok())
+            .unwrap_or_default();
+        for (key, priority) in global.into_iter().chain(channel) {
+            if let Some(current) = priorities.get_mut(&key) {
+                *current = priority;
+            }
+        }
+        priorities
+    }
+
+    /// Só a sobreposição efetiva no canal (global + canal), sem as prioridades de base.
+    pub fn category_priority_overrides(
+        &self,
+        overrides: Option<&BTreeMap<String, Value>>,
+    ) -> BTreeMap<String, i64> {
+        let known: BTreeSet<String> = self.categories().into_iter().map(|c| c.key).collect();
+        let mut merged =
+            parse_category_priorities(&self.value(CATEGORY_PRIORITIES)).unwrap_or_default();
+        if let Some(channel) = overrides
+            .and_then(|overrides| overrides.get(CATEGORY_PRIORITIES))
+            .and_then(|value| parse_category_priorities(value).ok())
+        {
+            merged.extend(channel);
+        }
+        merged.retain(|key, _| known.contains(key));
+        merged
+    }
+
+    /// `context.text_max_chars` no canal (0 = sem corte).
+    pub fn text_max_chars(&self, overrides: Option<&BTreeMap<String, Value>>) -> usize {
+        self.in_channel(TEXT_MAX_CHARS, overrides)
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0)
     }
 
     pub fn overflow_line(&self) -> bool {
@@ -1356,6 +1538,12 @@ impl<S: Store> Core<S> {
             .iter()
             .filter_map(|(name, value)| spec(name).map(|spec| (spec.key, value.clone())))
             .collect();
+        if let Some(value) = proposed
+            .get(CATEGORY_PRIORITIES)
+            .filter(|value| !value.is_null())
+        {
+            ensure_known_categories(value, &current.with(&proposed).categories())?;
+        }
         // Troca do espaço dos vetores: o provedor é validado antes da transação (007 FR-008).
         let switch = self
             .embedding_switch(&current, &current.with(&proposed))
@@ -1402,6 +1590,114 @@ impl<S: Store> Core<S> {
     }
 }
 
+/// `get_consumer_settings` (0.11.0, item 10): só o que governa a escrita e o contexto, sem
+/// segredo nem configuração de provedor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerSettings {
+    pub memory: ConsumerMemory,
+    pub limits: ConsumerLimits,
+    pub context: ConsumerContext,
+    /// Canais ativos em que o token escreve (token de app: a união dos agentes ativos), com os
+    /// valores efetivos (sobreposição do canal aplicada), por slug.
+    pub channels: Vec<ConsumerChannel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerMemory {
+    #[schema(example = 3)]
+    pub text_min: u64,
+    #[schema(example = 4000)]
+    pub text_max: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerLimits {
+    #[schema(example = 100)]
+    pub max_batch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerContext {
+    #[schema(example = 4000)]
+    pub budget_tokens: u64,
+    #[schema(example = 800)]
+    pub titles_budget_tokens: u64,
+    #[schema(example = "tagged")]
+    pub default_format: String,
+    /// 0 = sem corte.
+    #[schema(example = 0)]
+    pub text_max_chars: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerChannel {
+    #[schema(example = "eng/global")]
+    pub channel: String,
+    #[schema(example = 4000)]
+    pub memory_text_max: u64,
+    /// Teto do canal na faixa de texto completo (o global quando não há sobreposição).
+    #[schema(example = 4000)]
+    pub budget_tokens: u64,
+    /// Prioridade efetiva de cada categoria no canal.
+    #[schema(example = json!({ "PROJECT_RULES": 50, "CONSTRAINTS": 60 }))]
+    pub category_priorities: BTreeMap<String, i64>,
+    #[schema(example = 0)]
+    pub text_max_chars: u64,
+}
+
+impl<S: Store> Core<S> {
+    pub async fn get_consumer_settings(
+        &self,
+        principal: &Principal,
+        header: Option<&str>,
+    ) -> Result<ConsumerSettings, ApiError> {
+        self.authorize(principal, "get_consumer_settings")?;
+        let selection = super::selection::Selection::parse(header, None)?;
+        let snapshot = self.settings_snapshot();
+        let network = self.network().await?;
+        let whole = |value: i64| u64::try_from(value).unwrap_or_default();
+        let channels = super::access::resolve(
+            &network,
+            principal,
+            &selection,
+            super::access::Purpose::Explicit,
+            false,
+        )
+        .into_iter()
+        .filter(|reach| reach.scopes.contains(super::principal::Scope::Write))
+        .map(|reach| {
+            let overrides = network.channel_settings.get(&reach.channel.id);
+            ConsumerChannel {
+                channel: reach.channel.slug.clone(),
+                memory_text_max: snapshot.text_max(overrides) as u64,
+                budget_tokens: u64::from(
+                    SettingsSnapshot::channel_budget(BUDGET_TOKENS, overrides)
+                        .unwrap_or_else(|| snapshot.budget(BUDGET_TOKENS)),
+                ),
+                category_priorities: snapshot.category_priorities(overrides),
+                text_max_chars: snapshot.text_max_chars(overrides) as u64,
+            }
+        })
+        .collect();
+        Ok(ConsumerSettings {
+            memory: ConsumerMemory {
+                text_min: snapshot.text_min() as u64,
+                text_max: whole(snapshot.whole(TEXT_MAX)),
+            },
+            limits: ConsumerLimits {
+                max_batch: u64::from(snapshot.max_batch()),
+            },
+            context: ConsumerContext {
+                budget_tokens: u64::from(snapshot.budget(BUDGET_TOKENS)),
+                titles_budget_tokens: u64::from(snapshot.budget(TITLES_BUDGET_TOKENS)),
+                default_format: snapshot.default_format(),
+                text_max_chars: snapshot.text_max_chars(None) as u64,
+            },
+            channels,
+        })
+    }
+}
+
 impl<S: Store> Core<S> {
     pub async fn get_channel_settings(
         &self,
@@ -1436,6 +1732,9 @@ impl<S: Store> Core<S> {
                 None
             } else {
                 validate(spec, value)?;
+                if spec.key == CATEGORY_PRIORITIES {
+                    ensure_known_categories(value, &self.settings_snapshot().categories())?;
+                }
                 Some(value.to_string())
             };
             changes.push(SettingChange {
@@ -1583,6 +1882,8 @@ mod tests {
                 TEXT_MAX,
                 BUDGET_TOKENS,
                 TITLES_BUDGET_TOKENS,
+                CATEGORY_PRIORITIES,
+                TEXT_MAX_CHARS,
                 REDATOR_INSTRUCTIONS,
                 REDATOR_REWRITE_TEXT,
                 CONSOLIDATION_ENABLED

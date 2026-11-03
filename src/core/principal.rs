@@ -14,6 +14,8 @@ pub enum TokenKind {
     Agent,
     /// Gere a rede pelas ferramentas administrativas.
     Admin,
+    /// Gere os agentes, tokens e assinaturas do próprio app (emitido só pelo admin).
+    App,
 }
 
 impl TokenKind {
@@ -21,6 +23,7 @@ impl TokenKind {
         match self {
             Self::Agent => "agent",
             Self::Admin => "admin",
+            Self::App => "app",
         }
     }
 
@@ -28,6 +31,7 @@ impl TokenKind {
         match value {
             "agent" => Some(Self::Agent),
             "admin" => Some(Self::Admin),
+            "app" => Some(Self::App),
             _ => None,
         }
     }
@@ -151,6 +155,11 @@ impl ScopeSet {
         Self(self.0 & other.0)
     }
 
+    /// Escopos presentes em qualquer dos dois; ambos contêm `read`, então o resultado é válido.
+    pub fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
     pub fn scopes(self) -> Vec<Scope> {
         Scope::ALL
             .into_iter()
@@ -205,6 +214,16 @@ pub struct Principal {
 impl Principal {
     pub fn is_admin(&self) -> bool {
         self.kind == TokenKind::Admin
+    }
+
+    pub fn is_app(&self) -> bool {
+        self.kind == TokenKind::App
+    }
+
+    /// Guias e operações de público `admin` na documentação viva: admin e app (que gere as
+    /// identidades do próprio app).
+    pub fn sees_admin_docs(&self) -> bool {
+        matches!(self.kind, TokenKind::Admin | TokenKind::App)
     }
 }
 

@@ -1147,3 +1147,102 @@ async fn a_provider_rejection_keeps_its_reason_without_the_key() {
             .is_none_or(|error| error.chars().count() <= 200)
     }));
 }
+
+#[tokio::test]
+async fn the_redator_never_replaces_a_client_title_and_unlocking_regenerates_it() {
+    let (context, llm) = setup().await;
+    configure(&context, &llm, json!({})).await;
+    let (status, created) = context
+        .call(
+            "POST",
+            "/v1/memories",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "channel": CHANNEL, "text": TEXT, "title": "Vila de Pedra Alta" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["memory"]["id"].as_str().expect("id").to_owned();
+    // O Redator roda (o texto pode ser revisado), mas o título do cliente fica.
+    llm.push(
+        200,
+        openai(json!({ "title": "Título do Redator", "text": TEXT })),
+    );
+    assert_eq!(run(&context).await, 1);
+    let after = memory(&context, &id).await;
+    assert_eq!(
+        (
+            after["title"].clone(),
+            after["title_locked"].clone(),
+            after["title_state"].clone()
+        ),
+        (json!("Vila de Pedra Alta"), json!(true), json!("ready"))
+    );
+    // Editar o texto mantém o título travado.
+    let (status, edited) = context
+        .call(
+            "PATCH",
+            &format!("/v1/memories/{id}"),
+            Some(ADMIN_TOKEN),
+            Some(json!({ "text": "Use cargo nextest só nos testes afetados, sempre." })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{edited}");
+    assert_eq!(edited["memory"]["title"], "Vila de Pedra Alta");
+    llm.push(200, openai(json!({ "title": "Outro título", "text": "x" })));
+    run(&context).await;
+    assert_eq!(memory(&context, &id).await["title"], "Vila de Pedra Alta");
+    // Destravar: o Redator gera o título (só o título).
+    let (status, unlocked) = context
+        .call(
+            "PATCH",
+            &format!("/v1/memories/{id}"),
+            Some(ADMIN_TOKEN),
+            Some(json!({ "title_locked": false })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{unlocked}");
+    assert_eq!(
+        (
+            unlocked["memory"]["title_locked"].clone(),
+            unlocked["memory"]["title_state"].clone()
+        ),
+        (json!(false), json!("pending"))
+    );
+    let pending = redact_jobs(&context, &id).await;
+    assert_eq!(pending[0]["payload"]["title_only"], true);
+    llm.push(
+        200,
+        openai(json!({ "title": "Testes afetados com nextest" })),
+    );
+    assert_eq!(run(&context).await, 1);
+    let generated = memory(&context, &id).await;
+    assert_eq!(
+        (generated["title"].clone(), generated["title_state"].clone()),
+        (json!("Testes afetados com nextest"), json!("ready"))
+    );
+    // `revert` restaura o título e a trava; o Redator não regenera por cima.
+    let (status, reverted) = context
+        .call(
+            "POST",
+            &format!("/v1/memories/{id}/revert"),
+            Some(ADMIN_TOKEN),
+            Some(json!({ "version": 1 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{reverted}");
+    assert_eq!(
+        (reverted["title"].clone(), reverted["title_locked"].clone()),
+        (json!("Vila de Pedra Alta"), json!(true))
+    );
+    let calls = llm.received().len();
+    run(&context).await;
+    assert_eq!(
+        llm.received().len(),
+        calls,
+        "título travado sem revisão de texto: sem LLM"
+    );
+    let final_state = memory(&context, &id).await;
+    assert_eq!(final_state["title"], "Vila de Pedra Alta");
+    let job = &redact_jobs(&context, &id).await[0];
+    assert_eq!(job["outcome"], "locked");
+}

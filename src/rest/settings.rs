@@ -11,13 +11,44 @@ use crate::{
         redator::{TestRedatorBody, TestRedatorResult},
         secrets::SetSecretBody,
         settings::{
-            ChannelSettingsView, GetSettingsQuery, SettingsView, UpdateChannelSettingsBody,
-            UpdateSettingsBody,
+            ChannelSettingsView, ConsumerSettings, GetSettingsQuery, SettingsView,
+            UpdateChannelSettingsBody, UpdateSettingsBody,
         },
     },
     error::{ApiError, ErrorResponse},
     http::{ApiJson, ApiPath, ApiQuery},
 };
+
+#[utoipa::path(
+    get,
+    path = "/v1/consumer-settings",
+    operation_id = "get_consumer_settings",
+    tag = "Consumer",
+    summary = "Limites de escrita e orçamento do contexto para o app consumidor",
+    description = "Só o que governa a escrita e o contexto, para o consumidor validar o texto e mostrar o orçamento sem token admin: `memory.text_min`/`text_max` e `limits.max_batch` globais; `context.budget_tokens`, `titles_budget_tokens`, `default_format` e `text_max_chars`; e, por canal ativo em que o token escreve (token de app: a união dos agentes ativos do app; admin: todos), `memory_text_max`, `budget_tokens`, `category_priorities` e `text_max_chars` efetivos (com a sobreposição do canal). Restrito pelo cabeçalho `Engramind-Channels`. Nunca traz segredo, chave de IA nem configuração do Redator ou dos embeddings. Acompanha os eventos `settings.updated` e `channel.updated`; pode ser cacheado por pouco tempo. Qualquer token com `read`.",
+    params(("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão")),
+    security(("bearerAuth" = [])),
+    responses(
+        (status = 200, description = "Configurações do consumidor", body = ConsumerSettings),
+        (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
+        (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
+        (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
+        (status = 504, description = "`REQUEST_TIMEOUT`", body = ErrorResponse)
+    )
+)]
+pub async fn get_consumer_settings(
+    State(state): State<AppState>,
+    Auth(principal): Auth,
+    header: super::ChannelsHeader,
+) -> Result<Json<ConsumerSettings>, ApiError> {
+    state
+        .core
+        .get_consumer_settings(&principal, header.as_deref())
+        .await
+        .map(Json)
+}
 
 #[utoipa::path(
     get,

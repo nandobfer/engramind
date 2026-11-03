@@ -277,11 +277,6 @@ async fn subscriptions_validate_targets_and_reject_duplicates() {
             "SUBSCRIPTION_EXISTS",
         ),
         (
-            json!({ "agent": "app-a/dev", "target": "eng/nada", "mode": "inject" }),
-            StatusCode::NOT_FOUND,
-            "CHANNEL_NOT_FOUND",
-        ),
-        (
             json!({ "agent": "app-a/ninguem", "target": "eng/global", "mode": "inject" }),
             StatusCode::NOT_FOUND,
             "AGENT_NOT_FOUND",
@@ -393,6 +388,65 @@ async fn subscriptions_validate_targets_and_reject_duplicates() {
     assert_eq!(
         (status, body["error"]["code"].as_str()),
         (StatusCode::NOT_FOUND, Some("SUBSCRIPTION_NOT_FOUND"))
+    );
+
+    // 0.11.0: repetição equivalente devolve a existente; alvo exato inexistente cria o canal.
+    let (status, again) = context
+        .call(
+            "POST",
+            "/v1/subscriptions",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "agent": "app-a/dev", "target": "eng/global", "mode": "inject", "access": ["read"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(
+        (again["id"].clone(), again["created"].clone()),
+        (exact["id"].clone(), json!(false))
+    );
+    let (status, conflict) = context
+        .call(
+            "POST",
+            "/v1/subscriptions",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "agent": "app-a/dev", "target": "eng/global", "mode": "search" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(conflict["error"]["details"]["existing"]["id"], exact["id"]);
+    let created = context
+        .subscribe("app-a/dev", "eng/nada", "inject", None)
+        .await;
+    assert_eq!(
+        (
+            created["created"].clone(),
+            created["channel_created"].clone()
+        ),
+        (json!(true), json!(true))
+    );
+    let (_, channel) = context
+        .call("GET", "/v1/channels/eng%2Fnada", Some(ADMIN_TOKEN), None)
+        .await;
+    assert_eq!(channel["name"], "eng/nada");
+    assert_eq!(
+        channel["created_by"],
+        Value::Null,
+        "o admin não registra created_by"
+    );
+    let (_, audit) = context
+        .call(
+            "GET",
+            "/v1/audit?action=channel.create",
+            Some(ADMIN_TOKEN),
+            None,
+        )
+        .await;
+    assert!(
+        audit["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .any(|event| event["after"]["slug"] == "eng/nada")
     );
 }
 

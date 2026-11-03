@@ -17,10 +17,12 @@ Todo erro usa o envelope único:
 | Código | HTTP | Saída da CLI | Quando |
 |---|---|---|---|
 | `VALIDATION_ERROR` | 400 | 2 | Path, query, header ou body inválido. |
+| `FOCUS_TOO_LONG` | 400 | 2 | `focus` de `get_context` passa de 2000 caracteres depois da normalização; `details.max` traz o limite. |
 | `IDEMPOTENCY_KEY_REQUIRED` | 400 | 2 | A operação (`import_memories`) só roda com `Idempotency-Key` (`idempotency_key` no MCP). |
 | `BATCH_TOO_LARGE` | 400 | 2 | O lote passa de `limits.max_batch` itens; `details` traz `max` e `received`. |
 | `AUTH_INVALID` | 401 | 3 | Token ausente, malformado, desconhecido, expirado, revogado ou de app/agente desativado. |
 | `SCOPE_REQUIRED` | 403 | 4 | O tipo ou os escopos do token (ou o acesso efetivo no canal) não permitem a operação; `details` traz `required_kind`, `required_scope` e, no canal, `channel`. |
+| `FOREIGN_APP` | 403 | 4 | O token de app tentou operar um app, agente, token, canal ou autor de outro app; `details.app` traz o slug do app alvo quando conhecido. |
 | `CHANNEL_NOT_SUBSCRIBED` | 403 | 4 | O token não alcança o canal (sem assinatura ou fora da seleção `channels`/`Engramind-Channels`); `details.channel` traz o slug. |
 | `ROUTE_NOT_FOUND` | 404 | 5 | Rota inexistente. |
 | `APP_NOT_FOUND` | 404 | 5 | App inexistente. |
@@ -46,6 +48,10 @@ Todo erro usa o envelope único:
 | `MEMORY_VERSION_CONFLICT` | 409 | 6 | A memória mudou desde `expected_version`; `details.current_version` traz a atual. |
 | `MEMORY_DUPLICATE` | 409 | 6 | Já existe uma memória com o mesmo texto no canal; `details.existing_id` aponta para ela. |
 | `CATEGORY_IN_USE` | 409 | 6 | A mudança de `categories.list` retira categorias usadas; `details.in_use` traz a contagem. |
+| `CATEGORY_CONFLICT` | 409 | 6 | `create_category` com uma `key` existente e `label` ou `priority` diferentes; `details.existing` traz a categoria gravada. |
+| `CATEGORY_LIMIT_REACHED` | 409 | 6 | `categories.list` já tem o máximo de categorias; `details.max` traz o limite. |
+| `MEMORY_KEY_EXISTS` | 409 | 6 | Já existe uma memória com essa `key` no canal e `upsert` não foi pedido; `details.existing_id` aponta para ela. |
+| `CHANNEL_SHARED` | 409 | 6 | O token de app não arquiva nem restaura um canal que agentes ativos de outro app assinam; `details.apps` traz os slugs. |
 | `IDEMPOTENCY_KEY_CONFLICT` | 409 | 6 | A mesma `Idempotency-Key` já foi usada com outra operação ou outro corpo. |
 | `LAST_ADMIN_TOKEN` | 409 | 6 | A mudança deixaria a rede sem nenhum token `admin` ativo com `write`. |
 | `SETTING_UNKNOWN` | 400 | 2 | Chave de configuração desconhecida; `details.valid` lista as chaves. |
@@ -84,7 +90,11 @@ Todo erro usa o envelope único:
 - `409 CHANNEL_ARCHIVED`: o canal foi arquivado; peça ao gestor para restaurá-lo ou escreva em outro canal.
 - `409 MEMORY_VERSION_CONFLICT`: outro agente mudou a memória; releia (`get_memory`), refaça a edição sobre a versão atual e mande o novo `expected_version`.
 - `409 MEMORY_DUPLICATE`: o texto já existe em `details.existing_id`; edite ou use aquela memória em vez de duplicar.
-- `409 CATEGORY_IN_USE`: mova ou recategorize as memórias de `details.in_use` antes de retirar a categoria.
+- `409 CATEGORY_IN_USE`: mova ou recategorize as memórias de `details.in_use` antes de retirar a categoria; tire também a categoria de `context.category_priorities` (global e dos canais).
+- `403 FOREIGN_APP`: o token de app só opera o próprio app, os agentes e tokens de agente dele e os canais que criou; para outro app, use um token admin.
+- `409 MEMORY_KEY_EXISTS`: repita com `upsert: true` para editar a memória de `details.existing_id`, ou use outra `key`.
+- `409 CATEGORY_CONFLICT`: a categoria já existe com outro `label` ou `priority`; leia com `list_categories` e use a existente (editar é do admin, por `update_settings`).
+- `409 CHANNEL_SHARED`: outro app usa o canal; peça ao admin para arquivá-lo.
 - `409 IDEMPOTENCY_KEY_CONFLICT`: a chave já foi usada com outro corpo; gere uma chave nova para a nova intenção.
 - `409 LAST_ADMIN_TOKEN`: emita outro token `admin` com `write` antes de revogar, desativar ou excluir o último.
 - `400 SETTING_IS_SECRET`: grave a chave com `set_secret`, nunca por `update_settings`.

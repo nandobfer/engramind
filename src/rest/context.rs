@@ -17,6 +17,8 @@ use crate::{
 };
 
 const CACHE_CONTROL: HeaderValue = HeaderValue::from_static("private, no-cache");
+const FOCUS_MODE_HEADER: header::HeaderName =
+    header::HeaderName::from_static("engramind-focus-mode");
 const VARY: HeaderValue = HeaderValue::from_static("Authorization, Engramind-Channels");
 
 fn etag(version: &str) -> HeaderValue {
@@ -29,7 +31,7 @@ fn etag(version: &str) -> HeaderValue {
     operation_id = "get_context",
     tag = "Context",
     summary = "Bloco de memórias pronto para o prompt",
-    description = "Memórias `active` e `permanent` dos canais alcançados em modo `inject` (token `admin`: todos os canais ativos), restritas por `channels` e pelo cabeçalho `Engramind-Channels`, em ordem determinística e em duas faixas: texto completo até `context.budget_tokens`, depois `#id: título` até `context.titles_budget_tokens`; o resto é contado em `counts.overflow`. `format`: `tagged` (padrão `context.default_format`), `markdown` (sem ids) ou `json` (`content` é um objeto). O `ETag` é a `version`; com `If-None-Match` igual, responde `304` sem corpo e sem ler o banco.",
+    description = "Memórias `active` e `permanent` dos canais alcançados em modo `inject` (token `admin`: todos os canais ativos), restritas por `channels` e pelo cabeçalho `Engramind-Channels`, em ordem determinística e em duas faixas: texto completo até `context.budget_tokens`, depois `#id: título` até `context.titles_budget_tokens`; o resto é contado em `counts.overflow`. `format`: `tagged` (padrão `context.default_format`), `markdown` (sem ids) ou `json` (`content` é um objeto). O `ETag` é a `version`; com `If-None-Match` igual, responde `304` sem corpo e sem ler o banco. A faixa de títulos traz a categoria e o canal (`#id [CATEGORIA] @canal: título`). `context.category_priorities` sobrepõe a prioridade das categorias por canal e `context.text_max_chars` corta o texto da faixa 1. `focus` (até 2000 caracteres) põe antes, dentro de cada prioridade de canal, as memórias relevantes (cosseno ≥ `context.focus_min_score` ou termo casado no FTS5), sem LLM; entra na `version` e nunca é gravado em log. Sem embedding (ou com falha/prazo), o foco segue só com o FTS5 (`focus_mode: text`); com falha do FTS5, sem foco (`focus_mode: none`); o modo vem em `focus_mode` e no cabeçalho `Engramind-Focus-Mode`. Foco acima do limite → `400 FOCUS_TOO_LONG`.",
     params(
         GetContextQuery,
         ("Engramind-Channels" = Option<String>, Header, description = "Filtro de canais da conexão: slugs e prefixos separados por vírgula"),
@@ -38,10 +40,13 @@ fn etag(version: &str) -> HeaderValue {
     security(("bearerAuth" = [])),
     responses(
         (status = 200, description = "Contexto renderizado", body = ContextView,
-            headers(("ETag" = String, description = "A `version` entre aspas"))),
+            headers(
+                ("ETag" = String, description = "A `version` entre aspas"),
+                ("Engramind-Focus-Mode" = String, description = "Só com `focus`: `hybrid`, `text` ou `none`")
+            )),
         (status = 304, description = "Sem mudança desde a `version` em `If-None-Match`",
             headers(("ETag" = String, description = "A `version` entre aspas"))),
-        (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
+        (status = 400, description = "`VALIDATION_ERROR` ou `FOCUS_TOO_LONG`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
         (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
@@ -63,17 +68,22 @@ pub async fn get_context(
         .core
         .get_context(&principal, query, if_none_match, channels.as_deref())
         .await?;
-    let (version, mut response) = match outcome {
+    let (version, focus_mode, mut response) = match outcome {
         ContextOutcome::NotModified(not_modified) => (
             not_modified.version,
+            None,
             StatusCode::NOT_MODIFIED.into_response(),
         ),
         ContextOutcome::Rendered(rendered) => (
             rendered.view.version.clone(),
+            rendered.view.focus_mode,
             Json::<&ContextView>(&rendered.view).into_response(),
         ),
     };
     let headers = response.headers_mut();
+    if let Some(mode) = focus_mode {
+        headers.insert(FOCUS_MODE_HEADER, HeaderValue::from_static(mode.as_str()));
+    }
     headers.insert(header::ETAG, etag(&version));
     headers.insert(header::CACHE_CONTROL, CACHE_CONTROL);
     headers.insert(header::VARY, VARY);

@@ -81,6 +81,14 @@ pub trait Store: Clone + Send + Sync + 'static {
         patch: AppPatch,
         context: WriteContext,
     ) -> impl Future<Output = Result<App, StoreError>> + Send;
+    /// Só a URL e o segredo do webhook (`AppPatch.webhook_*`), com a auditoria
+    /// `app.webhook_updated` (sem o segredo) e os eventos do contexto.
+    fn update_app_webhook(
+        &self,
+        id: String,
+        patch: AppPatch,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<App, StoreError>> + Send;
     /// Remove o app com agentes, tokens e assinaturas (cascata).
     fn delete_app(
         &self,
@@ -136,6 +144,13 @@ pub trait Store: Clone + Send + Sync + 'static {
     fn revoke_token(
         &self,
         id: String,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<Token, StoreError>> + Send;
+    /// Grava o token novo e revoga o antigo na mesma transação (auditoria `token.rotate`).
+    fn rotate_token(
+        &self,
+        old_id: String,
+        new: NewToken,
         context: WriteContext,
     ) -> impl Future<Output = Result<Token, StoreError>> + Send;
     /// Cria o app (ou reaproveita o slug) e o token do bootstrap só se não existir nenhum
@@ -232,6 +247,12 @@ pub trait Store: Clone + Send + Sync + 'static {
         content_hash: Vec<u8>,
         exclude: Option<String>,
     ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
+    /// Id da memória do canal com essa `key`.
+    fn find_memory_by_key(
+        &self,
+        channel_id: String,
+        key: String,
+    ) -> impl Future<Output = Result<Option<String>, StoreError>> + Send;
     /// Por `updated_at` decrescente.
     fn list_memories(
         &self,
@@ -277,7 +298,7 @@ pub trait Store: Clone + Send + Sync + 'static {
         context: WriteContext,
     ) -> impl Future<Output = Result<Memory, StoreError>> + Send;
     /// Incrementa a versão dos dois canais; duplicata no destino →
-    /// `Conflict("MEMORY_DUPLICATE")`.
+    /// `Conflict("MEMORY_DUPLICATE")`; chave já usada no destino → `Conflict("MEMORY_KEY_EXISTS")`.
     fn move_memory(
         &self,
         target: MemoryTarget,
@@ -332,6 +353,16 @@ pub trait Store: Clone + Send + Sync + 'static {
         embedding: Option<EmbeddingSwitch>,
         context: WriteContext,
     ) -> impl Future<Output = Result<Vec<SettingRow>, StoreError>> + Send;
+    /// Acrescenta a categoria a `categories.list` (ou ao padrão `default_json` quando a chave
+    /// não está gravada), com auditoria `category.create`. `key` existente → `Existing`, sem
+    /// gravar; lista cheia → `Conflict("CATEGORY_LIMIT_REACHED")`.
+    fn create_category(
+        &self,
+        category: crate::core::settings::Category,
+        default_json: String,
+        max: usize,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<crate::core::model::CategoryAppend, StoreError>> + Send;
     fn find_idempotency(
         &self,
         token_id: &str,
@@ -461,6 +492,12 @@ pub trait Store: Clone + Send + Sync + 'static {
         state: EmbeddingState,
     ) -> impl Future<Output = Result<u64, StoreError>> + Send;
     /// Ramo vetorial da busca, da menor para a maior distância.
+    /// Vetor gravado da memória no `model_id` dado.
+    fn memory_vector(
+        &self,
+        memory_id: String,
+        model_id: String,
+    ) -> impl Future<Output = Result<Option<Vec<f32>>, StoreError>> + Send;
     fn search_vectors(
         &self,
         query: VectorQuery,

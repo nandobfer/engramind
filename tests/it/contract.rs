@@ -188,7 +188,7 @@ mod catalog {
         for spec in OPERATIONS {
             assert_eq!(
                 ADMIN_TAGS.contains(&spec.tag),
-                spec.kind == RequiredKind::Admin,
+                matches!(spec.kind, RequiredKind::Admin | RequiredKind::AdminOrApp),
                 "{}",
                 spec.name
             );

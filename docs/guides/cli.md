@@ -52,6 +52,12 @@ engramind apps create --slug app-a --name "App A"
 engramind agents create --app app-a --slug curador --name Curador
 engramind tokens issue --agent app-a/curador --scopes read,write
 engramind tokens revoke tk_3f9e1a7c
+engramind tokens rotate tk_3f9e1a7c
+engramind tokens issue --app app-a --kind app --scopes read,write,delete
+engramind apps webhook app-a --webhook-url https://app-a.local/eventos --webhook-secret-stdin
+engramind categories list
+engramind categories create --key QUESTS --label Missões --priority 25
+engramind settings consumer
 engramind channels create --slug eng/global --name "Engenharia global"
 engramind channels list --include-archived
 engramind subscriptions add --agent app-a/curador --target "eng/*" --mode manage --access read,write
@@ -59,6 +65,10 @@ engramind subscriptions update sub_7c2e9a10 --token-access
 engramind memories create --channel eng/global --category CONSTRAINTS --text "…"
 engramind context
 engramind context --format markdown --if-none-match cv_3f9e1a7c0b2d
+engramind context --focus "como rodo os testes de integração"
+engramind memories create --channel eng/global --title "Testes de integração" --tag testes --key regra:testes --upsert --text "…"
+engramind memories list --tag testes --key regra:testes
+engramind memories update m_8f2a1c3d --tag testes --unlock-title
 engramind memories search testes locais
 engramind hints como rodo os testes
 engramind memories list --fields title --channels eng/global

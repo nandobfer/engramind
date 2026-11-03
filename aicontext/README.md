@@ -4,7 +4,7 @@ Este diretório contém regras operacionais concisas para qualquer trabalho no E
 
 ## Estado atual
 
-Versão **0.10.0**: etapas **001 (Fundação operável)**, **002 (Identidades e as três vias)**, **003 (Canais e assinaturas)**, **004 (Memórias)**, **005 (Contexto)**, **006 (Redator)**, **007 (Embeddings e busca híbrida)**, **008 (Integração)** e **009 (Consolidação)** implementadas. O plano está em [`../specs/`](../specs/README.md); a escala (`vec0` particionado, Postgres) só ganha spec quando uma medição justificar.
+Versão atual: a de `Cargo.toml`. Etapas **001 (Fundação operável)**, **002 (Identidades e as três vias)**, **003 (Canais e assinaturas)**, **004 (Memórias)**, **005 (Contexto)**, **006 (Redator)**, **007 (Embeddings e busca híbrida)**, **008 (Integração)** e **009 (Consolidação)** implementadas, mais a evolução para apps consumidores sem token admin (token `app`, foco no contexto, prioridades por canal, campos de memória; decisões `0028` a `0033`). O plano está em [`../specs/`](../specs/README.md); a escala (`vec0` particionado, Postgres) só ganha spec quando uma medição justificar.
 
 Existe de fato:
 
@@ -22,11 +22,11 @@ Existe de fato:
 - integração: eventos em toda mutação de memória, canal, assinatura e configuração (inclusive o Redator), webhooks por app (URL e segredo cifrado, HMAC-SHA256, job `webhook` com backoff próprio), `import_memories`, `get_usage`, `get_status` completo, `/metrics` (token `admin`·`read`) e a retenção horária — ver [`webhooks.md`](webhooks.md);
 - consolidação: job `consolidate` por canal (agendado por cron com `croner` ou por `run_consolidation`, com `dry_run` sem LLM), fusão de duplicatas pelo Redator com guarda de sentido, importância em `importance_pending` promovida só com `channels.version`, desuso (`stale_candidate`, `last_injected_at`, arquivamento opcional), pares recusados e `mark_verified` — ver [`consolidation.md`](consolidation.md);
 - REST em `/v1` com `#[utoipa::path]` em toda rota e o snapshot `docs/openapi.json`; MCP em `POST /mcp` com uma ferramenta por operação, filtrada pelo token; guias em `docs/guides/` compilados no binário;
-- `Store` SQLite com as migrações `0001_init.sql`, `0002_identities.sql`, `0003_channels.sql`, `0004_memories.sql`, `0005_usage.sql`, `0006_redator.sql`, `0007_vectors.sql`, `0008_integration.sql` e `0009_consolidation.sql`;
+- `Store` SQLite com as migrações `0001_init.sql`, `0002_identities.sql`, `0003_channels.sql`, `0004_memories.sql`, `0005_usage.sql`, `0006_redator.sql`, `0007_vectors.sql`, `0008_integration.sql`, `0009_consolidation.sql`, `0010_app_tokens.sql`, `0011_memory_fields.sql` e `0012_channel_lifecycle.sql`;
 - imagem Docker com Litestream e a biblioteca do ONNX Runtime, compose de um serviço, `scripts/check-compose.sh`, `scripts/test.sh`;
 - testes com `cargo-nextest` (unitários e o binário `tests/it/`, com a matriz tipo × escopo × operação nas três vias, o cenário de canais do §19, as invariantes das memórias e os testes de contrato do §15, inclusive a skill) e CI/CD em `.github/workflows/ci-cd.yml`.
 
-Ainda não existe: a escala (índice `vec0` particionado por canal e o `Store` Postgres + pgvector). O `similar` da escrita continua textual (decisão 0021).
+Ainda não existe: a escala (índice `vec0` particionado por canal e o `Store` Postgres + pgvector). O `similar` da escrita continua textual (decisão 0021); o da leitura (`get_memory`) é vetorial (decisão 0031).
 
 Atualize esta seção a cada fase concluída, listando as capacidades que de fato existem.
 

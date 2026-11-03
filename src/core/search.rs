@@ -37,6 +37,9 @@ pub struct SearchMemoriesBody {
     pub channels: Option<Vec<String>>,
     #[schema(example = json!(["CONSTRAINTS"]))]
     pub categories: Option<Vec<String>>,
+    /// Só as memórias com todas estas tags (E lógico).
+    #[schema(example = json!(["missao"]))]
+    pub tags: Option<Vec<String>>,
     /// De 1 a 50 (padrão `search.default_limit`).
     #[schema(minimum = 1, maximum = 50)]
     pub limit: Option<u32>,
@@ -169,14 +172,17 @@ impl<S: Store> Core<S> {
             statuses.push(MemoryStatus::Archived);
         }
         let categories = body.categories.unwrap_or_default();
+        let tags = super::memories::tags(body.tags.as_deref().unwrap_or_default())?;
         let text_hits = self
             .store()
             .search_text(TextQuery {
                 terms,
                 channel_ids: channel_ids.clone(),
                 categories: categories.clone(),
+                tags: tags.clone(),
                 statuses: statuses.clone(),
                 exclude_ids: exclude_ids.clone(),
+                only_ids: Vec::new(),
                 limit,
             })
             .await?;
@@ -189,6 +195,7 @@ impl<S: Store> Core<S> {
                         model_id: runtime.model_id,
                         channel_ids: channel_ids.clone(),
                         categories,
+                        tags,
                         statuses,
                         exclude_ids,
                         limit,
@@ -271,6 +278,10 @@ mod tests {
             archived_at: None,
             stale_candidate: false,
             merged_into: None,
+            title_locked: false,
+            key: None,
+            tags: Vec::new(),
+            last_origin: None,
         }
     }
 

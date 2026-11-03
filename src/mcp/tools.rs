@@ -134,6 +134,24 @@ pub struct AgentMutationRequest {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateAppWebhookRequest {
+    /// Id (`app_…`) ou slug do app.
+    pub app: String,
+    #[serde(flatten)]
+    pub body: crate::core::identities::UpdateAppWebhookBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateCategoryRequest {
+    #[serde(flatten)]
+    pub body: crate::core::categories::CreateCategoryBody,
+    #[serde(flatten)]
+    pub idempotency: Idempotency,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct CreateAgentRequest {
     #[serde(flatten)]
     pub body: CreateAgentBody,
@@ -414,6 +432,10 @@ pub struct GetContextRequest {
     /// `tagged`, `markdown` ou `json`; padrão `context.default_format`.
     #[serde(default)]
     pub format: Option<ContextFormat>,
+    /// Texto da tarefa ou da conversa (até 2000 caracteres): as memórias relevantes vêm antes;
+    /// entra na `version` e nunca é gravado em log.
+    #[serde(default)]
+    pub focus: Option<String>,
     /// Mesmo efeito do cabeçalho `If-None-Match` do REST: com a `version` atual, a resposta é
     /// `{ not_modified: true, version }`.
     #[serde(default)]
@@ -630,6 +652,22 @@ impl EngramindServer {
     }
 
     #[tool]
+    async fn update_app_webhook(
+        &self,
+        Parameters(request): Parameters<UpdateAppWebhookRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        reply(
+            self.core
+                .update_app_webhook(&principal, &request.app, request.body, key)
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
     async fn delete_app(
         &self,
         Parameters(request): Parameters<AppMutationRequest>,
@@ -767,6 +805,25 @@ impl EngramindServer {
         reply(
             self.core
                 .revoke_token(
+                    &principal,
+                    &request.token,
+                    request.idempotency_key.as_deref(),
+                )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn rotate_token(
+        &self,
+        Parameters(request): Parameters<TokenMutationRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(
+            self.core
+                .rotate_token(
                     &principal,
                     &request.token,
                     request.idempotency_key.as_deref(),
@@ -990,6 +1047,7 @@ impl EngramindServer {
         let query = GetContextQuery {
             channels: request.channels,
             format: request.format,
+            focus: request.focus,
         };
         let result = match channels_header(&context) {
             Ok(header) => self
@@ -1347,6 +1405,48 @@ impl EngramindServer {
                     UpdateChannelSettingsBody(request.settings),
                     request.idempotency_key.as_deref(),
                 )
+                .await
+                .map(|mutation| mutation.value),
+        )
+    }
+
+    #[tool]
+    async fn get_consumer_settings(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let result = match channels_header(&context) {
+            Ok(header) => {
+                self.core
+                    .get_consumer_settings(&principal, header.as_deref())
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        reply(result)
+    }
+
+    #[tool]
+    async fn list_categories(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        reply(self.core.list_categories(&principal).await)
+    }
+
+    #[tool]
+    async fn create_category(
+        &self,
+        Parameters(request): Parameters<CreateCategoryRequest>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let principal = principal(&context)?;
+        let key = request.idempotency.idempotency_key.as_deref();
+        reply(
+            self.core
+                .create_category(&principal, request.body, key)
                 .await
                 .map(|mutation| mutation.value),
         )

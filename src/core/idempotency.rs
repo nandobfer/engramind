@@ -172,12 +172,27 @@ impl<S: Store> Core<S> {
         if row.request_hash != hash {
             return Err(conflict());
         }
-        let value = serde_json::from_str(&row.response_json).map_err(|_| ApiError::internal())?;
+        let value = serde_json::from_value(with_created(&row.response_json, row.status)?)
+            .map_err(|_| ApiError::internal())?;
         Ok(Some(Mutation {
             value,
             replayed: true,
         }))
     }
+}
+
+/// Respostas gravadas antes da 0.11.0 não têm `created`: ele vem do status gravado (`201` =
+/// criado), para que o replay de uma criação continue `201` e o de uma duplicata ou edição, `200`.
+/// Tipos sem o campo ignoram a chave.
+fn with_created(response_json: &str, status: u16) -> Result<serde_json::Value, ApiError> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(response_json).map_err(|_| ApiError::internal())?;
+    if let serde_json::Value::Object(map) = &mut value
+        && !map.contains_key("created")
+    {
+        map.insert("created".to_owned(), serde_json::Value::Bool(status == 201));
+    }
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -213,5 +228,23 @@ mod tests {
         assert!(validate_key("com espaco").is_err());
         assert!(validate_key("acentuação").is_err());
         assert!(validate_key(&"k".repeat(256)).is_err());
+    }
+
+    #[test]
+    fn replays_recorded_before_created_existed_take_it_from_the_status() {
+        let memory = json!({ "id": "m_1" });
+        let old = |duplicate: bool| {
+            json!({ "memory": memory, "duplicate": duplicate, "similar": [] }).to_string()
+        };
+        let created = super::with_created(&old(false), 201).expect("json");
+        assert_eq!(created["created"], true);
+        let duplicate = super::with_created(&old(true), 200).expect("json");
+        assert_eq!(duplicate["created"], false);
+        // A gravada já com `created` não muda.
+        let recorded = json!({ "created": false, "x": 1 }).to_string();
+        assert_eq!(
+            super::with_created(&recorded, 201).expect("json")["created"],
+            false
+        );
     }
 }

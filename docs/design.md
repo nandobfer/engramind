@@ -198,6 +198,14 @@ consumidor ainda pode filtrar mais (ex.: expor só `search_memories`).
 
 ---
 
+### Token de app (0.11.0)
+
+Implementado: `kind: app`, vinculado a um app e nunca a um agente, emitido só pelo admin. Gere os
+agentes, os tokens de agente e as assinaturas do próprio app, cria canais ao assinar, arquiva e
+restaura os canais que criou, importa memórias nos canais dos seus agentes e grava o próprio webhook.
+Não escreve memórias individuais nem alcança configurações, segredos, status e auditoria. Regras,
+matriz e alcance: decisões `0028` e `0033` e o guia `tokens-e-escopos`.
+
 ## 5. Canais e assinaturas
 
 ### Canal
@@ -725,8 +733,8 @@ Observações:
 
 `skills/engramind/SKILL.md` ensina um agente com shell a usar a CLI:
 - quando ler o contexto (início da tarefa) e quando buscar (dúvida sobre uma regra);
-- como escrever uma boa memória: um fato durável, genérico, sem dados sensíveis, códigos de tarefa
-  ou URLs temporárias, na categoria certa e checando `similar` antes de criar outra;
+- como escrever uma boa memória: um fato durável e autossuficiente, segredos só com necessidade,
+  a política de memória do app consumidor prevalecendo (0.11.0), na categoria certa e checando `similar` antes de criar outra;
 - os comandos exatos com `--json`, e como tratar os erros comuns.
 
 Para agentes com shell, a skill costuma sair mais barata que o MCP: carrega algumas centenas de
@@ -1001,7 +1009,8 @@ TZ=America/Sao_Paulo
 
 ### Tomadas
 
-1. **Tokens `agent` e `admin`**, ambos com escopos `read`/`write`/`delete`.
+1. **Tokens `agent` e `admin`**, ambos com escopos `read`/`write`/`delete`. Desde a 0.11.0, também
+   o token `app`, que gere só o próprio app (decisão 0028).
 2. **Agente curador assina os canais-alvo em modo `manage`**, com `read+write`. A memória pertence
    ao canal, e o curador fica registrado como autor.
 3. **Contexto padrão `tagged`** (`#id: texto` agrupado em tags), em duas faixas e com cache em
