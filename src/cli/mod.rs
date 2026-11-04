@@ -102,7 +102,7 @@ pub enum Command {
     Profiles(ProfilesCommand),
     /// Identifica o token e lista as operações permitidas.
     Whoami,
-    /// Apps (token admin).
+    /// Apps (token admin; o token app lê o próprio e grava o webhook dele).
     #[command(subcommand)]
     Apps(AppsCommand),
     /// Agentes (token admin).
@@ -111,7 +111,7 @@ pub enum Command {
     /// Tokens (token admin).
     #[command(subcommand)]
     Tokens(TokensCommand),
-    /// Canais (leitura: qualquer token; mudanças: token admin).
+    /// Canais (leitura: qualquer token; mudanças: token admin, e o token app nos canais que criou).
     #[command(subcommand)]
     Channels(ChannelsCommand),
     /// Assinaturas (leitura: qualquer token; mudanças: token admin).
@@ -209,7 +209,7 @@ pub enum AppsCommand {
         #[command(flatten)]
         page: PageArgs,
     },
-    /// Mostra um app (id ou slug).
+    /// Mostra um app (id ou slug); o token app só o próprio.
     Get { app: String },
     /// Cria um app.
     Create {

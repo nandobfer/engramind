@@ -1,6 +1,7 @@
 //! Canais (desenho §5): criação e manutenção por token `admin`; leitura por qualquer token,
 //! limitada ao que ele alcança (FR-011). O token `app` vê todos os canais (para assinar) e
-//! arquiva ou restaura só os que criou ao assinar, sem assinatura de outro app (decisão 0033).
+//! altera, arquiva ou restaura só os que criou ao assinar, sem assinatura de outro app (decisões
+//! 0033 e 0035).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -370,8 +371,8 @@ impl<S: Store> Core<S> {
         result
     }
 
-    /// O token de app só arquiva ou restaura o canal que criou, e só sem assinatura de agente
-    /// ativo de outro app que o alcance (exata ou por prefixo).
+    /// O token de app só altera, arquiva ou restaura o canal que criou, e só sem assinatura de
+    /// agente ativo de outro app que o alcance (exata ou por prefixo).
     async fn ensure_app_lifecycle(
         &self,
         principal: &Principal,
@@ -399,7 +400,7 @@ impl<S: Store> Core<S> {
             return Err(ApiError::new(
                 "CHANNEL_SHARED",
                 format!(
-                    "O canal {} e assinado por agentes de outro app; so o admin o arquiva ou restaura",
+                    "O canal {} e assinado por agentes de outro app; so o admin o altera, arquiva ou restaura",
                     channel.slug
                 ),
             )

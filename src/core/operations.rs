@@ -215,7 +215,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "get_app",
         TAG_IDENTITIES,
         "Mostra um app",
-        Admin,
+        RequiredKind::AdminOrApp,
         "/v1/apps/{app}",
         &["apps", "get"],
     ),
@@ -399,7 +399,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         "/v1/channels",
         &["channels", "create"],
     ),
-    mutation(
+    app_mutation(
         "update_channel",
         TAG_NETWORK,
         "Altera nome, descrição ou prioridade de um canal",

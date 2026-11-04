@@ -126,7 +126,7 @@ pub async fn create_channel(
     operation_id = "update_channel",
     tag = "Network",
     summary = "Altera nome, descrição ou prioridade de um canal",
-    description = "Campos omitidos não mudam; `description: null` limpa. O slug não muda. Incrementa `version`. Exige token admin com `write`.",
+    description = "Campos omitidos não mudam; `description: null` limpa. O slug não muda. Incrementa `version`. Exige token admin com `write`, ou token app com `write` só nos canais que o app criou ao assinar (`403 FOREIGN_APP` nos demais; `409 CHANNEL_SHARED` quando um agente ativo de outro app assina o canal).",
     params(
         ("channel" = String, Path, description = "Id (`ch_…`) ou slug do canal"),
         ("Idempotency-Key" = Option<String>, Header, description = "Repete a resposta gravada para o mesmo corpo por 24 h")
@@ -137,9 +137,9 @@ pub async fn create_channel(
         (status = 200, description = "Canal alterado", body = Channel),
         (status = 400, description = "`VALIDATION_ERROR`", body = ErrorResponse),
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
-        (status = 403, description = "`SCOPE_REQUIRED`", body = ErrorResponse),
+        (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`CHANNEL_NOT_FOUND`", body = ErrorResponse),
-        (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
+        (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT` ou `CHANNEL_SHARED`", body = ErrorResponse),
         (status = 413, description = "`PAYLOAD_TOO_LARGE`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
@@ -178,7 +178,7 @@ pub async fn update_channel(
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
         (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`CHANNEL_NOT_FOUND`", body = ErrorResponse),
-        (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
+        (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT` ou `CHANNEL_SHARED`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
         (status = 504, description = "`REQUEST_TIMEOUT`", body = ErrorResponse)
@@ -215,7 +215,7 @@ pub async fn archive_channel(
         (status = 401, description = "`AUTH_INVALID`", body = ErrorResponse),
         (status = 403, description = "`SCOPE_REQUIRED` ou `FOREIGN_APP`", body = ErrorResponse),
         (status = 404, description = "`CHANNEL_NOT_FOUND`", body = ErrorResponse),
-        (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT`", body = ErrorResponse),
+        (status = 409, description = "`IDEMPOTENCY_KEY_CONFLICT` ou `CHANNEL_SHARED`", body = ErrorResponse),
         (status = 429, description = "`RATE_LIMITED`", body = ErrorResponse),
         (status = 503, description = "`DATABASE_UNAVAILABLE`", body = ErrorResponse),
         (status = 504, description = "`REQUEST_TIMEOUT`", body = ErrorResponse)

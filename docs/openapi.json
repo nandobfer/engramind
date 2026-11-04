@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.12.0"
+    "version": "0.13.0"
   },
   "servers": [
     {
@@ -2349,7 +2349,7 @@
           "Identities"
         ],
         "summary": "Mostra um app",
-        "description": "`{app}` aceita o id (`app_…`) ou o slug. Exige token admin com `read`.",
+        "description": "`{app}` aceita o id (`app_…`) ou o slug. O webhook vem só com a URL e o estado do segredo (`configured`, `updated_at`), nunca o valor. Exige token admin com `read` (qualquer app) ou token app com `read` (só o próprio app, `403 FOREIGN_APP` em outro).",
         "operationId": "get_app",
         "parameters": [
           {
@@ -2418,7 +2418,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -4726,7 +4726,7 @@
           "Network"
         ],
         "summary": "Altera nome, descrição ou prioridade de um canal",
-        "description": "Campos omitidos não mudam; `description: null` limpa. O slug não muda. Incrementa `version`. Exige token admin com `write`.",
+        "description": "Campos omitidos não mudam; `description: null` limpa. O slug não muda. Incrementa `version`. Exige token admin com `write`, ou token app com `write` só nos canais que o app criou ao assinar (`403 FOREIGN_APP` nos demais; `409 CHANNEL_SHARED` quando um agente ativo de outro app assina o canal).",
         "operationId": "update_channel",
         "parameters": [
           {
@@ -4836,7 +4836,7 @@
             }
           },
           "403": {
-            "description": "`SCOPE_REQUIRED`",
+            "description": "`SCOPE_REQUIRED` ou `FOREIGN_APP`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -4874,7 +4874,7 @@
             }
           },
           "409": {
-            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "description": "`IDEMPOTENCY_KEY_CONFLICT` ou `CHANNEL_SHARED`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -5120,7 +5120,7 @@
             }
           },
           "409": {
-            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "description": "`IDEMPOTENCY_KEY_CONFLICT` ou `CHANNEL_SHARED`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -5347,7 +5347,7 @@
             }
           },
           "409": {
-            "description": "`IDEMPOTENCY_KEY_CONFLICT`",
+            "description": "`IDEMPOTENCY_KEY_CONFLICT` ou `CHANNEL_SHARED`",
             "headers": {
               "x-request-id": {
                 "schema": {
@@ -6360,7 +6360,7 @@
           "Consumer"
         ],
         "summary": "Limites de escrita e orçamento do contexto para o app consumidor",
-        "description": "Só o que governa a escrita e o contexto, para o consumidor validar o texto e mostrar o orçamento sem token admin: `memory.text_min`/`text_max` e `limits.max_batch` globais; `context.budget_tokens`, `titles_budget_tokens`, `default_format` e `text_max_chars`; e, por canal ativo em que o token escreve (token de app: a união dos agentes ativos do app; admin: todos), `memory_text_max`, `budget_tokens`, `category_priorities` e `text_max_chars` efetivos (com a sobreposição do canal). Restrito pelo cabeçalho `Engramind-Channels`. Nunca traz segredo, chave de IA nem configuração do Redator ou dos embeddings. Acompanha os eventos `settings.updated` e `channel.updated`; pode ser cacheado por pouco tempo. Qualquer token com `read`.",
+        "description": "Só o que governa a escrita e o contexto, para o consumidor validar o texto e mostrar o orçamento sem token admin: `memory.text_min`/`text_max` e `limits.max_batch` globais; `context.budget_tokens`, `titles_budget_tokens`, `default_format` e `text_max_chars`; e, por canal ativo em que o token escreve (token de app: a união dos agentes ativos do app; admin: todos), `memory_text_max`, `budget_tokens`, `category_priorities` e `text_max_chars` efetivos (com a sobreposição do canal). Traz também os valores globais efetivos de `consolidation.stale_after_days` e dos pesos da busca (`search.vector_weight`, `text_weight`, `rrf_k`), que não aceitam sobreposição por canal. Restrito pelo cabeçalho `Engramind-Channels`. Nunca traz segredo, chave de IA nem configuração do Redator ou dos embeddings. Acompanha os eventos `settings.updated` (o global chega a todo app com webhook quando muda uma chave desta resposta) e `channel.updated`; pode ser cacheado por pouco tempo. Qualquer token com `read`.",
         "operationId": "get_consumer_settings",
         "parameters": [
           {
@@ -17498,6 +17498,22 @@
           }
         }
       },
+      "ConsumerConsolidation": {
+        "type": "object",
+        "description": "Desuso global (`consolidation.stale_after_days`, sem sobreposição por canal).",
+        "required": [
+          "stale_after_days"
+        ],
+        "properties": {
+          "stale_after_days": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Dias sem uso para uma memória ativa virar `stale_candidate`.",
+            "example": 90,
+            "minimum": 0
+          }
+        }
+      },
       "ConsumerContext": {
         "type": "object",
         "required": [
@@ -17567,6 +17583,33 @@
           }
         }
       },
+      "ConsumerSearch": {
+        "type": "object",
+        "description": "Pesos globais da fusão RRF de `search_memories` (`search.*`, sem sobreposição por canal).",
+        "required": [
+          "vector_weight",
+          "text_weight",
+          "rrf_k"
+        ],
+        "properties": {
+          "rrf_k": {
+            "type": "integer",
+            "format": "int64",
+            "example": 60,
+            "minimum": 0
+          },
+          "text_weight": {
+            "type": "number",
+            "format": "double",
+            "example": 1.0
+          },
+          "vector_weight": {
+            "type": "number",
+            "format": "double",
+            "example": 1.0
+          }
+        }
+      },
       "ConsumerSettings": {
         "type": "object",
         "description": "`get_consumer_settings` (0.11.0, item 10): só o que governa a escrita e o contexto, sem\nsegredo nem configuração de provedor.",
@@ -17574,6 +17617,8 @@
           "memory",
           "limits",
           "context",
+          "consolidation",
+          "search",
           "channels"
         ],
         "properties": {
@@ -17584,6 +17629,9 @@
             },
             "description": "Canais ativos em que o token escreve (token de app: a união dos agentes ativos), com os\nvalores efetivos (sobreposição do canal aplicada), por slug."
           },
+          "consolidation": {
+            "$ref": "#/components/schemas/ConsumerConsolidation"
+          },
           "context": {
             "$ref": "#/components/schemas/ConsumerContext"
           },
@@ -17592,6 +17640,9 @@
           },
           "memory": {
             "$ref": "#/components/schemas/ConsumerMemory"
+          },
+          "search": {
+            "$ref": "#/components/schemas/ConsumerSearch"
           }
         }
       },
