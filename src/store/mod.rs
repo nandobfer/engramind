@@ -326,6 +326,12 @@ pub trait Store: Clone + Send + Sync + 'static {
         &self,
         channel_ids: Vec<String>,
     ) -> impl Future<Output = Result<ContextSnapshot, StoreError>> + Send;
+    /// Só os jobs `webhook` dos eventos do contexto (`memory.consumed`, decisão 0034), numa
+    /// transação curta: sem auditoria, idempotência nem mudança de versão.
+    fn emit_events(
+        &self,
+        context: WriteContext,
+    ) -> impl Future<Output = Result<(), StoreError>> + Send;
     /// Soma `injected_count` sem mudar `version`.
     fn bump_injections(
         &self,

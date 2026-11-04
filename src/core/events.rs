@@ -21,6 +21,16 @@ fn event_id() -> String {
     format!("{EVENT_PREFIX}{high}{low}")
 }
 
+/// Prefixo do id que agrupa os eventos de consumo de uma mesma leitura.
+pub const CONSUMPTION_PREFIX: &str = "cns_";
+
+/// `cns_` + 16 hex, comum a todos os `memory.consumed` de uma chamada.
+pub(crate) fn consumption_id() -> String {
+    let high = ids::generate("");
+    let low = ids::generate("");
+    format!("{CONSUMPTION_PREFIX}{high}{low}")
+}
+
 /// Tipos de evento (FR-001).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventType {
@@ -33,10 +43,12 @@ pub enum EventType {
     SettingsUpdated,
     /// Identidade de um app mudou (0.11.0: o webhook do próprio app).
     IdentitiesUpdated,
+    /// Memórias entregues por uma leitura (0.12.0, decisão 0034): não é mudança.
+    MemoryConsumed,
 }
 
 impl EventType {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::MemoryCreated,
         Self::MemoryUpdated,
         Self::MemoryArchived,
@@ -45,6 +57,7 @@ impl EventType {
         Self::SubscriptionUpdated,
         Self::SettingsUpdated,
         Self::IdentitiesUpdated,
+        Self::MemoryConsumed,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -57,6 +70,7 @@ impl EventType {
             Self::SubscriptionUpdated => "subscription.updated",
             Self::SettingsUpdated => "settings.updated",
             Self::IdentitiesUpdated => "identities.updated",
+            Self::MemoryConsumed => "memory.consumed",
         }
     }
 }

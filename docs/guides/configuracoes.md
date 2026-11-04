@@ -72,7 +72,7 @@ No REST, `PUT /v1/settings` com `{ "limits.rate_per_minute": 1200 }`; no MCP, `u
 | `search.default_limit` | integer | 10 | 1 a 50 | não | Resultados de `search_memories` quando `limit` não é informado. |
 | `search.hint_threshold` | number | 0.8 | 0 a 1 | não | Similaridade de cosseno mínima de uma dica (`get_hints`). Modelos e5 comprimem os cossenos: valores perto de 0,88 filtram melhor. |
 | `search.hint_limit` | integer | 3 | 1 a 20 | não | Dicas devolvidas por `get_hints` quando `limit` não é informado. |
-| `webhooks.enabled` | boolean | true | — | não | Liga os webhooks: desligado, as mutações não enfileiram eventos e as entregas pendentes terminam como `skipped`. |
+| `webhooks.enabled` | boolean | true | — | não | Liga os webhooks: desligado, nem as mutações nem as leituras (`memory.consumed`) enfileiram eventos, e as entregas pendentes terminam como `skipped`. |
 | `webhooks.timeout_ms` | integer | 5000 | 500 a 30000 | não | Prazo de cada tentativa de entrega de um webhook. |
 | `webhooks.max_attempts` | integer | 5 | 1 a 10 | não | Tentativas de entrega de um evento antes de o job ficar `failed`. |
 | `retention.usage_days` | integer | 90 | 1 a 3650 | não | Dias de `usage_log` guardados (base de `get_usage`). |

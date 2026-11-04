@@ -2,7 +2,7 @@
 
 ## Onde vive
 
-- `src/core/events.rs`: `EventType` (7 tipos), `EventDraft`, `recipients` (puro, testado), `DirectoryCache`, `Core::event`/`channel_event`/`subscription_event`/`existing_subscription_event`/`settings_event`.
+- `src/core/events.rs`: `EventType` (`EventType::ALL`), `EventDraft`, `recipients` (puro, testado), `DirectoryCache`, `Core::event`/`channel_event`/`subscription_event`/`existing_subscription_event`/`settings_event`.
 - `src/core/webhooks.rs`: job `webhook` (`run_webhook`), `signature`, `backoff` (10 s × 4ⁿ, teto 1 h), `WEBHOOK_CONCURRENCY = 4`; runner `Webhook` em `src/core/jobs/runner.rs` (`Core::run_webhook_jobs(now)` nos testes).
 - `src/store/sqlite/journal.rs`: `emit`/`emit_with` gravam um job por destinatário na transação; `identities.rs`: `webhook_directory`, `webhook_target`, colunas `webhook_*`.
 - `src/core/import.rs` + `Store::import_memories` (`src/store/sqlite/memories.rs`); `src/core/usage_report.rs` (`get_usage`; `usage.rs` é o rate limiter) + `src/store/sqlite/integration.rs`.
@@ -20,6 +20,7 @@
 - `/metrics` exige `admin`·`read` (`Core::metrics_snapshot`); rótulos fechados, nunca slug, id ou URL.
 - Retenção só por `Store::purge_before` com o enum `RetentionTable`, em lotes de 5.000.
 
+- `memory.consumed` (0.12.0, decisão 0034) é o único evento de leitura: `src/core/consumption.rs` (`group`, `slot`, `Core::consumed`) monta um evento por canal com ao menos um id em `memory_ids` (`Audience::Channel`), e `Store::emit_events` grava só os jobs numa transação curta (sem auditoria, idempotência ou versão). Sai de `get_context` (`Rendered.consumed`; no `304` só com o bloco no cache em memória, nunca lendo o banco), `search_memories`, `get_hints` e `get_memory` (só com `principal.agent`: admin/app resolvendo ids não realimenta). Extras: `consumption` (`cns_` + 16 hex), `operation`, `app`, `agent` (slug ou `null`), e no contexto `title_ids` e `context_version`. Falha vira `WARN webhooks.consumed_failed`, nunca erro da leitura. Leitura nova que entrega memórias deve chamar `Core::consumed`.
 - `identities.updated` (0.11.0) só sai de `update_app_webhook`, para o próprio app (mesmo sem webhook anterior) e os admins (`Core::identities_event`); `rotate_token` está em `WITHOUT_EVENTS`.
 
-Guias: `integracao-gestor`, `integracao-consumidor`, `operacao`. Desenho: §6, §12, §17, §20. Decisões: `0022`, `0023`, `0024`.
+Guias: `integracao-gestor`, `integracao-consumidor`, `operacao`. Desenho: §6, §12, §17, §20. Decisões: `0022`, `0023`, `0024`, `0034`.

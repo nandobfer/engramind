@@ -661,6 +661,14 @@ impl Store for SqliteStore {
             .await
     }
 
+    async fn emit_events(&self, context: WriteContext) -> Result<(), StoreError> {
+        if context.events.is_empty() {
+            return Ok(());
+        }
+        self.mutate(move |transaction| journal::emit(transaction, &context, &[]))
+            .await
+    }
+
     async fn bump_injections(&self, batch: Vec<InjectionBump>) -> Result<(), StoreError> {
         if batch.is_empty() {
             return Ok(());

@@ -263,7 +263,8 @@ async fn a_run_merges_classifies_and_flags_exactly_what_the_dry_run_planned() {
         .as_str()
         .expect("user");
     assert!(user.contains(A) && user.contains(B));
-    // Fusão: um `memory.updated` (a mantida) e um `memory.archived` (a fundida).
+    // Fusão: um `memory.updated` (a mantida) e um `memory.archived` (a fundida); as leituras
+    // de conferência geram `memory.consumed`, que fica fora daqui.
     let events: Vec<(String, Value)> = {
         let connection = context.db();
         let mut statement = connection
@@ -280,6 +281,7 @@ async fn a_run_merges_classifies_and_flags_exactly_what_the_dry_run_planned() {
                     payload["event"]["memory_ids"].clone(),
                 )
             })
+            .filter(|(kind, _)| kind != "memory.consumed")
             .collect()
     };
     assert_eq!(

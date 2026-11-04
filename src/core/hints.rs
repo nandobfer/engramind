@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 use super::{
     Core,
     access::Purpose,
+    consumption::{Consumption, group},
     ids,
     model::{MemoryStatus, Mode, SimilarMethod, UsageEntry, VectorQuery},
     principal::Principal,
@@ -151,6 +152,19 @@ impl<S: Store> Core<S> {
             memory_ids: hints.iter().map(|hint| hint.id.clone()).collect(),
             rendered_tokens: None,
         });
+        self.consumed(
+            principal,
+            Consumption {
+                operation: "get_hints",
+                context_version: None,
+            },
+            &group(
+                hints
+                    .iter()
+                    .map(|hint| (hint.channel.as_str(), hint.id.as_str())),
+            ),
+        )
+        .await;
         Ok(HintsResult { hints })
     }
 }

@@ -30,6 +30,7 @@ use self::{
 use super::{
     Core,
     access::{Purpose, Reach},
+    consumption::{ChannelConsumption, Consumption, slot},
     ids,
     model::{ContextMemory, UsageEntry},
     principal::{Principal, Scope},
@@ -216,6 +217,8 @@ pub struct Rendered {
     pub view: ContextView,
     pub full_ids: Vec<String>,
     pub channel_ids: Vec<String>,
+    /// Faixa 1 e faixa 2 por canal, na ordem do bloco: o `memory.consumed` (decisão 0034).
+    pub consumed: Vec<ChannelConsumption>,
 }
 
 impl Rendered {
@@ -232,6 +235,7 @@ impl Rendered {
             },
             full_ids: Vec::new(),
             channel_ids: Vec::new(),
+            consumed: Vec::new(),
         }
     }
 }
@@ -384,6 +388,7 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
 
     let mut counts = ContextCounts::default();
     let mut full_ids = Vec::new();
+    let mut consumed: Vec<ChannelConsumption> = Vec::new();
     let mut grouped: BTreeMap<(i64, &str), Groups<'_>> = BTreeMap::new();
     let mut titles = Vec::new();
     for (((entry, band), (full, title)), text) in entries
@@ -396,6 +401,9 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
             Band::Full => {
                 counts.full += 1;
                 full_ids.push(entry.memory.id.clone());
+                slot(&mut consumed, entry.slug)
+                    .memory_ids
+                    .push(entry.memory.id.clone());
                 grouped
                     .entry((-entry.channel_priority, entry.slug))
                     .or_default()
@@ -411,6 +419,9 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
             }
             Band::Title => {
                 counts.titles += 1;
+                slot(&mut consumed, entry.slug)
+                    .title_ids
+                    .push(entry.memory.id.clone());
                 titles.push(Item {
                     id: &entry.memory.id,
                     raw: &entry.memory.title,
@@ -469,6 +480,7 @@ pub fn render(input: &RenderInput, estimator: &dyn TokenEstimator) -> Rendered {
             .iter()
             .map(|channel| channel.id.clone())
             .collect(),
+        consumed,
     }
 }
 
@@ -697,6 +709,28 @@ impl<S: Store> Core<S> {
         if let Some(tag) = if_none_match
             && version::matches(tag, &plan.version)
         {
+            // O consumo do `304` sai do bloco em cache (decisão 0034); fora do cache, nada.
+            let cache = match &focus {
+                Some(_) => self.focus_cache(),
+                None => self.context_cache(),
+            };
+            match cache.get(&plan.fingerprint) {
+                Some(rendered) => {
+                    self.consumed(
+                        principal,
+                        Consumption {
+                            operation: "get_context",
+                            context_version: Some(&plan.version),
+                        },
+                        &rendered.consumed,
+                    )
+                    .await;
+                }
+                None => tracing::debug!(
+                    event = "context.consumed_skipped",
+                    "304 sem o bloco em cache: consumo nao emitido"
+                ),
+            }
             return Ok(ContextOutcome::NotModified(ContextNotModified {
                 not_modified: true,
                 version: plan.version,
@@ -751,6 +785,15 @@ impl<S: Store> Core<S> {
             memory_ids: rendered.full_ids.clone(),
             rendered_tokens: Some(rendered.view.rendered_tokens),
         });
+        self.consumed(
+            principal,
+            Consumption {
+                operation: "get_context",
+                context_version: Some(&rendered.view.version),
+            },
+            &rendered.consumed,
+        )
+        .await;
         Ok(ContextOutcome::Rendered(rendered))
     }
 

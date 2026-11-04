@@ -19,6 +19,7 @@ Guia: `busca-e-dicas`.
 - O ramo vetorial compara só vetores do `model_id` vigente **e** da dimensão da consulta; nunca mistura modelos.
 - `mode` descreve os ramos que rodaram: `hybrid` quando a consulta foi vetorizada (mesmo sem candidatos), `text` quando não. Falha, prazo (`embeddings::QUERY_TIMEOUT` = 2 s), `off` ou configuração incompleta nunca viram erro: `WARN embeddings.query_failed` e só o FTS.
 - `score = Σ peso / (search.rrf_k + posição)`, 6 casas, desempate por `id`; cada ramo traz até o `limit` efetivo (`search.default_limit` quando ausente).
+- `search_memories` e `get_hints` emitem `memory.consumed` por canal com os ids devolvidos (`Core::consumed`, decisão 0034); nunca a `query` nem o `text`.
 - `get_hints`: limiar `search.hint_threshold` sobre `1 - distância` (cosseno), exclui as memórias com texto completo no contexto (`context_for_search`), devolve só `{ id, title, channel }`; sem embeddings, lista vazia.
 - As duas contam `retrieval_count` e gravam `usage_log` (`op` = nome da operação) pelos contadores em lote.
 - `similar` na escrita continua textual (Jaccard, decisão 0012); o cosseno entre memórias é da 009.

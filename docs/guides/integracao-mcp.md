@@ -35,7 +35,7 @@ Cada operação do Engramind é uma ferramenta com o mesmo nome base, os mesmos 
 
 ## Contexto
 
-A ferramenta `get_context { channels?, format?, if_none_match? }` é a mesma operação do REST. `if_none_match` faz o papel do cabeçalho `If-None-Match`: com a `version` atual, o resultado é `{ "not_modified": true, "version" }`, sem ler o banco. Detalhes no guia `contexto-e-cache`.
+A ferramenta `get_context { channels?, format?, if_none_match? }` é a mesma operação do REST. `if_none_match` faz o papel do cabeçalho `If-None-Match`: com a `version` atual, o resultado é `{ "not_modified": true, "version" }`, sem ler o banco para decidir (só o consumo, com webhooks, grava jobs `memory.consumed`). Detalhes no guia `contexto-e-cache`.
 
 ## Resources
 

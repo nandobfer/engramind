@@ -632,7 +632,7 @@ pub const SETTINGS: &[SettingSpec] = &[
         kind: SettingType::Boolean,
         default: "true",
         channel_override: false,
-        description: "Liga os webhooks: desligado, as mutações não enfileiram eventos e as entregas pendentes terminam como `skipped`.",
+        description: "Liga os webhooks: desligado, nem as mutações nem as leituras (`memory.consumed`) enfileiram eventos, e as entregas pendentes terminam como `skipped`.",
         since: "0.8.0",
     },
     SettingSpec {

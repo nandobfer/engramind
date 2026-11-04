@@ -115,7 +115,7 @@ O formato padrão (`tagged`) agrupa as memórias por canal e categoria, com uma 
 
 - **Formatos:** `tagged` (padrão), `markdown` e `json`.
 - **Duas faixas de orçamento:** texto completo até `context.budget_tokens` (padrão 4.000); depois só `#id: título` até `context.titles_budget_tokens` (padrão 800); o restante vira uma linha de excedente.
-- **Cache:** `version` (`cv_` + 12 hex) e `ETag` permitem responder `304` sem corpo, e sem tocar no banco, quando nada mudou.
+- **Cache:** `version` (`cv_` + 12 hex) e `ETag` permitem responder `304` sem corpo, e sem ler o banco para decidir, quando nada mudou (com webhooks, o `304` só grava o evento de consumo).
 - **MCP:** o mesmo bloco está no resource `engramind://context`; há também `engramind://channels/{slug}`, `engramind://guides/{id}` e o prompt `memory-writing`.
 - **Dicas (`get_hints`):** fragmentos `#id · título · canal`, sem o texto completo, para a "lembrança vaga" antes do turno.
 

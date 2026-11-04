@@ -34,6 +34,7 @@ Memórias recém-escritas entram no ramo vetorial alguns instantes depois (`embe
 - Devolve `{ id, title, channel, score, method, duplicate }`, até `limit` (padrão `search.hint_limit`, máximo 20). `method: vector` traz o cosseno em `score`, e `duplicate: true` quando ele passa de `memory.vector_duplicate_threshold` (o texto do turno praticamente repete a memória). O agente busca o texto completo com `get_memory` se quiser.
 - Sem embeddings (desligados, sem configuração, falha ou acima de 2 s), devolve lista vazia: uma dica nunca é ruído textual.
 - Conta uma recuperação de cada dica e grava `usage_log` com `op = get_hints`.
+- Com webhooks, as dicas devolvidas geram `memory.consumed` por canal, como os resultados de `search_memories` (guia `integracao-gestor`); o `text` nunca entra no evento.
 - Leitura por `POST` (o corpo leva o texto): não aceita `Idempotency-Key`.
 
 ```bash

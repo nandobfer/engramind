@@ -3,7 +3,7 @@
   "info": {
     "title": "Engramind API",
     "description": "Rede de memórias para agentes de IA: memórias duráveis em canais, entregues por REST, MCP e CLI.",
-    "version": "0.11.0"
+    "version": "0.12.0"
   },
   "servers": [
     {
@@ -6540,7 +6540,7 @@
           "Context"
         ],
         "summary": "Bloco de memórias pronto para o prompt",
-        "description": "Memórias `active` e `permanent` dos canais alcançados em modo `inject` (token `admin`: todos os canais ativos), restritas por `channels` e pelo cabeçalho `Engramind-Channels`, em ordem determinística e em duas faixas: texto completo até `context.budget_tokens`, depois `#id: título` até `context.titles_budget_tokens`; o resto é contado em `counts.overflow`. `format`: `tagged` (padrão `context.default_format`), `markdown` (sem ids) ou `json` (`content` é um objeto). O `ETag` é a `version`; com `If-None-Match` igual, responde `304` sem corpo e sem ler o banco. A faixa de títulos traz a categoria e o canal (`#id [CATEGORIA] @canal: título`). `context.category_priorities` sobrepõe a prioridade das categorias por canal e `context.text_max_chars` corta o texto da faixa 1. `focus` (até 2000 caracteres) põe antes, dentro de cada prioridade de canal, as memórias relevantes (cosseno ≥ `context.focus_min_score` ou termo casado no FTS5), sem LLM; entra na `version` e nunca é gravado em log. Sem embedding (ou com falha/prazo), o foco segue só com o FTS5 (`focus_mode: text`); com falha do FTS5, sem foco (`focus_mode: none`); o modo vem em `focus_mode` e no cabeçalho `Engramind-Focus-Mode`. Foco acima do limite → `400 FOCUS_TOO_LONG`.",
+        "description": "Memórias `active` e `permanent` dos canais alcançados em modo `inject` (token `admin`: todos os canais ativos), restritas por `channels` e pelo cabeçalho `Engramind-Channels`, em ordem determinística e em duas faixas: texto completo até `context.budget_tokens`, depois `#id: título` até `context.titles_budget_tokens`; o resto é contado em `counts.overflow`. `format`: `tagged` (padrão `context.default_format`), `markdown` (sem ids) ou `json` (`content` é um objeto). O `ETag` é a `version`; com `If-None-Match` igual, responde `304` sem corpo e sem ler o banco para decidir (com webhooks e destinatário, só grava os jobs `memory.consumed`). A faixa de títulos traz a categoria e o canal (`#id [CATEGORIA] @canal: título`). `context.category_priorities` sobrepõe a prioridade das categorias por canal e `context.text_max_chars` corta o texto da faixa 1. `focus` (até 2000 caracteres) põe antes, dentro de cada prioridade de canal, as memórias relevantes (cosseno ≥ `context.focus_min_score` ou termo casado no FTS5), sem LLM; entra na `version` e nunca é gravado em log. Sem embedding (ou com falha/prazo), o foco segue só com o FTS5 (`focus_mode: text`); com falha do FTS5, sem foco (`focus_mode: none`); o modo vem em `focus_mode` e no cabeçalho `Engramind-Focus-Mode`. Foco acima do limite → `400 FOCUS_TOO_LONG`. Com webhooks, emite `memory.consumed` por canal com os ids das duas faixas, inclusive no `304` quando o bloco ainda está no cache em memória (guia `integracao-gestor`).",
         "operationId": "get_context",
         "parameters": [
           {
@@ -7936,7 +7936,7 @@
           "Search"
         ],
         "summary": "Dicas baratas (id, título e canal) para um texto, sem LLM",
-        "description": "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel, score, method, duplicate }`: `method: vector` com o cosseno, e `duplicate` a partir de `memory.vector_duplicate_threshold`; o agente busca o texto completo se quiser. Sem embeddings, lista vazia. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`.",
+        "description": "A \"lembrança vaga\": busca vetorial com o limiar `search.hint_threshold` sobre o cosseno, só em canais `inject` e `search` (nunca `manage`, mesmo citado), sem as memórias que já estão com texto completo no contexto do mesmo token e seleção. Devolve até `limit` (padrão `search.hint_limit`, máximo 20) itens `{ id, title, channel, score, method, duplicate }`: `method: vector` com o cosseno, e `duplicate` a partir de `memory.vector_duplicate_threshold`; o agente busca o texto completo se quiser. Sem embeddings, lista vazia. Feita para o sistema consumidor chamar antes do turno. Leitura: não aceita `Idempotency-Key`. Com webhooks, emite `memory.consumed` por canal com os ids entregues (guia `integracao-gestor`).",
         "operationId": "get_hints",
         "parameters": [
           {
@@ -9586,7 +9586,7 @@
           "Search"
         ],
         "summary": "Busca memórias por sentido e por texto",
-        "description": "Busca híbrida nos canais em modo `inject` e `search`; canais `manage` e arquivados só entram citados pelo slug em `channels` ou no `Engramind-Channels`. O ramo vetorial compara o embedding da consulta com os vetores do modelo vigente (cosseno do sqlite-vec) e o textual usa FTS5/BM25 sem acentos; a fusão RRF dá `score = Σ peso / (search.rrf_k + posição)` com `search.vector_weight` e `search.text_weight`. Sem embeddings (desligados, sem configuração, provedor com falha ou acima de 2 s), só o FTS e `mode: text`. Padrão `limit = search.default_limit` (máximo 50), só memórias ativas e fixadas (`include_archived` inclui as arquivadas). `exclude_ids` e `exclude_context` tiram o que já está no contexto. Leitura: não aceita `Idempotency-Key`. `tags` filtra pelas memórias com todas as tags (E lógico).",
+        "description": "Busca híbrida nos canais em modo `inject` e `search`; canais `manage` e arquivados só entram citados pelo slug em `channels` ou no `Engramind-Channels`. O ramo vetorial compara o embedding da consulta com os vetores do modelo vigente (cosseno do sqlite-vec) e o textual usa FTS5/BM25 sem acentos; a fusão RRF dá `score = Σ peso / (search.rrf_k + posição)` com `search.vector_weight` e `search.text_weight`. Sem embeddings (desligados, sem configuração, provedor com falha ou acima de 2 s), só o FTS e `mode: text`. Padrão `limit = search.default_limit` (máximo 50), só memórias ativas e fixadas (`include_archived` inclui as arquivadas). `exclude_ids` e `exclude_context` tiram o que já está no contexto. Leitura: não aceita `Idempotency-Key`. `tags` filtra pelas memórias com todas as tags (E lógico). Com webhooks, emite `memory.consumed` por canal com os ids entregues (guia `integracao-gestor`).",
         "operationId": "search_memories",
         "parameters": [
           {
@@ -9795,7 +9795,7 @@
           "Memories"
         ],
         "summary": "Mostra uma memória",
-        "description": "Texto, título, autoria (`app`, `agent`), `origin`, contadores, estados e `version`. Memória num canal fora do alcance do token ou do `Engramind-Channels` responde `MEMORY_NOT_FOUND`. Traz também `key`, `tags`, `title_locked`, `last_origin` e `similar`: com vetor do modelo vigente, até três memórias do mesmo canal por cosseno ≥ `memory.vector_similar_threshold` (`method: vector`, `duplicate` a partir de `memory.vector_duplicate_threshold`); sem vetor, o `similar` textual (`method: text`).",
+        "description": "Texto, título, autoria (`app`, `agent`), `origin`, contadores, estados e `version`. Memória num canal fora do alcance do token ou do `Engramind-Channels` responde `MEMORY_NOT_FOUND`. Traz também `key`, `tags`, `title_locked`, `last_origin` e `similar`: com vetor do modelo vigente, até três memórias do mesmo canal por cosseno ≥ `memory.vector_similar_threshold` (`method: vector`, `duplicate` a partir de `memory.vector_duplicate_threshold`); sem vetor, o `similar` textual (`method: text`). Com webhooks e token `agent`, emite `memory.consumed` com o id lido (guia `integracao-gestor`); tokens `admin` e `app` não emitem.",
         "operationId": "get_memory",
         "parameters": [
           {
