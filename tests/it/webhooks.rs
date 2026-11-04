@@ -167,15 +167,102 @@ async fn events_are_signed_and_reach_subscribers_and_admin_apps() {
     assert_eq!(net.app_a.deliveries().len(), 1);
     assert_eq!(net.gestor.deliveries().len(), 2);
 
-    // Configuração global: só os apps admin.
-    put_settings(&net.context, json!({ "memory.text_max": 3000 })).await;
+    // Configuração global fora de `get_consumer_settings`: só os apps admin.
+    put_settings(&net.context, json!({ "webhooks.max_attempts": 4 })).await;
     deliver(&net.context, Duration::ZERO).await;
     let last = net.gestor.deliveries().pop().expect("evento");
     assert_eq!(last.body["type"], "settings.updated");
     assert_eq!(last.body["channel"], Value::Null);
     assert_eq!(last.body["channel_version"], Value::Null);
-    assert_eq!(last.body["keys"], json!(["memory.text_max"]));
+    assert_eq!(last.body["keys"], json!(["webhooks.max_attempts"]));
     assert_eq!(net.app_a.deliveries().len(), 1);
+    assert_eq!(net.app_b.deliveries().len(), 1);
+}
+
+#[tokio::test]
+async fn global_consumer_settings_also_reach_apps_without_an_admin_token() {
+    let net = network().await;
+    let counts = |net: &Network| {
+        (
+            net.gestor.deliveries().len(),
+            net.app_a.deliveries().len(),
+            net.app_b.deliveries().len(),
+        )
+    };
+    let last_keys = |server: &WebhookServer| {
+        let last = server.deliveries().pop().expect("evento");
+        assert_eq!(last.body["type"], "settings.updated");
+        assert_eq!(last.body["channel"], Value::Null);
+        last.body["keys"].clone()
+    };
+
+    // Uma chave do consumidor: todo app com webhook, assine ou não algum canal.
+    put_settings(&net.context, json!({ "search.rrf_k": 10 })).await;
+    deliver(&net.context, Duration::ZERO).await;
+    assert_eq!(counts(&net), (1, 1, 1));
+    for server in [&net.gestor, &net.app_a, &net.app_b] {
+        assert_eq!(last_keys(server), json!(["search.rrf_k"]));
+    }
+    assert_ne!(
+        net.gestor.deliveries()[0].body["id"],
+        net.app_a.deliveries()[0].body["id"],
+        "o consumidor recebe um evento próprio"
+    );
+    assert!(net.app_a.deliveries()[0].signature_is_valid(SECRET));
+
+    // Mistura: o admin vê todas as chaves; o consumidor, só as dele.
+    put_settings(
+        &net.context,
+        json!({ "webhooks.max_attempts": 3, "search.text_weight": 0.5, "consolidation.stale_after_days": 30 }),
+    )
+    .await;
+    deliver(&net.context, Duration::ZERO).await;
+    assert_eq!(counts(&net), (2, 2, 2));
+    assert_eq!(
+        last_keys(&net.gestor),
+        json!([
+            "consolidation.stale_after_days",
+            "search.text_weight",
+            "webhooks.max_attempts"
+        ])
+    );
+    for server in [&net.app_a, &net.app_b] {
+        let keys = last_keys(server);
+        assert_eq!(
+            keys,
+            json!(["consolidation.stale_after_days", "search.text_weight"])
+        );
+    }
+
+    // Só chaves fora do consumidor, ou um segredo: o consumidor não recebe nada.
+    put_settings(&net.context, json!({ "webhooks.max_attempts": 5 })).await;
+    let (status, body) = net
+        .context
+        .call(
+            "PUT",
+            "/v1/secrets/redator.api_key",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "value": "sk-teste-0123456789" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    deliver(&net.context, Duration::ZERO).await;
+    assert_eq!(counts(&net), (4, 2, 2));
+
+    // Categoria nova muda `categories.list`, que o consumidor lê.
+    let (status, body) = net
+        .context
+        .call(
+            "POST",
+            "/v1/categories",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "key": "PLAYBOOKS", "label": "Playbooks", "priority": 10 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    deliver(&net.context, Duration::ZERO).await;
+    assert_eq!(counts(&net), (5, 3, 3));
+    assert_eq!(last_keys(&net.app_a), json!(["categories.list"]));
 }
 
 #[tokio::test]

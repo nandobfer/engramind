@@ -397,8 +397,46 @@ async fn app_tokens_create_channels_by_subscribing_and_manage_their_lifecycle() 
         (StatusCode::FORBIDDEN, Some("FOREIGN_APP"))
     );
 
-    // O app arquiva e restaura o canal que criou; outro app não.
+    // O app altera nome, descrição e prioridade do canal que criou; outro app e o agente não.
     let path = "/v1/channels/dndicas%2Fcampanha%2Fx%2Fprivado";
+    let version = channel["version"].as_i64().expect("version");
+    let patch =
+        json!({ "name": "Campanha X", "description": "Privado da campanha", "priority": 40 });
+    let (status, updated) = call(&context, &app, "PATCH", path, Some(patch.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(
+        (
+            updated["name"].clone(),
+            updated["description"].clone(),
+            updated["priority"].clone(),
+            updated["slug"].clone()
+        ),
+        (
+            json!("Campanha X"),
+            json!("Privado da campanha"),
+            json!(40),
+            json!("dndicas/campanha/x/privado")
+        )
+    );
+    assert!(updated["version"].as_i64().expect("version") > version);
+    let (status, response) = call(&context, &other, "PATCH", path, Some(patch.clone())).await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::FORBIDDEN, Some("FOREIGN_APP"))
+    );
+    let (status, response) = call(&context, &agent, "PATCH", path, Some(patch.clone())).await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::FORBIDDEN, Some("SCOPE_REQUIRED"))
+    );
+    let reader = app_token(&context, "dndicas", &["read"]).await;
+    let (status, response) = call(&context, &reader, "PATCH", path, Some(patch)).await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::FORBIDDEN, Some("SCOPE_REQUIRED"))
+    );
+
+    // O app arquiva e restaura o canal que criou; outro app não.
     let (status, archived) = call(&context, &app, "POST", &format!("{path}/archive"), None).await;
     assert_eq!(status, StatusCode::OK, "{archived}");
     assert!(archived["archived_at"].is_string());
@@ -423,6 +461,31 @@ async fn app_tokens_create_channels_by_subscribing_and_manage_their_lifecycle() 
         (StatusCode::CONFLICT, Some("CHANNEL_SHARED"))
     );
     assert_eq!(response["error"]["details"]["apps"], json!(["outro"]));
+    let (status, response) = call(
+        &context,
+        &app,
+        "PATCH",
+        path,
+        Some(json!({ "name": "Compartilhado" })),
+    )
+    .await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::CONFLICT, Some("CHANNEL_SHARED"))
+    );
+    assert_eq!(response["error"]["details"]["apps"], json!(["outro"]));
+    let (status, updated) = context
+        .call(
+            "PATCH",
+            path,
+            Some(ADMIN_TOKEN),
+            Some(json!({ "name": "Compartilhado" })),
+        )
+        .await;
+    assert_eq!(
+        (status, updated["name"].clone()),
+        (StatusCode::OK, json!("Compartilhado"))
+    );
     let (status, _) = context
         .call("POST", &format!("{path}/archive"), Some(ADMIN_TOKEN), None)
         .await;
@@ -435,6 +498,18 @@ async fn app_tokens_create_channels_by_subscribing_and_manage_their_lifecycle() 
         "POST",
         "/v1/channels/dndicas%2Fadmin/archive",
         None,
+    )
+    .await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::FORBIDDEN, Some("FOREIGN_APP"))
+    );
+    let (status, response) = call(
+        &context,
+        &app,
+        "PATCH",
+        "/v1/channels/dndicas%2Fadmin",
+        Some(json!({ "name": "Meu" })),
     )
     .await;
     assert_eq!(
@@ -611,6 +686,11 @@ async fn consumer_settings_show_limits_and_the_effective_values_of_writable_chan
         assert_eq!(body["memory"], json!({ "text_min": 3, "text_max": 4000 }));
         assert_eq!(body["limits"]["max_batch"], 100);
         assert_eq!(body["context"]["default_format"], "tagged");
+        assert_eq!(body["consolidation"], json!({ "stale_after_days": 90 }));
+        assert_eq!(
+            body["search"],
+            json!({ "vector_weight": 1.0, "text_weight": 1.0, "rrf_k": 60 })
+        );
         let channels = body["channels"].as_array().expect("channels");
         let slugs: Vec<&str> = channels
             .iter()
@@ -636,6 +716,130 @@ async fn consumer_settings_show_limits_and_the_effective_values_of_writable_chan
     // `get_settings` continua admin.
     let (status, _) = call(&context, &agent, "GET", "/v1/settings", None).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = call(&context, &app, "GET", "/v1/settings", None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // Desuso e pesos da busca: os valores globais efetivos, para qualquer token com `read`.
+    let (status, body) = context
+        .call("PUT", "/v1/settings", Some(ADMIN_TOKEN), Some(json!({ "consolidation.stale_after_days": 30, "search.vector_weight": 2, "search.text_weight": 0.5, "search.rrf_k": 10 })))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for token in [&agent, &app, &ADMIN_TOKEN.to_owned()] {
+        let (status, body) = call(&context, token, "GET", "/v1/consumer-settings", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["consolidation"]["stale_after_days"], 30);
+        assert_eq!(
+            body["search"],
+            json!({ "vector_weight": 2.0, "text_weight": 0.5, "rrf_k": 10 })
+        );
+    }
+    // MCP e CLI repassam o mesmo objeto.
+    let result = context
+        .call_tool(&app, "get_consumer_settings", json!({}))
+        .await;
+    let structured = &result["result"]["structuredContent"];
+    assert_eq!(
+        structured["consolidation"]["stale_after_days"], 30,
+        "{result}"
+    );
+    assert_eq!(structured["search"]["rrf_k"], 10);
+}
+
+#[tokio::test]
+async fn app_tokens_read_only_their_own_app_with_the_webhook_state() {
+    let context = TestContext::new().await;
+    let own = context.create_app("dndicas").await;
+    context.create_app("outro").await;
+    context.create_agent("dndicas", "maddox").await;
+    let app = app_token(&context, "dndicas", &["read", "write"]).await;
+    let reader = app_token(&context, "dndicas", &["read"]).await;
+    let agent = context
+        .issue(
+            "dndicas",
+            Some("dndicas/maddox"),
+            "agent",
+            &["read", "write"],
+        )
+        .await;
+    let secret = "w".repeat(40);
+
+    // Sem webhook: `webhook: null`.
+    let (status, body) = call(&context, &reader, "GET", "/v1/apps/dndicas", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["slug"], "dndicas");
+    assert_eq!(body["webhook"], Value::Null);
+
+    let (status, _) = call(
+        &context,
+        &app,
+        "PUT",
+        "/v1/apps/dndicas/webhook",
+        Some(json!({ "url": "https://dndicas.local/eventos", "secret": secret })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    // Pelo slug e pelo id: a URL e o estado do segredo, nunca o valor.
+    let id = own["id"].as_str().expect("id");
+    for target in ["dndicas", id] {
+        let (status, body) = call(
+            &context,
+            &reader,
+            "GET",
+            &format!("/v1/apps/{target}"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["webhook"]["url"], "https://dndicas.local/eventos");
+        assert_eq!(body["webhook"]["secret"]["configured"], true);
+        assert!(body["webhook"]["secret"]["updated_at"].is_string());
+        assert!(!body.to_string().contains(&secret), "{body}");
+    }
+
+    // Outro app: 403 FOREIGN_APP; inexistente: 404; agente: 403 SCOPE_REQUIRED.
+    let (status, response) = call(&context, &app, "GET", "/v1/apps/outro", None).await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::FORBIDDEN, Some("FOREIGN_APP"))
+    );
+    let (status, response) = call(&context, &app, "GET", "/v1/apps/nao-existe", None).await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::NOT_FOUND, Some("APP_NOT_FOUND"))
+    );
+    let (status, response) = call(&context, &agent, "GET", "/v1/apps/dndicas", None).await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::FORBIDDEN, Some("SCOPE_REQUIRED"))
+    );
+    // O admin lê qualquer app; `list_apps` continua só do admin.
+    let (status, body) = call(&context, ADMIN_TOKEN, "GET", "/v1/apps/outro", None).await;
+    assert_eq!(
+        (status, body["slug"].clone()),
+        (StatusCode::OK, json!("outro"))
+    );
+    let (status, response) = call(&context, &app, "GET", "/v1/apps", None).await;
+    assert_eq!(
+        (status, code(&response)),
+        (StatusCode::FORBIDDEN, Some("SCOPE_REQUIRED"))
+    );
+
+    // MCP: as mesmas regras.
+    let result = context
+        .call_tool(&reader, "get_app", json!({ "app": "dndicas" }))
+        .await;
+    assert_eq!(result["result"]["isError"], false, "{result}");
+    let structured = &result["result"]["structuredContent"];
+    assert_eq!(structured["webhook"]["secret"]["configured"], true);
+    assert!(!result.to_string().contains(&secret));
+    let result = context
+        .call_tool(&reader, "get_app", json!({ "app": "outro" }))
+        .await;
+    assert_eq!(result["result"]["isError"], true, "{result}");
+    assert_eq!(
+        result["result"]["structuredContent"]["error"]["code"],
+        "FOREIGN_APP"
+    );
 }
 
 #[tokio::test]

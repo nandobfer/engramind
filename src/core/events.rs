@@ -7,7 +7,11 @@ use std::sync::{Arc, RwLock};
 use serde_json::{Map, Value, json};
 
 use super::{
-    Core, access::subscription_pattern, ids, model::WebhookDirectory, settings::WEBHOOKS_ENABLED,
+    Core,
+    access::subscription_pattern,
+    ids,
+    model::WebhookDirectory,
+    settings::{CONSUMER_SETTINGS_KEYS, WEBHOOKS_ENABLED},
 };
 use crate::{error::ApiError, store::Store};
 
@@ -118,6 +122,9 @@ pub enum Audience<'a> {
     Admins,
     /// O próprio app e os apps admin (identidades do app).
     App(&'a str),
+    /// Os apps sem token admin válido (configuração global que aparece em
+    /// `get_consumer_settings`, decisão 0035). Os apps admin recebem o evento completo à parte.
+    Consumers,
 }
 
 /// Cache do diretório na mesma geração da rede (`network_changed()` invalida os dois).
@@ -162,6 +169,16 @@ pub fn recipients(
         Audience::Agent(agent_id) => apps.extend(agent_app(agent_id)),
         Audience::App(app_id) => apps.push(app_id.to_owned()),
         Audience::Admins => {}
+        Audience::Consumers => {
+            let admins = std::mem::take(&mut apps);
+            apps.extend(
+                directory
+                    .apps
+                    .iter()
+                    .filter(|app| !admins.contains(&app.id))
+                    .map(|app| app.id.clone()),
+            );
+        }
     }
     apps.retain(|app_id| reachable(app_id));
     apps.sort();
@@ -318,7 +335,8 @@ impl<S: Store> Core<S> {
         }
     }
 
-    /// `settings.updated` (Q-004): global para os apps admin; por canal, para quem o alcança.
+    /// `settings.updated` (Q-004): global para os apps admin, mais um evento só com as chaves de
+    /// `get_consumer_settings` para os demais apps (decisão 0035); por canal, para quem o alcança.
     pub(crate) async fn settings_event(
         &self,
         channel: Option<&str>,
@@ -330,11 +348,26 @@ impl<S: Store> Core<S> {
             Some(slug) => Audience::Channel(slug),
             None => Audience::Admins,
         };
-        Ok(self
+        let mut drafts: Vec<EventDraft> = self
             .event(EventType::SettingsUpdated, channel, audience, extra)
             .await?
             .into_iter()
-            .collect())
+            .collect();
+        if channel.is_none() {
+            let consumer: Vec<&String> = keys
+                .iter()
+                .filter(|key| CONSUMER_SETTINGS_KEYS.contains(&key.as_str()))
+                .collect();
+            if !consumer.is_empty() {
+                let mut extra = Map::new();
+                extra.insert("keys".to_owned(), json!(consumer));
+                drafts.extend(
+                    self.event(EventType::SettingsUpdated, None, Audience::Consumers, extra)
+                        .await?,
+                );
+            }
+        }
+        Ok(drafts)
     }
 
     /// Evento de um canal (pelo slug), para os apps que o alcançam e os apps admin.
@@ -462,6 +495,20 @@ mod tests {
             "2025-01-01T00:00:00.000Z",
         );
         assert_eq!(got, ["app_e", "app_f"], "token admin ainda valido");
+    }
+
+    #[test]
+    fn consumer_audience_is_every_reachable_app_without_a_valid_admin_token() {
+        let got = recipients(
+            &directory(),
+            &[],
+            Audience::Consumers,
+            "2025-01-01T00:00:00.000Z",
+        );
+        assert_eq!(got, ["app_a", "app_b"]);
+        // Com o token admin de app_f expirado, app_f passa a receber como consumidor.
+        let got = recipients(&directory(), &[], Audience::Consumers, NOW);
+        assert_eq!(got, ["app_a", "app_b", "app_f"]);
     }
 
     #[test]

@@ -55,9 +55,10 @@ use crate::{
         search::{SearchHit, SearchMemoriesBody, SearchMode, SearchResults},
         secrets::SetSecretBody,
         settings::{
-            Category, ChannelSettingView, ChannelSettingsView, ConsumerChannel, ConsumerContext,
-            ConsumerLimits, ConsumerMemory, ConsumerSettings, SettingView, SettingsView,
-            UpdateChannelSettingsBody, UpdateSettingsBody,
+            Category, ChannelSettingView, ChannelSettingsView, ConsumerChannel,
+            ConsumerConsolidation, ConsumerContext, ConsumerLimits, ConsumerMemory, ConsumerSearch,
+            ConsumerSettings, SettingView, SettingsView, UpdateChannelSettingsBody,
+            UpdateSettingsBody,
         },
         status::{
             BackupStatus, DatabaseStatus, QueueStatus, RedatorStatus, StatusView, WebhooksStatus,
@@ -168,7 +169,7 @@ use crate::{
         Subscription, SubscriptionWrite, SubscriptionList, SubscribeBody, UpdateSubscriptionBody,
         SettingView, SettingsView, UpdateSettingsBody, Category,
         CategoryList, CategoryWrite, CreateCategoryBody, ConsumerSettings, ConsumerMemory,
-        ConsumerLimits, ConsumerContext, ConsumerChannel, UpdateAppWebhookBody, FocusMode,
+        ConsumerLimits, ConsumerContext, ConsumerConsolidation, ConsumerSearch, ConsumerChannel, UpdateAppWebhookBody, FocusMode,
         ChannelSettingView, ChannelSettingsView, UpdateChannelSettingsBody,
         MemoryStatus, TitleState, EmbeddingState, Author, Origin, Memory, MemoryTitle,
         SimilarMemory, SimilarMethod, MemoryDetail, MemoryWrite, MemoryRevision, MemoryItem, MemoryList, MemoryHistory, Fields,

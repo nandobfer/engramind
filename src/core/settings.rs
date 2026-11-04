@@ -213,6 +213,25 @@ pub const EMBEDDING_IDENTITY_KEYS: &[&str] = &[
 /// Provedores do Redator (`redator.provider`).
 pub const REDATOR_PROVIDERS: &[&str] = &["openai_compatible", "anthropic", "gemini"];
 
+/// Chaves globais que aparecem em `get_consumer_settings` (decisão 0035): o `settings.updated`
+/// global que muda alguma delas vai também aos apps sem token admin, só com essas chaves. Um
+/// campo novo de `ConsumerSettings` vindo de uma chave global entra aqui.
+pub const CONSUMER_SETTINGS_KEYS: &[&str] = &[
+    TEXT_MIN,
+    TEXT_MAX,
+    MAX_BATCH,
+    BUDGET_TOKENS,
+    TITLES_BUDGET_TOKENS,
+    DEFAULT_FORMAT,
+    TEXT_MAX_CHARS,
+    CATEGORIES,
+    CATEGORY_PRIORITIES,
+    CONSOLIDATION_STALE_AFTER_DAYS,
+    SEARCH_VECTOR_WEIGHT,
+    SEARCH_TEXT_WEIGHT,
+    SEARCH_RRF_K,
+];
+
 /// Chaves que mudam o bloco do contexto (entram no hash da `version`, 005 Q-008).
 pub const CONTEXT_RENDER_KEYS: &[&str] = &[
     BUDGET_TOKENS,
@@ -1597,6 +1616,8 @@ pub struct ConsumerSettings {
     pub memory: ConsumerMemory,
     pub limits: ConsumerLimits,
     pub context: ConsumerContext,
+    pub consolidation: ConsumerConsolidation,
+    pub search: ConsumerSearch,
     /// Canais ativos em que o token escreve (token de app: a união dos agentes ativos), com os
     /// valores efetivos (sobreposição do canal aplicada), por slug.
     pub channels: Vec<ConsumerChannel>,
@@ -1627,6 +1648,25 @@ pub struct ConsumerContext {
     /// 0 = sem corte.
     #[schema(example = 0)]
     pub text_max_chars: u64,
+}
+
+/// Desuso global (`consolidation.stale_after_days`, sem sobreposição por canal).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerConsolidation {
+    /// Dias sem uso para uma memória ativa virar `stale_candidate`.
+    #[schema(example = 90)]
+    pub stale_after_days: u64,
+}
+
+/// Pesos globais da fusão RRF de `search_memories` (`search.*`, sem sobreposição por canal).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
+pub struct ConsumerSearch {
+    #[schema(example = 1.0)]
+    pub vector_weight: f64,
+    #[schema(example = 1.0)]
+    pub text_weight: f64,
+    #[schema(example = 60)]
+    pub rrf_k: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -1692,6 +1732,14 @@ impl<S: Store> Core<S> {
                 titles_budget_tokens: u64::from(snapshot.budget(TITLES_BUDGET_TOKENS)),
                 default_format: snapshot.default_format(),
                 text_max_chars: snapshot.text_max_chars(None) as u64,
+            },
+            consolidation: ConsumerConsolidation {
+                stale_after_days: whole(snapshot.whole(CONSOLIDATION_STALE_AFTER_DAYS).max(1)),
+            },
+            search: ConsumerSearch {
+                vector_weight: snapshot.number(SEARCH_VECTOR_WEIGHT),
+                text_weight: snapshot.number(SEARCH_TEXT_WEIGHT),
+                rrf_k: whole(snapshot.whole(SEARCH_RRF_K)),
             },
             channels,
         })
@@ -1825,6 +1873,14 @@ mod tests {
     fn every_default_is_valid() {
         for spec in SETTINGS {
             validate(spec, &default_value(spec)).expect(spec.key);
+        }
+    }
+
+    #[test]
+    fn consumer_keys_are_global_catalog_keys() {
+        for key in CONSUMER_SETTINGS_KEYS {
+            let spec = spec(key).unwrap_or_else(|| panic!("{key} fora do catálogo"));
+            assert_ne!(spec.kind, SettingType::Secret, "{key}");
         }
     }
 

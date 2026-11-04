@@ -8,7 +8,7 @@ As memórias pertencem a **canais**. Um agente só alcança um canal quando o **
 - O slug é único e **imutável**. `update_channel` muda só `name`, `description` e `priority`.
 - `priority` (de -1000 a 1000, padrão 0) é a prioridade padrão na ordem do contexto.
 - `version` cresce a cada mudança do canal.
-- `create_channel` e `update_channel` são do token `admin`; um token `agent` ou `app` recebe `403 SCOPE_REQUIRED`. Fora isso, um canal só nasce quando o admin ou um token `app` assina um alvo exato que ainda não existe (veja Assinaturas). Um slug inexistente nas demais operações recebe `404 CHANNEL_NOT_FOUND`.
+- `create_channel` é do token `admin`; um token `agent` ou `app` recebe `403 SCOPE_REQUIRED`. `update_channel` é do admin e do token `app` nos canais que ele criou ao assinar, com o mesmo critério de `archive_channel` (`403 FOREIGN_APP` nos demais, `409 CHANNEL_SHARED` se um agente ativo de outro app o assina); o token `agent` recebe `403 SCOPE_REQUIRED`. Fora isso, um canal só nasce quando o admin ou um token `app` assina um alvo exato que ainda não existe (veja Assinaturas). Um slug inexistente nas demais operações recebe `404 CHANNEL_NOT_FOUND`.
 - `created_by` é o slug do app cujo token de app criou o canal ao assinar (`null` para canais do admin); é ciclo de vida, não dono: o canal continua da rede.
 - O token `app` vê em `list_channels` e `get_channel` todos os canais (para poder assinar), com `reach` só onde os agentes dele chegam.
 - No caminho REST, `{channel}` aceita o id (`ch_…`) ou o slug com `/` codificada (`/v1/channels/eng%2Fglobal`). A CLI codifica sozinha.

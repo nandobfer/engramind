@@ -12,7 +12,7 @@
 ## Operações
 
 - Qualquer token·read: `list_channels`, `get_channel`, `channel_stats` e `list_subscriptions` (tag `Channels`).
-- admin·write: `create_channel`, `update_channel`, `archive_channel`, `restore_channel`, `subscribe`, `update_subscription` e `unsubscribe` (tag `Network`).
+- admin·write: `create_channel`, `update_channel`, `archive_channel`, `restore_channel`, `subscribe`, `update_subscription` e `unsubscribe` (tag `Network`). O token `app` faz `update_channel`, `archive_channel` e `restore_channel` só nos canais que criou, pelo mesmo `ensure_app_lifecycle` (`403 FOREIGN_APP`, `409 CHANNEL_SHARED`; decisões 0033 e 0035), e `subscribe`/`update_subscription`/`unsubscribe` dos próprios agentes.
 - admin·delete: `delete_channel`.
 
 Guia: `canais-e-assinaturas`.

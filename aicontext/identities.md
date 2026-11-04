@@ -12,7 +12,7 @@
 
 ## Operações
 
-`whoami` (qualquer token); `list_apps`, `get_app`, `list_agents`, `get_agent`, `list_tokens` (admin·read); `create_app`, `update_app`, `create_agent`, `update_agent`, `issue_token`, `update_token` (admin·write); `delete_app`, `delete_agent`, `revoke_token` (admin·delete). Tags `Authentication` e `Identities`; guia `tokens-e-escopos`.
+`whoami` (qualquer token); `list_apps` (admin·read); `get_app`, `list_agents`, `get_agent`, `list_tokens` (admin·read ou app·read no próprio app; `get_app` desde 0.13.0, decisão 0035); `create_app`, `update_app`, `create_agent`, `update_agent`, `issue_token`, `update_token` (admin·write); `delete_app`, `delete_agent`, `revoke_token` (admin·delete). Tags `Authentication` e `Identities`; guia `tokens-e-escopos`.
 
 ## Invariantes
 

@@ -154,7 +154,7 @@ fn rest_call(name: &str) -> (&'static str, String, Option<Value>) {
         ),
         "update_channel" => (
             "PATCH",
-            "/v1/channels/matrix%2Fcanal".into(),
+            "/v1/channels/nao%2Fexiste".into(),
             Some(json!({ "name": "Canal" })),
         ),
         "archive_channel" => ("POST", "/v1/channels/nao%2Fexiste/archive".into(), None),
@@ -294,7 +294,7 @@ fn mcp_arguments(name: &str) -> Value {
         "revoke_token" => json!({ "token": "tk_ffffffff" }),
         "get_channel" => json!({ "channel": "matrix/canal" }),
         "create_channel" => json!({ "slug": format!("m/c-{n}"), "name": "C" }),
-        "update_channel" => json!({ "channel": "matrix/canal", "name": "Canal" }),
+        "update_channel" => json!({ "channel": "nao/existe", "name": "Canal" }),
         "archive_channel" | "restore_channel" | "delete_channel" => {
             json!({ "channel": "nao/existe" })
         }
@@ -434,7 +434,7 @@ fn cli_arguments(name: &str) -> Vec<String> {
         "update_channel" => vec![
             "channels".into(),
             "update".into(),
-            "matrix/canal".into(),
+            "nao/existe".into(),
             "--name".into(),
             "Canal".into(),
         ],

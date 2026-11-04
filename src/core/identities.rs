@@ -517,7 +517,9 @@ impl<S: Store> Core<S> {
 
     pub async fn get_app(&self, principal: &Principal, app: &str) -> Result<App, ApiError> {
         self.authorize(principal, "get_app")?;
-        self.find_app(app).await
+        let found = self.find_app(app).await?;
+        ensure_own_app(principal, &found.reference())?;
+        Ok(found)
     }
 
     pub async fn create_app(
