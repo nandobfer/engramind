@@ -14,6 +14,7 @@
 
 - Toda mutação de memória, canal, assinatura, configuração e segredo monta os eventos no `core` (dentro do closure de `Core::mutate`) e os coloca em `context.events`; o `Store` só chama `journal::emit` no caminho que mudou algo. Operação de escrita nova: gere o evento ou entre na lista `WITHOUT_EVENTS` de `tests/it/webhooks.rs` (e em `contracts.md` da 008).
 - Destinatários só por `events::recipients` (mesma regra de `subscription_pattern`), nunca em SQL.
+- `settings.updated` global (0.13.0, decisão 0035): `settings_event(None, keys)` devolve o evento dos apps admin (`Audience::Admins`, todas as chaves) e, se alguma chave está em `settings::CONSUMER_SETTINGS_KEYS`, um segundo evento (outro `id`) para `Audience::Consumers` (apps alcançáveis sem token admin válido) com `keys` filtrado. Nunca mande nome de segredo ou de provedor ao consumidor.
 - O payload nunca tem texto, título nem valor de configuração; `last_error` do job só tem status ou classe da falha; logs mostram o host, nunca a URL completa.
 - A entrega lê URL e segredo na hora; app removido, desativado ou sem URL → `done`/`skipped`.
 - `import_memories` exige `Idempotency-Key` (`IDEMPOTENCY_KEY_REQUIRED`), valida tudo antes de gravar e gera um único `memory.created`.

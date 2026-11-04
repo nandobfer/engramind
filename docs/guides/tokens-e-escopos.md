@@ -28,9 +28,9 @@ O token `app` vale só dentro do próprio app. Alvo de outro app → `403 FOREIG
 |---|---|
 | `list_agents`, `get_agent`, `create_agent`, `update_agent` (inclusive `disabled`), `delete_agent` do próprio app | Agentes, tokens ou assinaturas de outro app |
 | `issue_token` só `kind: agent`, para agente do próprio app, com escopos ⊆ os do token de app; `list_tokens`, `update_token`, `revoke_token` e `rotate_token` desses tokens | Emitir token `admin` ou `app`; mexer no próprio token ou em outro token de app |
-| `subscribe`, `update_subscription`, `unsubscribe` para os próprios agentes (o alvo exato inexistente cria o canal) | `create_app`, `update_app`, `delete_app`, `create_channel`, `update_channel`, `delete_channel` |
-| `archive_channel` e `restore_channel` dos canais que ele criou ao assinar (`409 CHANNEL_SHARED` se outro app os assina) | Arquivar canal criado pelo admin ou por outro app |
-| `import_memories` nos canais em que os agentes ativos dele escrevem; `update_app_webhook` do próprio app | `get_settings`, `update_settings`, segredos, consolidação, status, auditoria, jobs e `/metrics` |
+| `subscribe`, `update_subscription`, `unsubscribe` para os próprios agentes (o alvo exato inexistente cria o canal) | `list_apps`, `create_app`, `update_app`, `delete_app`, `create_channel`, `delete_channel` |
+| `update_channel` (nome, descrição e prioridade), `archive_channel` e `restore_channel` dos canais que ele criou ao assinar (`409 CHANNEL_SHARED` se outro app os assina) | Alterar ou arquivar canal criado pelo admin ou por outro app |
+| `import_memories` nos canais em que os agentes ativos dele escrevem; `get_app` e `update_app_webhook` do próprio app (o segredo nunca volta, só `configured` e `updated_at`) | `get_settings`, `update_settings`, segredos, consolidação, status, auditoria, jobs e `/metrics` |
 | Ler canais (todos, para assinar; `reach` onde os agentes dele chegam), contexto, memórias, busca, dicas, categorias e `get_consumer_settings` | Criar, editar, arquivar, mover ou excluir uma memória individual (é do token `agent`) |
 
 O alcance do token de app é a união das melhores assinaturas dos agentes **ativos** do app: no canal, os escopos são os do token ∩ a união dos acessos, o modo é o mais amplo (`inject` > `search` > `manage`) e a prioridade, a maior.

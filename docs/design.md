@@ -201,10 +201,12 @@ consumidor ainda pode filtrar mais (ex.: expor só `search_memories`).
 ### Token de app (0.11.0)
 
 Implementado: `kind: app`, vinculado a um app e nunca a um agente, emitido só pelo admin. Gere os
-agentes, os tokens de agente e as assinaturas do próprio app, cria canais ao assinar, arquiva e
-restaura os canais que criou, importa memórias nos canais dos seus agentes e grava o próprio webhook.
-Não escreve memórias individuais nem alcança configurações, segredos, status e auditoria. Regras,
-matriz e alcance: decisões `0028` e `0033` e o guia `tokens-e-escopos`.
+agentes, os tokens de agente e as assinaturas do próprio app, cria canais ao assinar, altera
+(`update_channel`), arquiva e restaura os canais que criou, importa memórias nos canais dos seus
+agentes e grava e lê o próprio webhook (`update_app_webhook`, `get_app`). Não escreve memórias
+individuais nem alcança configurações (`get_consumer_settings` traz só o que o consumidor exibe,
+inclusive `consolidation.stale_after_days` e os pesos `search.*`), segredos, status e auditoria.
+Regras, matriz e alcance: decisões `0028`, `0033` e `0035` e o guia `tokens-e-escopos`.
 
 ## 5. Canais e assinaturas
 
@@ -673,12 +675,14 @@ Cada operação existe nas três vias com o mesmo nome base, os mesmos parâmetr
 | | `create_memory`, `update_memory`, `archive_memory`, `restore_memory`, `pin_memory`, `unpin_memory`, `move_memory`, `revert_memory`, `mark_verified` | agent·write |
 | | `delete_memory` | agent·delete |
 | **Canais** | `list_channels`, `get_channel` (agent: só os alcançados), `channel_stats` | agent·read |
-| | `create_channel`, `update_channel`, `archive_channel`, `restore_channel` | admin·write |
+| | `create_channel` | admin·write |
+| | `update_channel`, `archive_channel`, `restore_channel` | admin·write ou app·write (só os canais que o app criou, decisões 0033 e 0035) |
 | | `delete_channel` | admin·delete |
 | **Assinaturas** | `list_subscriptions` (agent: as próprias) | agent·read |
 | | `subscribe`, `update_subscription`, `unsubscribe` | admin·write |
 | **Identidades** | `whoami` | qualquer token |
-| | `list_apps`, `get_app`, `list_agents`, `get_agent`, `list_tokens` | admin·read |
+| | `list_apps` | admin·read |
+| | `get_app`, `list_agents`, `get_agent`, `list_tokens` | admin·read ou app·read (só o próprio app) |
 | | `create_app`, `update_app`, `create_agent`, `update_agent`, `issue_token`, `update_token` | admin·write |
 | | `revoke_token`, `delete_app`, `delete_agent` | admin·delete |
 | **Configurações** | `get_settings`, `get_channel_settings` | admin·read |
@@ -884,8 +888,9 @@ TZ=America/Sao_Paulo
   e `agent`. Não muda versão nem invalida o contexto; os jobs são gravados numa transação curta da
   própria leitura, e uma falha não derruba a leitura.
 - Destinatários calculados no enfileiramento, um job `webhook` por app na transação da mutação
-  (decisão 0023); `subscription.updated` vai ao app do agente; `settings.updated` global, só aos apps
-  admin. Mutações de apps, agentes e tokens não geram eventos.
+  (decisão 0023); `subscription.updated` vai ao app do agente; `settings.updated` global vai aos apps
+  admin e, quando muda uma chave de `get_consumer_settings` (`settings::CONSUMER_SETTINGS_KEYS`),
+  também aos demais apps num evento próprio só com essas chaves (decisão 0035). Mutações de apps, agentes e tokens não geram eventos.
 - O envio é feito com retentativas e backoff próprio (10 s × 4ⁿ, teto de 1 h) até
   `webhooks.max_attempts`, e o `id` permite descartar repetições; a ordem entre retentativas não é
   garantida (desempate por `channel_version`). App removido, desativado ou sem URL na entrega:

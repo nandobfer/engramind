@@ -51,7 +51,7 @@ Todo erro usa o envelope único:
 | `CATEGORY_CONFLICT` | 409 | 6 | `create_category` com uma `key` existente e `label` ou `priority` diferentes; `details.existing` traz a categoria gravada. |
 | `CATEGORY_LIMIT_REACHED` | 409 | 6 | `categories.list` já tem o máximo de categorias; `details.max` traz o limite. |
 | `MEMORY_KEY_EXISTS` | 409 | 6 | Já existe uma memória com essa `key` no canal e `upsert` não foi pedido; `details.existing_id` aponta para ela. |
-| `CHANNEL_SHARED` | 409 | 6 | O token de app não arquiva nem restaura um canal que agentes ativos de outro app assinam; `details.apps` traz os slugs. |
+| `CHANNEL_SHARED` | 409 | 6 | O token de app não altera, arquiva nem restaura um canal que agentes ativos de outro app assinam; `details.apps` traz os slugs. |
 | `IDEMPOTENCY_KEY_CONFLICT` | 409 | 6 | A mesma `Idempotency-Key` já foi usada com outra operação ou outro corpo. |
 | `LAST_ADMIN_TOKEN` | 409 | 6 | A mudança deixaria a rede sem nenhum token `admin` ativo com `write`. |
 | `SETTING_UNKNOWN` | 400 | 2 | Chave de configuração desconhecida; `details.valid` lista as chaves. |
@@ -94,7 +94,7 @@ Todo erro usa o envelope único:
 - `403 FOREIGN_APP`: o token de app só opera o próprio app, os agentes e tokens de agente dele e os canais que criou; para outro app, use um token admin.
 - `409 MEMORY_KEY_EXISTS`: repita com `upsert: true` para editar a memória de `details.existing_id`, ou use outra `key`.
 - `409 CATEGORY_CONFLICT`: a categoria já existe com outro `label` ou `priority`; leia com `list_categories` e use a existente (editar é do admin, por `update_settings`).
-- `409 CHANNEL_SHARED`: outro app usa o canal; peça ao admin para arquivá-lo.
+- `409 CHANNEL_SHARED`: outro app usa o canal; peça ao admin para alterá-lo ou arquivá-lo.
 - `409 IDEMPOTENCY_KEY_CONFLICT`: a chave já foi usada com outro corpo; gere uma chave nova para a nova intenção.
 - `409 LAST_ADMIN_TOKEN`: emita outro token `admin` com `write` antes de revogar, desativar ou excluir o último.
 - `400 SETTING_IS_SECRET`: grave a chave com `set_secret`, nunca por `update_settings`.

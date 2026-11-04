@@ -19,7 +19,7 @@ Os destinatários são calculados quando a mutação acontece:
 
 - apps com um agente ativo cuja assinatura (exata ou por prefixo, em qualquer modo) alcança o canal afetado;
 - apps com um token `admin` ativo (não revogado e não expirado) recebem todos os eventos;
-- `subscription.updated` vai ao app do agente da assinatura e aos apps admin; `settings.updated` global, só aos apps admin; `identities.updated` ao próprio app (mesmo que o webhook acabe de ser gravado) e aos apps admin;
+- `subscription.updated` vai ao app do agente da assinatura e aos apps admin; `settings.updated` global vai aos apps admin com todas as chaves e, quando muda alguma chave que `get_consumer_settings` mostra, também aos demais apps num evento próprio (outro `id`) com `keys` limitado a essas chaves (um segredo nunca chega a eles); `identities.updated` ao próprio app (mesmo que o webhook acabe de ser gravado) e aos apps admin;
 - app desativado ou sem URL e segredo não recebe nada.
 
 Com `webhooks.enabled = false`, nenhuma mutação nem leitura enfileira eventos. Mudanças de apps, agentes e tokens não geram eventos: quem as faz é o próprio gestor.
@@ -41,7 +41,7 @@ O corpo nunca tem textos, títulos nem valores de configuração, só identifica
 | `memory.deleted` | `delete_memory` | — |
 | `channel.updated` | `create_channel`, `update_channel`, `archive_channel`, `restore_channel`, `delete_channel` | — |
 | `subscription.updated` | `subscribe`, `update_subscription`, `unsubscribe` | `subscription`, `agent` e `target` (canal ou prefixo); `channel` só com alvo exato |
-| `settings.updated` | `update_settings` e `set_secret` (`channel: null`); `update_channel_settings` (com o canal) | `keys`: as chaves alteradas |
+| `settings.updated` | `update_settings`, `set_secret` e `create_category` (`channel: null`); `update_channel_settings` (com o canal) | `keys`: as chaves alteradas (para app sem token admin, só as de `get_consumer_settings`) |
 | `identities.updated` | `update_app_webhook` (`channel: null`) | `app`: o slug do app cujo webhook mudou |
 | `memory.consumed` | `get_context` (inclusive o `304` com o bloco em cache), `search_memories`, `get_hints` e `get_memory` (este só com token `agent`) que entregam memórias (um evento por canal) | `consumption`, `operation`, `app`, `agent`; no `get_context`, também `title_ids` e `context_version` (seção Consumo) |
 

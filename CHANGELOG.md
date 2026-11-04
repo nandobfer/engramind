@@ -2,6 +2,22 @@
 
 Todas as mudanças relevantes do Engramind. Formato baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/); versões em [SemVer](https://semver.org/lang/pt-BR/).
 
+## [0.13.0] - 2026-11-04
+
+Modo app do consumidor: configurações exibidas, o próprio app e os canais criados (decisão 0035).
+
+### Adicionado
+
+- `get_consumer_settings` traz `consolidation.stale_after_days` e `search.vector_weight`, `search.text_weight` e `search.rrf_k`, com os valores globais efetivos (schemas `ConsumerConsolidation` e `ConsumerSearch`).
+- Token `app` lê o próprio app com `get_app` (REST, MCP e `apps get`), com a URL do webhook e `secret.configured`/`updated_at`, nunca o segredo; outro app → `403 FOREIGN_APP`.
+- Token `app` altera nome, descrição e prioridade dos canais que criou ao assinar com `update_channel` (REST, MCP e `channels update`), com o critério de `archive_channel`: `403 FOREIGN_APP` nos demais e `409 CHANNEL_SHARED` quando um agente ativo de outro app assina o canal.
+- O `settings.updated` global que muda uma chave de `get_consumer_settings` também chega aos apps sem token admin, num evento próprio com `keys` limitado a essas chaves (`settings::CONSUMER_SETTINGS_KEYS`); `create_category` passa a avisá-los.
+
+### Alterado
+
+- Mensagem de `CHANNEL_SHARED` cobre a alteração do canal; `docs/openapi.json` documenta `FOREIGN_APP` em `get_app` e `update_channel` e `CHANNEL_SHARED` em `update_channel`, `archive_channel` e `restore_channel`.
+- Guias `integracao-consumidor`, `tokens-e-escopos`, `canais-e-assinaturas`, `integracao-gestor` e `erros`, desenho, `aicontext` e ajuda da CLI atualizados.
+
 ## [0.12.0] - 2026-11-04
 
 Evento de consumo das memórias (decisão 0034).
