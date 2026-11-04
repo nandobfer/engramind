@@ -43,7 +43,7 @@ O corpo nunca tem textos, títulos nem valores de configuração, só identifica
 | `subscription.updated` | `subscribe`, `update_subscription`, `unsubscribe` | `subscription`, `agent` e `target` (canal ou prefixo); `channel` só com alvo exato |
 | `settings.updated` | `update_settings` e `set_secret` (`channel: null`); `update_channel_settings` (com o canal) | `keys`: as chaves alteradas |
 | `identities.updated` | `update_app_webhook` (`channel: null`) | `app`: o slug do app cujo webhook mudou |
-| `memory.consumed` | `get_context` (inclusive o `304` com o bloco em cache), `search_memories`, `get_hints` e `get_memory` que entregam memórias (um evento por canal) | `consumption`, `operation`, `app`, `agent`; no `get_context`, também `title_ids` e `context_version` (seção Consumo) |
+| `memory.consumed` | `get_context` (inclusive o `304` com o bloco em cache), `search_memories`, `get_hints` e `get_memory` (este só com token `agent`) que entregam memórias (um evento por canal) | `consumption`, `operation`, `app`, `agent`; no `get_context`, também `title_ids` e `context_version` (seção Consumo) |
 
 `channel_version` é a versão do canal depois da mudança (`null` em `settings.updated` global). Uma mutação que não muda nada (arquivar o que já está arquivado) e a repetição de uma chamada idempotente não geram evento. A nota de importância e a sinalização de desuso do consolidador e `mark_verified` também não: não mudam a `channel_version` nem o contexto (releia com `list_memories`, por exemplo `stale=true`).
 
@@ -62,6 +62,7 @@ O corpo nunca tem textos, títulos nem valores de configuração, só identifica
 - `title_ids` e `context_version` (só no `get_context`): as memórias só com título (faixa 2) do canal e a `version` do bloco entregue. Um canal que só entrou na faixa 2 não gera evento.
 - `consumption`: id comum a todos os eventos da mesma chamada (`cns_` + 16 hex), para agrupar uma leitura de vários canais.
 - `operation`: a leitura (`get_context`, `search_memories`, `get_hints` ou `get_memory`).
+- `get_memory` só emite com token `agent`. Para resolver os ids recebidos (títulos do pulso), use o token `admin` ou `app` do gestor: essa leitura não é consumo e não gera outro `memory.consumed`.
 - `app` e `agent`: o slug do app do token e o do agente (`app/agente`); `agent: null` para tokens `app` e `admin`.
 - Um `304` do `get_context` emite de novo, com os ids do bloco que ainda está no cache em memória do serviço; depois de um reinício (ou com o bloco fora do cache), o `304` não emite até o próximo `200`.
 - Leitura sem memória entregue não emite. Uma falha ao gravar o evento não derruba a leitura (aviso `webhooks.consumed_failed` no log).

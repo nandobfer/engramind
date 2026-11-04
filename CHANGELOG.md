@@ -8,10 +8,11 @@ Evento de consumo das memórias (decisão 0034).
 
 ### Adicionado
 
-- Webhook `memory.consumed`: `get_context` (também no `304` com o bloco no cache em memória), `search_memories`, `get_hints` e `get_memory` emitem um evento por canal com os ids entregues, assinado e entregue pela fila `webhook` como os demais. Extras `consumption`, `operation`, `app`, `agent` e, no contexto, `title_ids` e `context_version`. Sem texto, título, `query` ou `focus`.
+- Webhook `memory.consumed`: `get_context` (também no `304` com o bloco no cache em memória), `search_memories`, `get_hints` e `get_memory` (só com token `agent`, para que a resolução dos ids pelo gestor não realimente o evento) emitem um evento por canal com os ids entregues, assinado e entregue pela fila `webhook` como os demais. Extras `consumption`, `operation`, `app`, `agent` e, no contexto, `title_ids` e `context_version`. Sem texto, título, `query` ou `focus`.
 
 ### Alterado
 
+- O `304` do `get_context`, com webhooks e destinatário, passa a gravar os jobs `memory.consumed` (continua sem ler o banco para decidir); guias, README e `aicontext` atualizados.
 - O guia `integracao-consumidor` passa a excluir `memory.consumed` da regra "evento `memory.*` marca o contexto como sujo". Guias `integracao-gestor`, `contexto-e-cache` e `busca-e-dicas`, desenho, `aicontext` e `docs/openapi.json` atualizados.
 
 ## [0.11.0] - 2026-11-03

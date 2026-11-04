@@ -440,7 +440,8 @@ o serviço:
 - **Para o serviço**, renderizar é concatenar strings. O bloco fica num **cache em memória**
   (LRU) com a chave `(token, canais selecionados, versões dos canais, hash das configurações de
   renderização)`. Sem mudança, `get_context` não toca o banco além de conferir as versões. Com
-  `If-None-Match`, responde `304` sem corpo.
+  `If-None-Match`, responde `304` sem corpo; com webhooks e destinatário, só grava os jobs
+  `memory.consumed` (decisão 0034).
 
 Exemplo (`tagged`):
 

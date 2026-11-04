@@ -108,7 +108,7 @@ A `version` (`cv_` + 12 hex) é um hash do formato, dos canais alcançados (id, 
 
 Buscas e o próprio `get_context` nunca mudam a `version`: os contadores (`retrieval_count`, `injected_count`) ficam fora dela.
 
-Com `If-None-Match` igual à `version` atual, a resposta é `304` sem corpo, sem ler o banco: só a rede em memória é consultada. O cabeçalho aceita a `version` com ou sem aspas, com `W/` e em lista separada por vírgula; `*` não vale. No MCP, `if_none_match` devolve `{ "not_modified": true, "version" }`; na CLI, `--if-none-match` não imprime nada e sai com 0 (com `--json`, o mesmo objeto).
+Com `If-None-Match` igual à `version` atual, a resposta é `304` sem corpo, sem ler o banco para decidir: só a rede em memória é consultada. A única escrita é a do consumo: com webhooks e algum destinatário, o `304` grava os jobs `memory.consumed` numa transação curta (decisão 0034), o que custa uma escrita por poll; sem webhooks ou sem destinatário, o `304` não toca o banco. O cabeçalho aceita a `version` com ou sem aspas, com `W/` e em lista separada por vírgula; `*` não vale. No MCP, `if_none_match` devolve `{ "not_modified": true, "version" }`; na CLI, `--if-none-match` não imprime nada e sai com 0 (com `--json`, o mesmo objeto).
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" -H 'If-None-Match: "cv_3f9e1a7c0b2d"' \

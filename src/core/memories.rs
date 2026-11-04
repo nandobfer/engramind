@@ -611,15 +611,18 @@ impl<S: Store> Core<S> {
             .reach_memory(principal, header, memory, Scope::Read)
             .await?;
         let similar = self.read_similar(&memory).await?;
-        self.consumed(
-            principal,
-            Consumption {
-                operation: "get_memory",
-                context_version: None,
-            },
-            &group([(memory.channel.as_str(), memory.id.as_str())]),
-        )
-        .await;
+        // Só o agente consome; admin e app (gestor resolvendo ids do webhook) não realimentam.
+        if principal.agent.is_some() {
+            self.consumed(
+                principal,
+                Consumption {
+                    operation: "get_memory",
+                    context_version: None,
+                },
+                &group([(memory.channel.as_str(), memory.id.as_str())]),
+            )
+            .await;
+        }
         Ok(MemoryDetail { memory, similar })
     }
 

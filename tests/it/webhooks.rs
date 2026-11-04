@@ -935,12 +935,7 @@ async fn search_hints_and_get_memory_emit_consumed_and_empty_reads_do_not() {
     assert_eq!(status, StatusCode::OK, "{body}");
     let (status, body) = net
         .context
-        .call(
-            "GET",
-            &format!("/v1/memories/{eng}"),
-            Some(ADMIN_TOKEN),
-            None,
-        )
+        .call("GET", &format!("/v1/memories/{eng}"), Some(&token), None)
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     deliver(&net.context, Duration::ZERO).await;
@@ -952,12 +947,45 @@ async fn search_hints_and_get_memory_emit_consumed_and_empty_reads_do_not() {
     assert_eq!(operations, ["search_memories", "get_memory"]);
     for event in &events {
         assert_eq!(event["memory_ids"], json!([eng]));
+        assert_eq!(event["agent"], "leitor/dev");
         assert!(event.get("title_ids").is_none(), "só o contexto: {event}");
         assert!(event.get("context_version").is_none());
     }
-    assert_eq!(events[0]["agent"], "leitor/dev");
-    assert_eq!(events[1]["agent"], Value::Null, "token admin");
-    assert_eq!(events[1]["app"], "bootstrap", "o app do token admin");
+
+    // O receptor resolve os ids recebidos com o token admin ou app: não é consumo e não
+    // realimenta o evento.
+    let app_token = net.context.issue("app-a", None, "app", &["read"]).await;
+    let before = webhook_jobs(&net.context);
+    for receiver in [ADMIN_TOKEN, app_token.as_str()] {
+        for id in events
+            .iter()
+            .flat_map(|event| event["memory_ids"].as_array().expect("ids"))
+        {
+            let id = id.as_str().expect("id");
+            let (status, body) = net
+                .context
+                .call("GET", &format!("/v1/memories/{id}"), Some(receiver), None)
+                .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+    }
+    assert_eq!(webhook_jobs(&net.context), before, "sem laço de consumo");
+
+    // Busca por token admin é entrega: sai com `agent: null`.
+    let (status, body) = net
+        .context
+        .call(
+            "POST",
+            "/v1/memories/search",
+            Some(ADMIN_TOKEN),
+            Some(json!({ "query": "testes afetados", "channels": [CHANNEL] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    deliver(&net.context, Duration::ZERO).await;
+    let last = consumed(&net.app_a).pop().expect("evento");
+    assert_eq!(last["agent"], Value::Null, "token admin");
+    assert_eq!(last["app"], "bootstrap", "o app do token admin");
     let raw: String = net
         .app_a
         .deliveries()
@@ -1061,4 +1089,76 @@ async fn reads_enqueue_nothing_with_webhooks_off_and_never_carry_the_focus() {
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(webhook_jobs(&net.context), before);
+}
+
+#[tokio::test]
+async fn a_focused_304_emits_again_from_the_focus_cache() {
+    let (net, token, eng, _) = reading_network().await;
+    net.context.core.run_embed_jobs(Utc::now()).await;
+    let uri = "/v1/context?focus=marcador-de-foco%20testes";
+    let (status, headers, block) = net
+        .context
+        .call_with("GET", uri, Some(&token), None, &[])
+        .await;
+    assert_eq!(status, StatusCode::OK, "{block}");
+    assert_eq!(block["focus_mode"], "hybrid", "{block}");
+    let etag = headers[axum::http::header::ETAG]
+        .to_str()
+        .expect("etag")
+        .to_owned();
+    deliver(&net.context, Duration::ZERO).await;
+    assert_eq!(consumed(&net.app_a).len(), 1);
+    let (status, _, _) = net
+        .context
+        .call_with("GET", uri, Some(&token), None, &[("If-None-Match", &etag)])
+        .await;
+    assert_eq!(status, StatusCode::NOT_MODIFIED);
+    deliver(&net.context, Duration::ZERO).await;
+    let events = consumed(&net.app_a);
+    assert_eq!(events.len(), 2, "o 304 com foco emite pelo focus_cache");
+    assert_eq!(events[1]["memory_ids"], json!([eng]));
+    assert_eq!(events[1]["context_version"], block["version"]);
+    let raw: String = net
+        .app_a
+        .deliveries()
+        .iter()
+        .map(|delivery| String::from_utf8_lossy(&delivery.raw).into_owned())
+        .collect();
+    assert!(!raw.contains("marcador-de-foco"), "sem o foco: {raw}");
+}
+
+#[tokio::test]
+async fn a_failed_consumption_write_never_fails_the_read() {
+    let (net, token, eng, _) = reading_network().await;
+    net.context
+        .db()
+        .execute_batch(
+            "CREATE TRIGGER no_consumed BEFORE INSERT ON jobs
+             WHEN NEW.payload_json LIKE '%memory.consumed%'
+             BEGIN SELECT RAISE(ABORT, 'consumo recusado'); END;",
+        )
+        .expect("trigger");
+    let before = webhook_jobs(&net.context);
+    let (status, block) = net
+        .context
+        .call("GET", "/v1/context", Some(&token), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{block}");
+    assert!(block["content"].as_str().expect("content").contains(&eng));
+    let (status, body) = net
+        .context
+        .call(
+            "POST",
+            "/v1/memories/search",
+            Some(&token),
+            Some(json!({ "query": "testes" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = net
+        .context
+        .call("GET", &format!("/v1/memories/{eng}"), Some(&token), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(webhook_jobs(&net.context), before, "nada gravado");
 }
